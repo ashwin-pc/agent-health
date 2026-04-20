@@ -13,8 +13,9 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
+import { Badge } from '@/components/ui/badge';
 import { RunAggregateMetrics } from '@/types';
-import { cn, formatDate } from '@/lib/utils';
+import { cn, formatDate, formatRelativeTime, getModelName } from '@/lib/utils';
 import { formatDelta, getDeltaColorClass } from '@/services/comparisonService';
 import { formatTokens, formatCost, formatDuration } from '@/services/metrics';
 import { DEFAULT_CONFIG } from '@/lib/constants';
@@ -253,6 +254,41 @@ export const RunSummaryTable: React.FC<RunSummaryTableProps> = ({
           All runs: {uniformParts.join(' \u00b7 ')}
         </div>
       )}
+      {/* Compact RunBar summary strip */}
+      <div className="space-y-1.5 mb-3">
+        {runs.map((run) => {
+          const isBaseline = run.runId === effectiveReferenceId;
+          return (
+            <div
+              key={run.runId}
+              className={`flex items-center gap-4 px-4 py-2 rounded-lg border text-xs ${
+                isBaseline ? 'border-primary/30 bg-primary/5' : 'border-border bg-card'
+              }`}
+            >
+              {isBaseline && (
+                <Badge variant="outline" className="text-[9px] px-1.5 py-0 border-primary/40 text-primary">
+                  Baseline
+                </Badge>
+              )}
+              <span className="font-medium truncate max-w-[180px]">{run.runName}</span>
+              <span className="text-muted-foreground">{getAgentName(run.agentKey)}</span>
+              <span className="text-muted-foreground">{getModelName(run.modelId)}</span>
+              <span className="text-muted-foreground">{formatRelativeTime(run.createdAt)}</span>
+              <div className="ml-auto flex items-center gap-3">
+                <span>
+                  <span className="text-green-500 font-medium">{run.passedCount}</span>
+                  <span className="text-muted-foreground"> / </span>
+                  <span className="text-red-500 font-medium">{run.failedCount}</span>
+                  <span className="text-muted-foreground"> / {run.totalTestCases}</span>
+                </span>
+                <span className="font-medium">{run.passRatePercent}%</span>
+                <span className="text-muted-foreground">Acc {run.avgAccuracy}%</span>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
       <ScrollArea className="rounded-md border border-border">
         <div className="min-w-max">
           <Table>

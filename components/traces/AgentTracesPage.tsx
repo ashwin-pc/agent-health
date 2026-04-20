@@ -58,7 +58,7 @@ import { startMeasure, endMeasure } from '@/lib/performance';
 import { cn } from '@/lib/utils';
 import { TraceFlyoutContent } from './TraceFlyoutContent';
 import MetricsOverview, { FilterAction } from './MetricsOverview';
-import { useSidebarCollapse } from '@/components/Layout';
+import { useSidebarCollapse } from '../Layout';
 
 // ==================== Types ====================
 
@@ -302,12 +302,7 @@ export const AgentTracesPage: React.FC = () => {
   const { isCollapsed, setIsCollapsed } = useSidebarCollapse();
   
   // Filter state
-  const [selectedAgent, setSelectedAgent] = useState<string>(() => {
-    if (typeof window !== 'undefined') {
-      return localStorage.getItem('agentTraces.selectedAgent') || 'all';
-    }
-    return 'all';
-  });
+  const [selectedAgent, setSelectedAgent] = useState<string>('all');
   const [textSearch, setTextSearch] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
   const [timeRange, setTimeRange] = useState<string>(() => {
@@ -379,8 +374,6 @@ export const AgentTracesPage: React.FC = () => {
 
   // Intersection observer ref for lazy loading
   const loadMoreRef = React.useRef<HTMLTableRowElement>(null);
-  // Track previous filteredTraces identity to distinguish filter vs sort changes
-  const prevFilteredRef = React.useRef<TraceTableRow[]>([]);
 
   // Get unique service names from agents config (no memo — recomputes when
   // parent App re-renders after refreshConfig(), keeping custom agents visible)
@@ -522,6 +515,8 @@ export const AgentTracesPage: React.FC = () => {
       setSpans(result.spans);
       const processedTraces = processSpansToTraces(result.spans);
       setAllTraces(processedTraces);
+      setDisplayedTraces(processedTraces.slice(0, 100));
+      setDisplayCount(100);
       setLastRefresh(new Date());
 
       // Update pagination state
@@ -532,7 +527,7 @@ export const AgentTracesPage: React.FC = () => {
     } finally {
       setIsLoading(false);
     }
-  }, [selectedAgent, debouncedSearch, timeRange, processSpansToTraces]);
+  }, [selectedAgent, debouncedSearch, timeRange, processSpansToTraces, sortTraces]);
 
   // Load more traces from server (appends to existing data)
   const loadMoreTraces = useCallback(async () => {
@@ -555,6 +550,8 @@ export const AgentTracesPage: React.FC = () => {
       setSpans(allSpans);
       const processedTraces = processSpansToTraces(allSpans);
       setAllTraces(processedTraces);
+      setDisplayedTraces(processedTraces);
+      setDisplayCount(processedTraces.length);
 
       setCursor(result.nextCursor || null);
       setHasMore(result.hasMore || false);
@@ -570,6 +567,13 @@ export const AgentTracesPage: React.FC = () => {
   useEffect(() => {
     fetchTraces();
   }, [fetchTraces]);
+
+  // Re-sort traces when sort column or direction changes
+  useEffect(() => {
+    const sortedTraces = sortTraces(allTraces);
+    setDisplayedTraces(sortedTraces.slice(0, 100));
+    setDisplayCount(100);
+  }, [sortColumn, sortDirection, allTraces, sortTraces]);
 
   // Handle scroll to hide/show container header
   useEffect(() => {
@@ -662,25 +666,22 @@ export const AgentTracesPage: React.FC = () => {
     return result;
   }, [allTraces, filters, debouncedSearch]);
 
-  // Sorted view of filtered traces (separate from filtering so sort changes don't reset scroll)
-  const sortedTraces = useMemo(() => sortTraces(filteredTraces), [filteredTraces, sortTraces]);
-
   // Lazy loading with intersection observer (client-side + server-side pagination)
   useEffect(() => {
     const currentRef = loadMoreRef.current;
     if (!currentRef) return;
 
     // Nothing left to show client-side or load from server
-    if (displayCount >= sortedTraces.length && !hasMore) return;
+    if (displayCount >= filteredTraces.length && !hasMore) return;
 
     const observer = new IntersectionObserver(
       (entries) => {
         const target = entries[0];
         if (target.isIntersecting) {
-          if (displayCount < sortedTraces.length) {
+          if (displayCount < filteredTraces.length) {
             // Client-side: show next batch of already-fetched traces
-            const nextCount = Math.min(displayCount + 100, sortedTraces.length);
-            setDisplayedTraces(sortedTraces.slice(0, nextCount));
+            const nextCount = Math.min(displayCount + 100, filteredTraces.length);
+            setDisplayedTraces(filteredTraces.slice(0, nextCount));
             setDisplayCount(nextCount);
           } else if (hasMore && !isLoadingMore) {
             // Server-side: fetch next page from the API
@@ -700,7 +701,7 @@ export const AgentTracesPage: React.FC = () => {
     return () => {
       observer.unobserve(currentRef);
     };
-  }, [displayCount, sortedTraces, hasMore, isLoadingMore, loadMoreTraces]);
+  }, [displayCount, filteredTraces, hasMore, isLoadingMore, loadMoreTraces]);
 
   // Handle trace selection
   const handleSelectTrace = (trace: TraceTableRow) => {
@@ -948,22 +949,11 @@ export const AgentTracesPage: React.FC = () => {
     }
   }, []);
 
-
-  // Update displayed traces when filters or sort changes
+  // Reset displayed traces when filteredTraces changes
   useEffect(() => {
-    const filterChanged = prevFilteredRef.current !== filteredTraces;
-    prevFilteredRef.current = filteredTraces;
-
-    if (filterChanged) {
-      // Filter/data change — reset to first page
-      setDisplayedTraces(sortedTraces.slice(0, 100));
-      setDisplayCount(100);
-    } else {
-      // Sort-only change — re-sort in place, preserving scroll position
-      setDisplayedTraces(sortedTraces.slice(0, displayCount));
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- displayCount intentionally excluded to avoid infinite loop
-  }, [sortedTraces, filteredTraces]);
+    setDisplayedTraces(filteredTraces.slice(0, 100));
+    setDisplayCount(100);
+  }, [filteredTraces]);
 
   return (
     <div className="h-full flex flex-col">

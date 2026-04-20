@@ -4,6 +4,7 @@
  */
 
 import React, { useState } from 'react';
+import { Link } from 'react-router-dom';
 import {
   Table,
   TableBody,
@@ -14,9 +15,9 @@ import {
 } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
-import { ChevronDown, ChevronRight } from 'lucide-react';
+import { ChevronDown, ChevronRight, GitCompare } from 'lucide-react';
 import { TestCaseComparisonRow, BenchmarkRun, EvaluationReport } from '@/types';
-import { MetricCell } from './MetricCell';
+import { MetricCell, EvaluatorType } from './MetricCell';
 import { VersionIndicator } from './VersionIndicator';
 import { UseCaseExpandedRow } from './UseCaseExpandedRow';
 import { cn, getLabelColor } from '@/lib/utils';
@@ -34,6 +35,10 @@ interface UseCaseComparisonTableProps {
   runs: BenchmarkRun[];
   reports: Record<string, EvaluationReport>;
   referenceRunId?: string;
+  visibleEvaluators?: Set<EvaluatorType>;
+  trajectoryRunPair?: [string, string] | null;
+  trajectoryTargetTestCase?: string | null;
+  onTrajectoryRequest?: (testCaseId: string) => void;
 }
 
 const rowStatusStyles: Record<RowStatus, string> = {
@@ -48,6 +53,8 @@ export const UseCaseComparisonTable: React.FC<UseCaseComparisonTableProps> = ({
   runs,
   reports,
   referenceRunId: propReferenceRunId,
+  visibleEvaluators,
+  onTrajectoryRequest,
 }) => {
   const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set());
 
@@ -74,7 +81,7 @@ export const UseCaseComparisonTable: React.FC<UseCaseComparisonTableProps> = ({
     );
   }
 
-  const columnCount = runs.length + 1; // +1 for the use case column
+  const columnCount = runs.length + 1; // +1 for the test case column
 
   return (
     <ScrollArea className="rounded-md border border-border">
@@ -83,7 +90,7 @@ export const UseCaseComparisonTable: React.FC<UseCaseComparisonTableProps> = ({
           <TableHeader>
             <TableRow>
               <TableHead className="w-72 sticky left-0 bg-background z-10">
-                Use Case
+                Test Case
               </TableHead>
               {runs.map((run) => (
                 <TableHead key={run.id} className="text-center min-w-32">
@@ -110,7 +117,9 @@ export const UseCaseComparisonTable: React.FC<UseCaseComparisonTableProps> = ({
                       isExpanded && 'bg-muted/30',
                       rowStatusStyles[rowStatus]
                     )}
-                    onClick={() => toggleRow(row.testCaseId)}
+                    onClick={() => {
+                      toggleRow(row.testCaseId);
+                    }}
                   >
                     <TableCell className="sticky left-0 bg-background z-10">
                       <div className="flex items-center gap-2">
@@ -123,12 +132,19 @@ export const UseCaseComparisonTable: React.FC<UseCaseComparisonTableProps> = ({
                         </div>
                         <div className="space-y-1 min-w-0">
                           <div className="flex items-center gap-2">
-                            <span className="font-medium truncate max-w-40">
+                            <Link
+                              to={`/evals3/test-cases/${row.testCaseId}`}
+                              className="font-medium truncate max-w-48 hover:underline text-foreground"
+                              onClick={(e) => e.stopPropagation()}
+                            >
                               {row.testCaseName}
-                            </span>
+                            </Link>
                             {row.hasVersionDifference && (
                               <VersionIndicator versions={row.versions} />
                             )}
+                          </div>
+                          <div className="text-[10px] text-muted-foreground font-mono truncate max-w-48">
+                            {row.testCaseId}
                           </div>
                           <div className="flex items-center gap-2 flex-wrap">
                             {(row.labels || []).slice(0, 2).map((label) => (
@@ -153,12 +169,20 @@ export const UseCaseComparisonTable: React.FC<UseCaseComparisonTableProps> = ({
                       const result = row.results[run.id] || { status: 'missing' as const };
                       const isReference = run.id === referenceRunId;
 
+                      // Look up annotation count from report
+                      const reportId = result.reportId;
+                      const report = reportId ? reports[reportId] : undefined;
+                      const annotationCount = report?.annotations?.length ?? 0;
+
                       return (
                         <TableCell key={run.id} className="p-0">
                           <MetricCell
                             result={result}
                             isReference={isReference}
                             baselineAccuracy={referenceAccuracy}
+                            baselineFaithfulness={referenceResult?.faithfulness}
+                            annotationCount={annotationCount}
+                            visibleEvaluators={visibleEvaluators}
                           />
                         </TableCell>
                       );

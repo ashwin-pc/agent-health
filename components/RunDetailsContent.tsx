@@ -62,6 +62,7 @@ interface RunDetailsContentProps {
   onViewAllReports?: () => void;
   onEditTestCase?: (testCase: TestCase) => void;
   performanceMetrics?: TestCasePerformanceMetrics;
+  hideMetrics?: boolean;
 }
 
 export const RunDetailsContent: React.FC<RunDetailsContentProps> = ({
@@ -71,6 +72,7 @@ export const RunDetailsContent: React.FC<RunDetailsContentProps> = ({
   onViewAllReports,
   onEditTestCase,
   performanceMetrics: performanceMetricsProp,
+  hideMetrics = false,
 }) => {
   const [annotations, setAnnotations] = useState<RunAnnotation[]>([]);
   const [newAnnotation, setNewAnnotation] = useState('');
@@ -413,17 +415,20 @@ export const RunDetailsContent: React.FC<RunDetailsContentProps> = ({
 
   return (
     <div className={`flex flex-col h-full ${className}`}>
-      {/* Header */}
+      {/* Header — hidden entirely when used inside TestCaseInspectorPanel */}
+      {!hideMetrics && (
       <div className="bg-card border-b p-4">
+        {!hideMetrics && (
         <div className="flex items-start justify-between mb-3">
           <h2 className="text-xl font-semibold">{testCase?.name || 'Unknown Test Case'}</h2>
           <p className="text-xs text-muted-foreground">
             Report ID: <span className="font-mono">{report.id}</span>
           </p>
         </div>
+        )}
 
         {/* Trace Mode: Waiting for traces / running judge banner */}
-        {!reportLoading && liveReport.metricsStatus === 'pending' && (
+        {!hideMetrics && !reportLoading && liveReport.metricsStatus === 'pending' && (
           <Card className="bg-yellow-50 dark:bg-yellow-500/10 border-yellow-300 dark:border-yellow-500/30 mt-4">
             <CardContent className="p-3 flex items-center gap-3">
               <Loader2 className="animate-spin text-yellow-700 dark:text-yellow-400" size={18} />
@@ -454,7 +459,7 @@ export const RunDetailsContent: React.FC<RunDetailsContentProps> = ({
         )}
 
         {/* Trace Mode: Error state */}
-        {liveReport.metricsStatus === 'error' && (
+        {!hideMetrics && liveReport.metricsStatus === 'error' && (
           <Card className="bg-red-50 dark:bg-red-500/10 border-red-300 dark:border-red-500/30 mt-4">
             <CardContent className="p-3 flex items-center gap-3">
               <AlertCircle className="text-red-700 dark:text-red-400" size={18} />
@@ -468,8 +473,8 @@ export const RunDetailsContent: React.FC<RunDetailsContentProps> = ({
           </Card>
         )}
 
-        {/* Evaluation Error: Agent endpoint failed */}
-        {liveReport.status === 'failed' && liveReport.llmJudgeReasoning && (
+        {/* Evaluation Error: Agent endpoint failed — hidden in inspector panel (status shown in compact bar) */}
+        {!hideMetrics && liveReport.status === 'failed' && liveReport.llmJudgeReasoning && (
           <Card className="bg-red-500/10 border-red-500/30 mt-4">
             <CardContent className="p-3 flex items-start gap-3">
               <AlertCircle className="text-red-400 shrink-0 mt-0.5" size={18} />
@@ -484,7 +489,7 @@ export const RunDetailsContent: React.FC<RunDetailsContentProps> = ({
         )}
 
         {/* Trace Mode: Spans received */}
-        {liveReport.spans && liveReport.spans.length > 0 && (
+        {!hideMetrics && liveReport.spans && liveReport.spans.length > 0 && (
           <Card className="bg-opensearch-blue/10 border-opensearch-blue/30 mt-4">
             <CardContent className="p-3 flex items-center gap-3">
               <CheckCircle2 className="text-opensearch-blue" size={18} />
@@ -499,6 +504,7 @@ export const RunDetailsContent: React.FC<RunDetailsContentProps> = ({
         )}
 
         {/* Metrics Row - Compact */}
+        {!hideMetrics && (<>
         <div className={`grid gap-2 ${isTraceMode ? 'grid-cols-10' : 'grid-cols-8'}`}>
           <Card className="bg-muted/50 col-span-2">
             <CardContent className="p-2">
@@ -721,13 +727,15 @@ export const RunDetailsContent: React.FC<RunDetailsContentProps> = ({
           </div>
           );
         })()}
+        </>)}
       </div>
+      )}
 
       {/* Tabs */}
       <Tabs value={activeTab} onValueChange={setActiveTab} className="flex-1 flex flex-col overflow-hidden">
         <TabsList className="w-full justify-start rounded-none border-b bg-card h-auto p-0">
           <TabsTrigger value="summary" className="rounded-none border-b-2 border-transparent data-[state=active]:border-opensearch-blue data-[state=active]:text-opensearch-blue">
-            <FileText size={14} className="mr-2" /> Summary
+            <FileText size={14} className="mr-2" /> Overview
           </TabsTrigger>
           <TabsTrigger value="trajectory" className="rounded-none border-b-2 border-transparent data-[state=active]:border-opensearch-blue data-[state=active]:text-opensearch-blue">
             <GitBranch size={14} className="mr-2" /> Conversation History
@@ -756,7 +764,8 @@ export const RunDetailsContent: React.FC<RunDetailsContentProps> = ({
 
         <ScrollArea className="flex-1">
           <TabsContent value="summary" className="p-6 mt-0 space-y-6">
-            {/* Run Info */}
+            {/* Run Info — hidden when used inside TestCaseInspectorPanel (already in compact bar) */}
+            {!hideMetrics && (
             <div>
               <h3 className="text-lg font-semibold mb-3">Run Information</h3>
               <div className="grid grid-cols-2 gap-4">
@@ -792,12 +801,13 @@ export const RunDetailsContent: React.FC<RunDetailsContentProps> = ({
                 </Button>
               )}
             </div>
+            )}
 
             {/* Test Case Info */}
             {testCase && (
               <div>
                 <div className="flex items-center justify-between mb-3">
-                  <h3 className="text-lg font-semibold">Test Case Details</h3>
+                  <h3 className="text-lg font-semibold">Expected Behavior</h3>
                   {onEditTestCase && (
                     <Button
                       variant="outline"
@@ -964,12 +974,12 @@ export const RunDetailsContent: React.FC<RunDetailsContentProps> = ({
 
                 {/* Error state - only show when NOT in pending polling state */}
                 {tracesError && !tracesLoading && liveReport.metricsStatus !== 'pending' && (
-                  <Card className="bg-red-500/10 border-red-500/30">
+                  <Card className="bg-muted/50 border-border">
                     <CardContent className="p-4 flex items-center gap-3">
-                      <AlertCircle className="text-red-400" size={18} />
+                      <AlertCircle className="text-muted-foreground" size={18} />
                       <div>
-                        <div className="text-sm font-medium text-red-400">Failed to load traces</div>
-                        <div className="text-xs text-muted-foreground">{tracesError}</div>
+                        <div className="text-sm font-medium text-muted-foreground">No traces available</div>
+                        <div className="text-xs text-muted-foreground">Traces may take a few minutes to appear after the run completes, or may not be available for this run.</div>
                       </div>
                     </CardContent>
                   </Card>

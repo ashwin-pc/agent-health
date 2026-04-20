@@ -19,6 +19,19 @@ Inspired by [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)
 - Coding Agent Analytics: unified dashboard for Claude Code, Kiro, and Codex CLI usage data
 - Plugin-based reader system for ingesting local session data from ~/.claude/, ~/.kiro/, and ~/.codex/
 - API routes for coding agent stats, sessions, costs, activity patterns, and tool usage (/api/coding-agents/*)
+- Evaluations section with Benchmarks, Test Cases, Eval Runs, and Run Inspector pages
+- Compare page with blank state, single-run support, and N-run table compare
+- RunPairSelector component for trajectory comparison gating
+- Dashboard workflow navigator and first-run experience
+
+### Changed
+- Move metrics to right side of title on Benchmarks and Eval Runs pages
+- Restructure compare toolbar into clean two-row layout
+- Rename compare sections to Compare Summary and Table Compare
+- Remove old Evals menu from sidebar, keep only Evaluations
+- Remove evaluator visibility toggle from comparison page (backend not built yet)
+- Allow compare diff with any number of runs
+- Make Compare button always clickable from Eval Runs page
 - Frontend page with Overview, Sessions, Projects, Costs, Activity, Efficiency, Tools, Advanced, and Workspace tabs at /coding-agents
 - Pricing engine covering Claude, Bedrock, and OpenAI models for cost estimation
 - Unified tool categorization across all three coding agents

@@ -11,6 +11,7 @@ import {
   Gauge,
   Activity,
   Search,
+  TestTube,
   BarChart3,
 } from "lucide-react";
 import OpenSearchLogoDark from "@/assets/opensearch-logo.svg";
@@ -115,7 +116,7 @@ export const Layout: React.FC<LayoutProps> = ({ children }) => {
         collapsible="none" 
         className="h-screen flex-shrink-0 transition-all duration-300"
         style={{
-          width: isCollapsed ? '64px' : '270px',
+          width: isCollapsed ? '64px' : '180px',
           background: isDarkMode ? '#1D1E24' : '#FFFFFF',
           borderRight: isDarkMode ? '1px solid #343741' : '1px solid #D3DAE6',
           boxShadow: '0px 0px 12px rgba(0, 0, 0, 0.05), 0px 0px 4px rgba(0, 0, 0, 0.05), 0px 0px 2px rgba(0, 0, 0, 0.05)',
@@ -128,67 +129,67 @@ export const Layout: React.FC<LayoutProps> = ({ children }) => {
         }}
         data-testid="sidebar"
       >
-        <SidebarHeader className="p-4 border-b">
-          <div className="flex items-center justify-between mb-4">
-            {!isCollapsed && (
-              <div className="flex items-center space-x-3">
-                <img src={OpenSearchLogo} alt="OpenSearch" className="w-8 h-8" />
-                <div>
-                  <h1 className="text-sm font-semibold">
-                    OpenSearch AgentHealth
-                  </h1>
-                  <p className="text-xs text-muted-foreground">
-                    Agentic Observability
-                  </p>
-                </div>
-              </div>
-            )}
-            {isCollapsed && (
-              <div className="flex items-center justify-center w-full">
-                <img src={OpenSearchLogo} alt="OpenSearch" className="w-8 h-8" />
-              </div>
-            )}
-            {!isCollapsed && (
+        <SidebarHeader className="px-3 pt-2 pb-3 border-b">
+          {/* Collapse/Expand button - own row at top */}
+          <div className="flex justify-end mb-1.5">
+            {!isCollapsed ? (
               <button
                 onClick={() => setIsCollapsed(true)}
                 className="p-1 hover:bg-accent rounded transition-colors"
                 aria-label="Collapse sidebar"
               >
-                <svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <svg width="14" height="14" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
                   <path fillRule="evenodd" clipRule="evenodd" d="M1.01409 7.38164C1.00488 7.41958 1 7.45922 1 7.5C1 7.51141 1.00038 7.52273 1.00113 7.53395C0.987424 7.93484 1.13358 8.34018 1.43959 8.64619L3.56091 10.7675C3.75618 10.9628 4.07276 10.9628 4.26802 10.7675C4.46328 10.5723 4.46328 10.2557 4.26802 10.0604L2.20761 8H14.5C14.7761 8 15 7.77614 15 7.5C15 7.22386 14.7761 7 14.5 7H2.37868L4.26802 5.11066C4.46328 4.9154 4.46328 4.59882 4.26802 4.40355C4.07276 4.20829 3.75618 4.20829 3.56091 4.40355L1.43959 6.52487C1.19868 6.76578 1.05685 7.06825 1.01409 7.38164ZM14.5 3H7.5C7.22386 3 7 3.22386 7 3.5C7 3.77614 7.22386 4 7.5 4H14.5C14.7761 4 15 3.77614 15 3.5C15 3.22386 14.7761 3 14.5 3ZM14.5 11H7.5C7.22386 11 7 11.2239 7 11.5C7 11.7761 7.22386 12 7.5 12H14.5C14.7761 12 15 11.7761 15 11.5C15 11.2239 14.7761 11 14.5 11Z" fill="currentColor"/>
+                </svg>
+              </button>
+            ) : (
+              <button
+                onClick={() => setIsCollapsed(false)}
+                className="w-full p-1.5 hover:bg-accent rounded transition-colors flex items-center justify-center"
+                aria-label="Expand sidebar"
+              >
+                <svg width="14" height="14" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+                  <path d="M2 3h12M2 8h12M2 13h12" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
                 </svg>
               </button>
             )}
           </div>
+
+          {/* Logo + Title */}
+          {!isCollapsed && (
+            <div className="flex items-center gap-2.5 mb-3">
+              <img src={OpenSearchLogo} alt="OpenSearch" className="w-7 h-7 flex-shrink-0" />
+              <div className="min-w-0">
+                <h1 className="text-sm font-semibold leading-tight">
+                  OpenSearch AgentHealth
+                </h1>
+                <p className="text-[11px] text-muted-foreground leading-tight mt-1">
+                  Agentic Observability
+                </p>
+              </div>
+            </div>
+          )}
+          {isCollapsed && (
+            <div className="flex items-center justify-center mb-1">
+              <img src={OpenSearchLogo} alt="OpenSearch" className="w-7 h-7" />
+            </div>
+          )}
           
           {/* Search bar - only show when expanded */}
           {!isCollapsed && (
             <div className="relative">
-              <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
+              <Search className="absolute left-2 top-2 h-3.5 w-3.5 text-muted-foreground" />
               <Input
                 placeholder="Search the menu"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className="pl-8 h-9 text-sm"
+                className="pl-7 h-7 text-xs md:text-xs"
               />
             </div>
           )}
-          
-          {/* Expand button when collapsed */}
-          {isCollapsed && (
-            <button
-              onClick={() => setIsCollapsed(false)}
-              className="w-full p-2 hover:bg-accent rounded transition-colors flex items-center justify-center"
-              aria-label="Expand sidebar"
-            >
-              <svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
-                <path d="M2 3h12M2 8h12M2 13h12" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
-              </svg>
-            </button>
-          )}
         </SidebarHeader>
 
-        <SidebarContent className="px-3 py-2">
+        <SidebarContent className="px-1.5 py-2">
           <SidebarGroup>
             <SidebarGroupContent>
               <SidebarMenu className="space-y-1">
@@ -202,66 +203,68 @@ export const Layout: React.FC<LayoutProps> = ({ children }) => {
                       className="h-9"
                     >
                       <Link to={item.to} className={isCollapsed ? 'justify-center' : ''}>
-                        <item.icon className="h-4 w-4" />
-                        {!isCollapsed && <span className="text-sm">{item.label}</span>}
+                        <item.icon className="h-3.5 w-3.5" />
+                        {!isCollapsed && <span className="text-xs">{item.label}</span>}
                       </Link>
                     </SidebarMenuButton>
                   </SidebarMenuItem>
                 ))}
 
-                {/* Testing collapsible section - only show when expanded */}
+
+                {/* Evaluations (evals3) collapsible section */}
                 {!isCollapsed && (
-                  <Collapsible
-                    open={testingOpen}
-                    onOpenChange={setTestingOpen}
-                  >
+                  <Collapsible defaultOpen={true}>
                     <SidebarMenuItem>
-                      <CollapsibleTrigger asChild>
-                        <SidebarMenuButton
-                          tooltip="Testing"
-                          isActive={isTestingPath}
-                          className="h-9 w-full"
-                        >
-                          <Gauge className="h-4 w-4" />
-                          <span className="text-sm">Testing</span>
-                          <ChevronDown 
-                            className={`ml-auto h-4 w-4 transition-transform duration-200 ${
-                              testingOpen ? 'rotate-180' : ''
-                            }`} 
-                          />
-                        </SidebarMenuButton>
-                      </CollapsibleTrigger>
+                      <SidebarMenuButton
+                        asChild
+                        tooltip="Evaluations"
+                        isActive={location.pathname.startsWith("/evaluations")}
+                        className="h-9 w-full"
+                      >
+                        <div className="flex items-center w-full">
+                          <Link to="/evaluations/benchmarks" className="flex items-center gap-2 flex-1 min-w-0">
+                            <Gauge className="h-3.5 w-3.5" />
+                            <span className="text-xs">Evaluations</span>
+                          </Link>
+                          <CollapsibleTrigger asChild>
+                            <button
+                              onClick={(e) => e.stopPropagation()}
+                              className="p-0.5 rounded hover:bg-muted-foreground/20 transition-colors ml-auto"
+                              aria-label="Toggle evaluations submenu"
+                            >
+                              <ChevronDown className="h-3.5 w-3.5 transition-transform duration-200" />
+                            </button>
+                          </CollapsibleTrigger>
+                        </div>
+                      </SidebarMenuButton>
                       <CollapsibleContent>
                         <SidebarMenuSub className="ml-4 mt-1 space-y-1">
-                          {testingSubItems.map((item) => (
-                            <SidebarMenuSubItem key={item.to}>
-                              <SidebarMenuSubButton
-                                asChild
-                                isActive={location.pathname === item.to || location.pathname.startsWith(item.to + "/")}
-                                data-testid={item.testId}
-                                className="h-8"
-                              >
-                                <Link to={item.to} className="text-sm">{item.label}</Link>
-                              </SidebarMenuSubButton>
-                            </SidebarMenuSubItem>
-                          ))}
+                          <SidebarMenuSubItem>
+                            <SidebarMenuSubButton asChild isActive={location.pathname === "/evaluations/benchmarks" || (location.pathname.startsWith("/evaluations/benchmarks/") && !/\/evaluations\/benchmarks\/[^/]+\/runs\/[^/]+/.test(location.pathname))} data-testid="nav-evals3-benchmarks" className="h-8">
+                              <Link to="/evaluations/benchmarks" className="text-xs">Benchmarks</Link>
+                            </SidebarMenuSubButton>
+                          </SidebarMenuSubItem>
+                          <SidebarMenuSubItem>
+                            <SidebarMenuSubButton asChild isActive={location.pathname.startsWith("/evaluations/test-cases")} data-testid="nav-evals3-test-cases" className="h-8">
+                              <Link to="/evaluations/test-cases" className="text-xs">Test Cases</Link>
+                            </SidebarMenuSubButton>
+                          </SidebarMenuSubItem>
+                          <SidebarMenuSubItem>
+                            <SidebarMenuSubButton asChild isActive={location.pathname === "/evaluations/runs" || /\/evaluations\/benchmarks\/[^/]+\/runs\/[^/]+/.test(location.pathname)} data-testid="nav-evals3-runs" className="h-8">
+                              <Link to="/evaluations/runs" className="text-xs">Evaluation Runs</Link>
+                            </SidebarMenuSubButton>
+                          </SidebarMenuSubItem>
                         </SidebarMenuSub>
                       </CollapsibleContent>
                     </SidebarMenuItem>
                   </Collapsible>
                 )}
-                
-                {/* Testing icon only when collapsed */}
+
+                {/* Evaluations icon only when collapsed */}
                 {isCollapsed && (
                   <SidebarMenuItem>
-                    <SidebarMenuButton
-                      asChild
-                      isActive={isTestingPath}
-                      tooltip="Testing"
-                      data-testid="nav-testing"
-                      className="h-9"
-                    >
-                      <Link to="/benchmarks" className="justify-center">
+                    <SidebarMenuButton asChild isActive={location.pathname.startsWith("/evaluations")} tooltip="Evaluations" data-testid="nav-evals3" className="h-9">
+                      <Link to="/evaluations/benchmarks" className="justify-center">
                         <Gauge className="h-4 w-4" />
                       </Link>
                     </SidebarMenuButton>
@@ -277,8 +280,8 @@ export const Layout: React.FC<LayoutProps> = ({ children }) => {
                     className="h-9"
                   >
                     <Link to="/settings" className={isCollapsed ? 'justify-center' : ''}>
-                      <Settings className="h-4 w-4" />
-                      {!isCollapsed && <span className="text-sm">Settings</span>}
+                      <Settings className="h-3.5 w-3.5" />
+                      {!isCollapsed && <span className="text-xs">Settings</span>}
                     </Link>
                   </SidebarMenuButton>
                 </SidebarMenuItem>
@@ -302,7 +305,7 @@ export const Layout: React.FC<LayoutProps> = ({ children }) => {
                         : 'bg-red-500'
                     }`}
                   ></span>
-                  <span className="text-sm">
+                  <span className="text-xs">
                     {status === 'online' ? 'Server Online' : 'Server Offline'}
                   </span>
                 </div>
