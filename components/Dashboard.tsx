@@ -5,8 +5,8 @@
 
 import React, { useState, useEffect, useMemo } from 'react';
 import { Link } from 'react-router-dom';
-import { Rocket, X, Info, HelpCircle } from 'lucide-react';
-import { asyncRunStorage, asyncExperimentStorage } from '@/services/storage';
+import { Rocket, X, Info, HelpCircle, BarChart3, Play, FileText } from 'lucide-react';
+import { asyncRunStorage, asyncExperimentStorage, asyncTestCaseStorage } from '@/services/storage';
 import { EvaluationReport, Benchmark } from '@/types';
 import { fetchBatchMetrics } from '@/services/metrics';
 import { AgentTrendChart, TrendMetric } from './charts/AgentTrendChart';
@@ -170,6 +170,7 @@ export const Dashboard: React.FC = () => {
   const [benchmarks, setBenchmarks] = useState<Benchmark[]>([]);
   const [reports, setReports] = useState<EvaluationReport[]>([]);
   const [metricsMap, setMetricsMap] = useState<Map<string, { costUsd: number; durationMs: number; tokens: number }>>(new Map());
+  const [testCaseCount, setTestCaseCount] = useState<number | null>(null);
   
   // Workflow card visibility state
   const [isWorkflowCardHidden, setIsWorkflowCardHidden] = useState(false);
@@ -181,6 +182,27 @@ export const Dashboard: React.FC = () => {
   const [filters, setFilters] = useState<DashboardFilter>({});
   const [timeRange, setTimeRange] = useState<TimeRange>('7d');
   const [selectedMetric, setSelectedMetric] = useState<TrendMetric>('passRate');
+
+  // Apply gradient background to the scrollable main container
+  useEffect(() => {
+    const main = document.querySelector('main');
+    if (main) {
+      main.classList.add('dashboard-gradient-bg');
+      return () => { main.classList.remove('dashboard-gradient-bg'); };
+    }
+  }, []);
+
+  // Fetch test case count (independent of benchmark data)
+  useEffect(() => {
+    let cancelled = false;
+    asyncTestCaseStorage.getAll()
+      .then(tc => { if (!cancelled) setTestCaseCount(tc.length); })
+      .catch(err => {
+        console.warn('[Dashboard] Failed to load test case count:', err);
+        if (!cancelled) setTestCaseCount(0);
+      });
+    return () => { cancelled = true; };
+  }, []);
 
   // Initialize workflow card visibility from localStorage
   useEffect(() => {
@@ -292,6 +314,8 @@ export const Dashboard: React.FC = () => {
     setFilters({});
   };
 
+  const totalRuns = useMemo(() => benchmarks.reduce((sum, b) => sum + (b.runs?.length || 0), 0), [benchmarks]);
+
   const hasData = benchmarks.length > 0 && benchmarks.some(b => b.runs && b.runs.length > 0);
 
   // Show loading skeleton while checking data state
@@ -347,6 +371,31 @@ export const Dashboard: React.FC = () => {
             </Button>
           )}
         </div>
+      </div>
+
+      {/* Stats Summary Bar */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4" data-testid="stats-summary-bar">
+        <Link to="/benchmarks" className="stats-card-gradient rounded-lg px-5 py-4 flex items-center justify-between hover:opacity-80 transition-opacity" data-testid="stats-benchmarks">
+          <div className="flex items-center gap-3">
+            <BarChart3 className="h-4 w-4 text-muted-foreground" />
+            <span className="text-sm text-muted-foreground">Benchmarks</span>
+          </div>
+          <span className="text-2xl font-bold">{benchmarks.length}</span>
+        </Link>
+        <div className="stats-card-gradient rounded-lg px-5 py-4 flex items-center justify-between opacity-75 cursor-default" data-testid="stats-runs">
+          <div className="flex items-center gap-3">
+            <Play className="h-4 w-4 text-muted-foreground" />
+            <span className="text-sm text-muted-foreground">Runs</span>
+          </div>
+          <span className="text-2xl font-bold">{totalRuns.toLocaleString()}</span>
+        </div>
+        <Link to="/test-cases" className="stats-card-gradient rounded-lg px-5 py-4 flex items-center justify-between hover:opacity-80 transition-opacity" data-testid="stats-test-cases">
+          <div className="flex items-center gap-3">
+            <FileText className="h-4 w-4 text-muted-foreground" />
+            <span className="text-sm text-muted-foreground">Test Cases</span>
+          </div>
+          <span className="text-2xl font-bold">{testCaseCount === null ? '—' : testCaseCount}</span>
+        </Link>
       </div>
 
       {isLoading ? (

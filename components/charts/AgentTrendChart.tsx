@@ -5,8 +5,9 @@
 
 import React from 'react';
 import {
-  LineChart,
+  ComposedChart,
   Line,
+  Area,
   XAxis,
   YAxis,
   Tooltip,
@@ -97,6 +98,14 @@ function transformDataForChart(
 }
 
 /**
+ * Sanitize agent key for use as SVG gradient ID.
+ * Replaces non-alphanumeric characters with hyphens to avoid invalid SVG id/url(#...) references.
+ */
+function sanitizeId(key: string): string {
+  return key.replace(/[^a-zA-Z0-9-_]/g, '-');
+}
+
+/**
  * Format date for x-axis display
  */
 function formatDateLabel(dateStr: string): string {
@@ -141,10 +150,18 @@ export const AgentTrendChart: React.FC<AgentTrendChartProps> = ({
 
   return (
     <ResponsiveContainer width="100%" height={chartHeight}>
-      <LineChart
+      <ComposedChart
         data={chartData}
         margin={{ top: 10, right: 30, left: 10, bottom: 10 }}
       >
+        <defs>
+          {agents.map((agent) => (
+            <linearGradient key={`gradient-${agent}`} id={`gradient-${sanitizeId(agent)}`} x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor={getAgentColor(agent)} stopOpacity={0.3} />
+              <stop offset="100%" stopColor={getAgentColor(agent)} stopOpacity={0} />
+            </linearGradient>
+          ))}
+        </defs>
         <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
         <XAxis
           dataKey="date"
@@ -184,6 +201,19 @@ export const AgentTrendChart: React.FC<AgentTrendChartProps> = ({
           )}
         />
         {agents.map((agent) => (
+          <Area
+            key={`area-${agent}`}
+            type="monotone"
+            dataKey={agent}
+            name={`${agent}-area`}
+            fill={`url(#gradient-${sanitizeId(agent)})`}
+            stroke="none"
+            connectNulls
+            legendType="none"
+            tooltipType="none"
+          />
+        ))}
+        {agents.map((agent) => (
           <Line
             key={agent}
             type="monotone"
@@ -196,7 +226,7 @@ export const AgentTrendChart: React.FC<AgentTrendChartProps> = ({
             connectNulls
           />
         ))}
-      </LineChart>
+      </ComposedChart>
     </ResponsiveContainer>
   );
 };
