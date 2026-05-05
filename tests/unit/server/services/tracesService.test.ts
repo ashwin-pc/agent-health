@@ -156,7 +156,7 @@ describe('tracesService', () => {
     it('should throw error when no filter provided', async () => {
       const client = createMockClient();
       await expect(fetchTraces({}, client)).rejects.toThrow(
-        'Either traceId, runIds, or time range is required'
+        'Either traceId, runIds, sessionId, or time range is required'
       );
     });
 
@@ -349,7 +349,9 @@ describe('tracesService', () => {
       const result = await checkTracesHealth(client);
 
       expect(result.status).toBe('error');
-      expect(result.error).toBe('Connection refused');
+      expect(result.error).toBe('Cannot connect to OpenSearch: Connection refused');
+      expect(result.errorCategory).toBe('connection');
+      expect(result.suggestion).toBeDefined();
     });
 
     it('should use default index pattern when not provided', async () => {

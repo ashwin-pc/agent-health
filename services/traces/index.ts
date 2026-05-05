@@ -8,9 +8,13 @@
  */
 
 import { Span, TimeRange, TraceQueryParams, TraceSearchResult } from '@/types';
+import { getSpanCategory } from './spanCategorization';
 
 // Re-export trace grouping utilities
 export { groupSpansByTrace, getSpansForTrace } from './traceGrouping';
+
+// Re-export message extraction
+export { extractMessagesFromSpans } from './messageExtraction';
 
 /**
  * Get API base URL dynamically
@@ -66,12 +70,19 @@ export async function fetchTracesByRunIds(runIds: string[]): Promise<TraceSearch
  */
 export async function fetchRecentTraces(options: {
   minutesAgo?: number;
+  sessionId?: string;
   serviceName?: string;
   textSearch?: string;
   size?: number;
   cursor?: string;
 }): Promise<TraceSearchResult> {
-  const { minutesAgo = 5, serviceName, textSearch, size = 100, cursor } = options;
+  const { minutesAgo = 5, sessionId, serviceName, textSearch, size = 100, cursor } = options;
+
+  // Session queries don't need a time range — fetch all spans for the session
+  if (sessionId) {
+    return fetchTraces({ sessionId, serviceName, textSearch, size, cursor });
+  }
+
   const now = Date.now();
   const startTime = now - (minutesAgo * 60 * 1000);
 
@@ -83,6 +94,13 @@ export async function fetchRecentTraces(options: {
     size,
     cursor,
   });
+}
+
+/**
+ * Fetch all traces for a Claude Code session by session ID
+ */
+export async function fetchTracesBySessionId(sessionId: string): Promise<TraceSearchResult> {
+  return fetchTraces({ sessionId, size: 1000 });
 }
 
 /**
@@ -162,26 +180,18 @@ export function calculateTimeRange(spans: Span[]): TimeRange {
  * Get color for a span based on its type/name
  */
 export function getSpanColor(span: Span): string {
-  const name = span.name?.toLowerCase() || '';
-  const status = span.status;
+  const category = getSpanCategory(span);
 
-  // Error spans are always red
-  if (status === 'ERROR') return '#ef4444';
+  const CATEGORY_HEX: Record<string, string> = {
+    AGENT: '#6366f1',  // indigo
+    LLM: '#a855f7',    // purple
+    TOOL: '#f59e0b',   // amber
+    EVAL: '#10b981',   // emerald
+    ERROR: '#ef4444',  // red
+    OTHER: '#64748b',  // slate
+  };
 
-  // Agent run root spans
-  if (name.includes('agent.run') || name.includes('run')) return '#6366f1';
-
-  // LLM/Bedrock calls
-  if (name.includes('bedrock') || name.includes('llm') || name.includes('converse')) return '#a855f7';
-
-  // Tool executions
-  if (name.includes('tool')) return '#f59e0b';
-
-  // Graph nodes
-  if (name.includes('node') || name.includes('process')) return '#3b82f6';
-
-  // Default
-  return '#64748b';
+  return CATEGORY_HEX[category] || CATEGORY_HEX.OTHER;
 }
 
 /**

@@ -20,6 +20,8 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import SessionTracesView from './SessionTracesView';
+import { PerformancePulseSection, EvalTrendPoint } from './PerformancePulse';
 
 const AGENT_COLORS: Record<string, string> = {
   'claude-code': '#f97316',
@@ -986,78 +988,91 @@ function SessionDetailPanel({ session, onClose }: { session: Session; onClose: (
           <div><span className="text-muted-foreground">Tokens:</span> {formatTokens(session.input_tokens + session.output_tokens)}</div>
         </div>
 
-        {loading ? (
-          <TabSkeleton label="Loading conversation..." cards={3} />
-        ) : detail?.messages && detail.messages.length > 0 ? (
-          <>
-            {/* Search & filter for conversation */}
-            <div className="flex items-center gap-2 mb-3 sticky top-[73px] bg-background py-2 z-10">
-              <div className="relative flex-1">
-                <input
-                  className="border rounded px-3 py-1.5 text-sm w-full bg-background pr-20"
-                  placeholder="Search messages..."
-                  value={msgSearch}
-                  onChange={e => setMsgSearch(e.target.value)}
-                  onKeyDown={e => {
-                    if (e.key === 'Enter' && matchPositions.length > 0) {
-                      goToMatch(e.shiftKey ? -1 : 1);
-                      e.preventDefault();
-                    }
-                  }}
-                />
-                {msgSearch && matchPositions.length > 0 && (
-                  <div className="absolute right-1.5 top-1/2 -translate-y-1/2 flex items-center gap-0.5">
-                    <span className="text-[10px] text-muted-foreground tabular-nums mr-1">
-                      {activeMatchIdx + 1}/{matchPositions.length}
-                    </span>
-                    <button onClick={() => goToMatch(-1)} className="text-muted-foreground hover:text-foreground p-0.5 text-xs" title="Previous match (Shift+Enter)">&#x25B2;</button>
-                    <button onClick={() => goToMatch(1)} className="text-muted-foreground hover:text-foreground p-0.5 text-xs" title="Next match (Enter)">&#x25BC;</button>
+        <Tabs defaultValue="messages">
+          <TabsList className="mb-3">
+            <TabsTrigger value="messages">Messages</TabsTrigger>
+            <TabsTrigger value="traces">Traces</TabsTrigger>
+          </TabsList>
+
+          <TabsContent value="messages">
+            {loading ? (
+              <TabSkeleton label="Loading conversation..." cards={3} />
+            ) : detail?.messages && detail.messages.length > 0 ? (
+              <>
+                {/* Search & filter for conversation */}
+                <div className="flex items-center gap-2 mb-3 sticky top-[73px] bg-background py-2 z-10">
+                  <div className="relative flex-1">
+                    <input
+                      className="border rounded px-3 py-1.5 text-sm w-full bg-background pr-20"
+                      placeholder="Search messages..."
+                      value={msgSearch}
+                      onChange={e => setMsgSearch(e.target.value)}
+                      onKeyDown={e => {
+                        if (e.key === 'Enter' && matchPositions.length > 0) {
+                          goToMatch(e.shiftKey ? -1 : 1);
+                          e.preventDefault();
+                        }
+                      }}
+                    />
+                    {msgSearch && matchPositions.length > 0 && (
+                      <div className="absolute right-1.5 top-1/2 -translate-y-1/2 flex items-center gap-0.5">
+                        <span className="text-[10px] text-muted-foreground tabular-nums mr-1">
+                          {activeMatchIdx + 1}/{matchPositions.length}
+                        </span>
+                        <button onClick={() => goToMatch(-1)} className="text-muted-foreground hover:text-foreground p-0.5 text-xs" title="Previous match (Shift+Enter)">&#x25B2;</button>
+                        <button onClick={() => goToMatch(1)} className="text-muted-foreground hover:text-foreground p-0.5 text-xs" title="Next match (Enter)">&#x25BC;</button>
+                      </div>
+                    )}
+                    {msgSearch && matchPositions.length === 0 && (
+                      <span className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] text-muted-foreground">No matches</span>
+                    )}
                   </div>
-                )}
-                {msgSearch && matchPositions.length === 0 && (
-                  <span className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] text-muted-foreground">No matches</span>
-                )}
-              </div>
-              <Select value={roleFilter} onValueChange={setRoleFilter}>
-                <SelectTrigger className="w-32"><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All Roles</SelectItem>
-                  <SelectItem value="user">User</SelectItem>
-                  <SelectItem value="assistant">Assistant</SelectItem>
-                  <SelectItem value="tool_result">Tool Result</SelectItem>
-                </SelectContent>
-              </Select>
-              <span className="text-xs text-muted-foreground whitespace-nowrap">
-                {filteredMessages.length}/{detail.messages.length}
-              </span>
-            </div>
-            <div className="space-y-2">
-              {filteredMessages.map((msg, i) => (
-                <div key={i} className={`rounded-md p-3 text-sm ${
-                  msg.role === 'user' ? 'bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800' :
-                  msg.role === 'tool_result' ? `border ${msg.isError ? 'bg-red-50 dark:bg-red-950/30 border-red-200 dark:border-red-800' : 'bg-gray-50 dark:bg-gray-900/30 border-gray-200 dark:border-gray-700'}` :
-                  'bg-muted/50 border border-border'
-                }`}>
-                  <div className="flex items-center gap-2 mb-1">
-                    <span className="text-xs font-medium text-muted-foreground uppercase">{msg.role}</span>
-                    {msg.toolName && <Badge variant="secondary" className="text-xs">{msg.toolName}</Badge>}
-                    {msg.timestamp && <span className="text-xs text-muted-foreground ml-auto">{new Date(msg.timestamp).toLocaleTimeString()}</span>}
-                  </div>
-                  <pre className="whitespace-pre-wrap text-xs font-mono break-all">{highlightText(msg.text, msgMatchStart[i] ?? 0)}</pre>
+                  <Select value={roleFilter} onValueChange={setRoleFilter}>
+                    <SelectTrigger className="w-32"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All Roles</SelectItem>
+                      <SelectItem value="user">User</SelectItem>
+                      <SelectItem value="assistant">Assistant</SelectItem>
+                      <SelectItem value="tool_result">Tool Result</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <span className="text-xs text-muted-foreground whitespace-nowrap">
+                    {filteredMessages.length}/{detail.messages.length}
+                  </span>
                 </div>
-              ))}
-              {filteredMessages.length === 0 && (
-                <p className="text-sm text-muted-foreground text-center py-4">No messages match your search.</p>
-              )}
-            </div>
-          </>
-        ) : (
-          <div className="text-center py-8">
-            <div className="text-2xl mb-2 opacity-20">[...]</div>
-            <p className="text-sm text-muted-foreground">No conversation data available</p>
-            <p className="text-xs text-muted-foreground/70 mt-1">The session JSONL file may have been removed or is in an unsupported format.</p>
-          </div>
-        )}
+                <div className="space-y-2">
+                  {filteredMessages.map((msg, i) => (
+                    <div key={i} className={`rounded-md p-3 text-sm ${
+                      msg.role === 'user' ? 'bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800' :
+                      msg.role === 'tool_result' ? `border ${msg.isError ? 'bg-red-50 dark:bg-red-950/30 border-red-200 dark:border-red-800' : 'bg-gray-50 dark:bg-gray-900/30 border-gray-200 dark:border-gray-700'}` :
+                      'bg-muted/50 border border-border'
+                    }`}>
+                      <div className="flex items-center gap-2 mb-1">
+                        <span className="text-xs font-medium text-muted-foreground uppercase">{msg.role}</span>
+                        {msg.toolName && <Badge variant="secondary" className="text-xs">{msg.toolName}</Badge>}
+                        {msg.timestamp && <span className="text-xs text-muted-foreground ml-auto">{new Date(msg.timestamp).toLocaleTimeString()}</span>}
+                      </div>
+                      <pre className="whitespace-pre-wrap text-xs font-mono break-all">{highlightText(msg.text, msgMatchStart[i] ?? 0)}</pre>
+                    </div>
+                  ))}
+                  {filteredMessages.length === 0 && (
+                    <p className="text-sm text-muted-foreground text-center py-4">No messages match your search.</p>
+                  )}
+                </div>
+              </>
+            ) : (
+              <div className="text-center py-8">
+                <div className="text-2xl mb-2 opacity-20">[...]</div>
+                <p className="text-sm text-muted-foreground">No conversation data available</p>
+                <p className="text-xs text-muted-foreground/70 mt-1">The session JSONL file may have been removed or is in an unsupported format.</p>
+              </div>
+            )}
+          </TabsContent>
+
+          <TabsContent value="traces">
+            <SessionTracesView sessionId={session.session_id} />
+          </TabsContent>
+        </Tabs>
       </div>
       </div>{/* flex-1 */}
     </div>{/* panel */}
@@ -1112,6 +1127,15 @@ function SessionsTab({ range, loading: initialLoading, initialProject, initialAg
   }, [page, agentFilter, completedFilter, projectFilter, search, range]);
 
   useEffect(() => { loadSessions(); }, [loadSessions]);
+
+  // Auto-select first session on initial load only
+  const hasAutoSelected = React.useRef(false);
+  useEffect(() => {
+    if (!hasAutoSelected.current && sessions.length > 0) {
+      hasAutoSelected.current = true;
+      setSelectedSession(sessions[0]);
+    }
+  }, [sessions]);
 
   const handleSearch = () => { setSearch(searchInput); setPage(0); };
 
@@ -2839,11 +2863,12 @@ export const CodingAgentsPage: React.FC = () => {
   const [projects, setProjects] = useState<ProjectAnalytics[] | null>(null);
   const [advanced, setAdvanced] = useState<AdvancedAnalytics | null>(null);
   const [failurePatterns, setFailurePatterns] = useState<FailurePattern[] | null>(null);
+  const [evalTrends, setEvalTrends] = useState<EvalTrendPoint[] | null>(null);
   const [team, setTeam] = useState<TeamAnalytics | null>(null);
   const [loading, setLoading] = useState(true);
   // Read initial tab from URL query param (e.g., ?tab=workspace)
   const [activeTab, setActiveTab] = useState(() => {
-    try { return new URLSearchParams(window.location.search).get('tab') || 'overview'; } catch { return 'overview'; }
+    try { return new URLSearchParams(window.location.search).get('tab') || 'sessions'; } catch { return 'sessions'; }
   });
   const [error, setError] = useState<string | null>(null);
   const [rangePreset, setRangePreset] = useState<DateRangePreset>('today');
@@ -2879,6 +2904,7 @@ export const CodingAgentsPage: React.FC = () => {
     setProjects(null);
     setAdvanced(null);
     setFailurePatterns(null);
+    setEvalTrends(null);
     setTeam(null);
   };
 
@@ -2945,6 +2971,26 @@ export const CodingAgentsPage: React.FC = () => {
           .then(d => setEfficiency(d))
           .catch(() => {});
       }
+      // Optionally fetch eval pass rate trends for Performance Pulse
+      if (evalTrends === null) {
+        fetchJson<{ benchmarks: Array<{ runs?: Array<{ createdAt: string; agentKey: string; stats?: { passed: number; failed: number; total: number } }> }> }>('/api/storage/benchmarks')
+          .then(({ benchmarks }) => {
+            const trends: EvalTrendPoint[] = [];
+            for (const bm of benchmarks) {
+              for (const run of bm.runs || []) {
+                if (!run.stats || run.stats.total === 0) continue;
+                trends.push({
+                  date: run.createdAt.split('T')[0],
+                  agentKey: run.agentKey,
+                  passRate: (run.stats.passed / run.stats.total) * 100,
+                  runCount: run.stats.total,
+                });
+              }
+            }
+            setEvalTrends(trends);
+          })
+          .catch(() => setEvalTrends([]));
+      }
     }
     // Tools tab loads tools + advanced
     if (activeTab === 'tools') {
@@ -2979,18 +3025,14 @@ export const CodingAgentsPage: React.FC = () => {
     <div className="p-6 space-y-6 max-w-7xl">
       <div className="flex items-start justify-between">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight">Coding Agent Analytics</h1>
-          <p className="text-muted-foreground">
-            Usage analytics across your coding agents
-            {agents.length > 0 && (
-              <span className="ml-2">
-                {agents.map(a => (
-                  <Badge key={a.name} variant="outline" className="ml-1" style={{ borderColor: AGENT_COLORS[a.name], color: AGENT_COLORS[a.name] }}>
-                    {a.displayName}
-                  </Badge>
-                ))}
-              </span>
-            )}
+          <h1 className="text-2xl font-bold tracking-tight">AI Dev Tools</h1>
+          <p className="text-muted-foreground flex items-center flex-wrap gap-1">
+            <span>Usage analytics across your AI dev tools</span>
+            {agents.length > 0 && agents.map(a => (
+              <Badge key={a.name} variant="outline" className="ml-0.5" style={{ borderColor: AGENT_COLORS[a.name], color: AGENT_COLORS[a.name] }}>
+                {a.displayName}
+              </Badge>
+            ))}
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -3068,9 +3110,13 @@ export const CodingAgentsPage: React.FC = () => {
             <CostsTab costs={costs} loading={activeTab === 'costs' && !costs} onTabChange={setActiveTab} onSelectProject={handleSelectProject} cacheSavings={stats ? stats.agents.reduce((s, a) => s + a.totalCacheSavings, 0) : undefined} />
           </TabsContent>
           <TabsContent value="performance" className="mt-4">
-            {/* Merged Activity + Efficiency */}
             <div className="space-y-8">
+              {/* Performance Pulse — unified trend overlay */}
               <div>
+                <h2 className="text-sm font-medium text-muted-foreground uppercase tracking-wider mb-4">Performance Pulse</h2>
+                <PerformancePulseSection stats={stats} efficiency={efficiency} costs={costs} evalTrends={evalTrends} />
+              </div>
+              <div className="border-t pt-6">
                 <h2 className="text-sm font-medium text-muted-foreground uppercase tracking-wider mb-4">Activity Patterns</h2>
                 <ActivityTab activity={activity} loading={(activeTab === 'performance') && !activity} onTabChange={setActiveTab} />
               </div>

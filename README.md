@@ -86,6 +86,17 @@ Opens http://localhost:4001 with pre-loaded sample data for exploration. If port
 
 For the full observability stack with OpenSearch, OpenTelemetry Collector, and Data Prepper for trace ingestion:
 
+**Quick start (one command):**
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/opensearch-project/agent-health/main/scripts/install.sh | bash
+```
+
+This clones the repo, starts the Docker stack, waits for OpenSearch, auto-configures `agent-health.config.json`, and launches Agent Health.
+
+<details>
+<summary><b>Or step-by-step:</b></summary>
+
 ```bash
 # Clone the repository
 git clone https://github.com/opensearch-project/agent-health.git
@@ -100,6 +111,7 @@ cp .env.docker .env
 # Start Agent Health (connects to local OpenSearch automatically)
 npx @opensearch-project/agent-health
 ```
+</details>
 
 This brings up:
 - **OpenSearch** — Stores traces, test cases, benchmarks, and evaluation results
@@ -107,6 +119,30 @@ This brings up:
 - **Data Prepper** — Transforms and enriches traces before OpenSearch ingestion
 
 > **Prerequisites:** Docker Desktop with 4GB+ memory allocated. See [docker-compose.yml](./docker-compose.yml) for configuration options.
+
+### Option 3: AWS CloudFormation (Managed OpenSearch)
+
+Deploy a fully managed observability backend using the included CloudFormation template:
+
+```bash
+aws cloudformation create-stack \
+  --stack-name AgentHealthObservability \
+  --template-body file://deployment/cloudformation/agent-health-observability.yaml \
+  --capabilities CAPABILITY_NAMED_IAM
+```
+
+This deploys:
+- **Amazon OpenSearch Service** domain for trace storage
+- **OpenSearch Ingestion (OSIS)** pipeline for OTLP data collection
+- **IAM roles** for pipeline execution and agent telemetry ingestion
+
+After deployment, connect it to Agent Health:
+
+```bash
+npx @opensearch-project/agent-health configure --from-stack AgentHealthObservability
+```
+
+Or manually copy the `AgentHealthConfigJSON` stack output into your `agent-health.config.json`. See [deployment/cloudformation/](./deployment/cloudformation/) for details and regional Launch Stack URLs.
 
 ### Next Steps
 
