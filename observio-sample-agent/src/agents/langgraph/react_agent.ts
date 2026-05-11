@@ -19,8 +19,8 @@ import { ReactGraphBuilder } from './react_graph_builder';
 import { ToolExecutor } from './tool_executor';
 import { ReactGraphNodes } from './react_graph_nodes';
 
-// Configuration constants
-const REACT_MAX_ITERATIONS = 100; // Maximum tool execution cycles before forcing final response
+// Configuration constants — configurable via REACT_MAX_ITERATIONS env var (useful in dev mode)
+const REACT_MAX_ITERATIONS = Math.max(1, parseInt(process.env.REACT_MAX_ITERATIONS || '100', 10) || 100);
 
 // StateGraph state interface
 export interface ReactAgentState {
@@ -209,10 +209,9 @@ export class ReactAgent implements BaseAgent {
             additionalInputs?.runId || Date.now()
           }`,
         },
-        // Set recursion limit to 250 to accommodate max iterations of 100
         // Each iteration involves multiple graph steps (processInput -> callModel -> executeTools)
         // so we need ~2.5x the max iterations
-        recursionLimit: 250,
+        recursionLimit: Math.ceil(REACT_MAX_ITERATIONS * 2.5),
       };
       await this.compiledGraph.invoke(initialState, config);
     } catch (error) {

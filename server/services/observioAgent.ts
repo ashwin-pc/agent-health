@@ -19,10 +19,45 @@ import net from 'net';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
-export const OBSERVIO_PORT = 3001;
+export const OBSERVIO_DEFAULT_PORT = 3001;
 
 /** Track the spawned child process for graceful shutdown */
 let observioChild: ChildProcess | null = null;
+
+/** The actual port observio bound to (may differ from default if auto-incremented) */
+let observioActualPort: number | null = null;
+
+/** Promise that resolves once the observio port has been detected from stdout */
+let portReadyResolve: ((port: number) => void) | null = null;
+let portReadyPromise: Promise<number> | null = null;
+
+/** Get the port the observio agent is actually running on */
+export function getObservioPort(): number {
+  return observioActualPort ?? OBSERVIO_DEFAULT_PORT;
+}
+
+/**
+ * Wait for the observio agent to report its actual port (up to timeout).
+ * Returns the detected port, or the default if detection times out.
+ */
+export function waitForObservioReady(timeoutMs: number = 10000): Promise<number> {
+  if (observioActualPort !== null) return Promise.resolve(observioActualPort);
+  if (!portReadyPromise) return Promise.resolve(OBSERVIO_DEFAULT_PORT);
+
+  return Promise.race([
+    portReadyPromise,
+    new Promise<number>((resolve) =>
+      setTimeout(() => resolve(OBSERVIO_DEFAULT_PORT), timeoutMs)
+    ),
+  ]);
+}
+
+/** Reset port state (used during shutdown/kill) */
+export function resetObservioPort(): void {
+  observioActualPort = null;
+  portReadyResolve = null;
+  portReadyPromise = null;
+}
 
 /**
  * Find the observio-sample-agent directory relative to the package root.
@@ -67,6 +102,8 @@ export function isPortFree(port: number): Promise<boolean> {
 /**
  * Spawn the observio sample agent as a child process.
  * Skips if dependencies are not installed — run `npm install` manually first.
+ * Returns the ChildProcess handle, or null if dependencies are missing.
+ * The actual bound port is detected asynchronously from stdout and available via getObservioPort().
  */
 export function spawnObservioAgent(cwd: string): ChildProcess | null {
   // Only start if dependencies are already installed (avoid blocking event loop)
@@ -84,17 +121,36 @@ export function spawnObservioAgent(cwd: string): ChildProcess | null {
 
   observioChild = child;
 
-  // Clean up reference when process exits
-  child.once('exit', () => {
-    if (observioChild === child) observioChild = null;
+  // Create a promise that resolves when the port is detected
+  portReadyPromise = new Promise<number>((resolve) => {
+    portReadyResolve = resolve;
   });
 
-  // Forward observio output with prefix
+  // Clean up reference when process exits
+  child.once('exit', () => {
+    if (observioChild === child) {
+      observioChild = null;
+      resetObservioPort();
+    }
+  });
+
+  // Forward observio output with prefix — detect the actual bound port
   child.stdout?.on('data', (data: Buffer) => {
     const lines = data.toString().trim().split('\n');
     for (const line of lines) {
       if (line.trim()) {
         console.log(`  [observio] ${line}`);
+        // Detect: "AI Agent AG UI Server running at http://localhost:3002"
+        const portMatch = line.match(/Server running at http:\/\/[^:]+:(\d+)/);
+        if (portMatch) {
+          observioActualPort = parseInt(portMatch[1], 10);
+          console.log(`  [observio] Detected port: ${observioActualPort}`);
+          // Resolve the ready promise
+          if (portReadyResolve) {
+            portReadyResolve(observioActualPort);
+            portReadyResolve = null;
+          }
+        }
       }
     }
   });
@@ -116,7 +172,7 @@ export function spawnObservioAgent(cwd: string): ChildProcess | null {
  * Prefers killing the tracked child process; falls back to port-based lookup.
  * Attempts graceful SIGTERM first, then SIGKILL after timeout.
  */
-export async function killObservioAgent(port: number = OBSERVIO_PORT): Promise<boolean> {
+export async function killObservioAgent(port: number = getObservioPort()): Promise<boolean> {
   // First, try to kill the tracked child process
   if (observioChild && !observioChild.killed) {
     try {
@@ -131,6 +187,7 @@ export async function killObservioAgent(port: number = OBSERVIO_PORT): Promise<b
         observioChild.kill('SIGKILL');
       }
       observioChild = null;
+      resetObservioPort();
     } catch { /* process already exited */ }
 
     // Verify port is free

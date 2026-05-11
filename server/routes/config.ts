@@ -17,6 +17,7 @@ import type { AgentConfig, ModelConfig } from '@/types/index.js';
 import { VALID_CONNECTOR_TYPES, BUILT_IN_AGENT_KEYS } from '@/lib/constants';
 import { addCustomAgent, removeCustomAgent, getCustomAgents } from '@/server/services/customAgentStore';
 import { getRemoteServers } from '@/server/services/codingAgents/remoteConfig';
+import { getObservioPort, waitForObservioReady } from '@/server/services/observioAgent';
 import fs from 'fs';
 import path from 'path';
 
@@ -45,14 +46,27 @@ function validateEndpointUrl(url: string): string | null {
  * with any custom agents added via the UI.
  * Used by CLI `list agents` command and frontend refreshConfig().
  */
-router.get('/api/agents', (req: Request, res: Response) => {
+router.get('/api/agents', async (req: Request, res: Response) => {
   try {
     const config = loadConfigSync();
+    // Wait for observio to report its port (non-blocking if already known, 10s timeout)
+    await waitForObservioReady();
     // Strip hooks (functions can't be serialized to JSON) and mark builtIn
-    const configAgents = config.agents.map(({ hooks, ...rest }) => ({
-      ...rest,
-      builtIn: BUILT_IN_AGENT_KEYS.has(rest.key) && !rest.isCustom,
-    }));
+    const configAgents = config.agents.map(({ hooks, ...rest }) => {
+      // Patch observio endpoint with actual port (may have auto-incremented)
+      // Only patch when endpoint points to localhost — respect explicit remote overrides
+      if (rest.key === 'observio' && rest.endpoint) {
+        try {
+          const url = new URL(rest.endpoint);
+          if (url.hostname === 'localhost' || url.hostname === '127.0.0.1') {
+            const actualPort = getObservioPort();
+            url.port = String(actualPort);
+            return { ...rest, endpoint: url.toString(), builtIn: BUILT_IN_AGENT_KEYS.has(rest.key) && !rest.isCustom };
+          }
+        } catch { /* invalid URL — leave endpoint unchanged */ }
+      }
+      return { ...rest, builtIn: BUILT_IN_AGENT_KEYS.has(rest.key) && !rest.isCustom };
+    });
     const customAgents = getCustomAgents().map(agent => ({
       ...agent,
       builtIn: false,
@@ -71,7 +85,6 @@ router.get('/api/agents', (req: Request, res: Response) => {
     const allAgents = [...configAgents, ...customAgents];
     const builtInCount = allAgents.filter(a => a.builtIn).length;
     const customCount = allAgents.filter(a => !a.builtIn).length;
-
     res.json({
       agents,
       total: agents.length,
