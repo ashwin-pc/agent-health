@@ -9,6 +9,7 @@ import {
   BenchmarkProgress,
   AgentConfig,
   TestCase,
+  TestCaseRun,
   EvaluationReport,
   RunConfigInput,
   RunPerformanceMetrics,
@@ -491,7 +492,8 @@ export async function runSingleUseCase(
   testCase: TestCase,
   storage: IStorageModule,
   onStep?: (step: any) => void,
-  evaluatorId?: string
+  evaluatorId?: string,
+  existingReportId?: string
 ): Promise<string> {
   const agentConfig = buildAgentConfigForRun(run);
   const bedrockModelId = getBedrockModelId(run.modelId);
@@ -506,7 +508,34 @@ export async function runSingleUseCase(
     { registry: connectorRegistry, evaluatorId }
   );
 
-  const savedReport = await saveReportWithModule(storage, report);
+  // If a placeholder run was pre-created, update it instead of creating a new one.
+  // We use the storage-layer field names (traceId, etc.) to match `saveReportWithModule`
+  // for consistency — the IStorageModule operations accept Partial<TestCaseRun> nominally
+  // but the codebase convention is to pass the storage-shaped doc directly.
+  let savedReport: any;
+  if (existingReportId) {
+    const updates = {
+      status: report.status,
+      passFailStatus: report.passFailStatus,
+      traceId: report.runId,
+      llmJudgeReasoning: report.llmJudgeReasoning,
+      metrics: report.metrics,
+      trajectory: report.trajectory,
+      rawEvents: report.rawEvents || [],
+      logs: report.logs || report.openSearchLogs,
+      improvementStrategies: report.improvementStrategies,
+      metricsStatus: report.metricsStatus,
+      traceFetchAttempts: report.traceFetchAttempts,
+      lastTraceFetchAt: report.lastTraceFetchAt,
+      traceError: report.traceError,
+      spans: report.spans,
+      connectorProtocol: report.connectorProtocol,
+    } as Partial<TestCaseRun>;
+    const updated = await storage.runs.update(existingReportId, updates);
+    savedReport = { ...report, id: updated.id, timestamp: updated.timestamp };
+  } else {
+    savedReport = await saveReportWithModule(storage, report);
+  }
 
   // Denormalize lastRunAt onto the test case (only for persisted test cases)
   storage.testCases.getById(testCase.id)
