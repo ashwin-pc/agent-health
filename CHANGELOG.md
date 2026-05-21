@@ -14,6 +14,18 @@ Inspired by [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)
 - **UI:** The radial gradient background previously seen only on the Dashboard / Overview page now applies on every page. The `dashboard-gradient-bg` class is now attached to the `SidebarInset` `<main>` in `Layout.tsx`, replacing the per-page `useEffect` toggle in `Dashboard.tsx`.
 
 ### Added
+- **Code-based test SDK (experimental)**: Playwright-style `test()` API for writing programmatic test cases in `.eval.js`/`.eval.ts` files, with per-matcher results displayed in the UI. Includes:
+  - `test(name, body)` and `test(name, options, body)` signatures with within-file duplicate detection
+  - All `TestOptions` fields are optional; only `name` is required
+  - No-prompt mode — tests with no `prompt` skip agent invocation entirely (purely deterministic / data-driven tests)
+  - Custom chai matchers: `.haveCalledTool()`, `.haveStepsOfType()`, `.haveOutputMatching()`, `.haveCompletedWithin()`
+  - Trajectory accessor sugar: `result.trajectory.toolCalls()`, `.firstToolCall()`, `.stepsOfType()`
+  - LLM judge as a callable: `await judge(result, 'claim')` records a structured matcher verdict
+  - Traces fixture: pre-loaded `totalTokens`, `totalCost`, `spanDuration(name)`, `toolCalls[]`, `spans[]`
+  - Cold-start migration that folds legacy `category` / `difficulty` / `subcategory` fields into the unified `labels` array (`category:RCA`, `difficulty:Medium`, etc.)
+  - New `/api/server-info` endpoint surfacing migration status to the UI
+  - Experimental status surfaced via README badge + first-call console.warn (suppressible with `AGENT_HEALTH_SUPPRESS_EXPERIMENTAL=1`)
+  - Documented at `docs/SDK.md`; samples at `evals/demo.eval.js` ([#207](https://github.com/opensearch-project/agent-health/pull/207))
 - Cross-page user preferences are now stored under a single shared `agent-health:prefs:*` namespace, so picking a value once is reflected on every other page that exposes the same control. Shared keys:
   - `prefs:timeRange` — Benchmarks / Test Cases / Evaluation Runs / Agent Traces (Agent Traces converts the shared `'1h' | '6h' | '1d' | '7d' | '30d' | 'all'` enum to its internal minute-based query cutoff).
   - `prefs:agentFilter` — Benchmarks and Evaluation Runs filter dropdowns (default `'all'`). Not Agent Traces — its dropdown options are telemetry service names which live in a different value space than the eval pages' agent-config keys.
@@ -68,6 +80,9 @@ Inspired by [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)
 - Fix Mend dependency vulnerabilities in `observio-sample-agent`: bump direct `ws` dep to `^8.20.1` (CVE-2026-45736); bump `langsmith` override to `>=0.6.0` for CVE-2026-45134 (High 7.1); add `protobufjs` override (>=8.2.0) covering CVE-2026-44288/289/290/291/292/293/294 and CVE-2026-45740 (highest 8.8) ([#163](https://github.com/opensearch-project/agent-health/issues/163), [#201](https://github.com/opensearch-project/agent-health/issues/201), [#203](https://github.com/opensearch-project/agent-health/issues/203), [#208](https://github.com/opensearch-project/agent-health/issues/208))
 
 ### Fixed
+- Update `sampleTraces.test.ts` root-span assertion: `demo-trace-001` now has two roots (agent + eval `test_suite_run`) since [#204](https://github.com/opensearch-project/agent-health/pull/204) added eval spans sharing the trace ID. Test now asserts both expected root span IDs by name instead of count. ([#207](https://github.com/opensearch-project/agent-health/pull/207))
+- Fix `PiConnector.integration.test.ts` drift with implementation: assert the actual `--skill` / `--extension` / `--append-system-prompt` args expanded from `packagePath` instead of the obsolete single `--package` arg. ([#207](https://github.com/opensearch-project/agent-health/pull/207))
+- Fix syntax error in `traceBlocking.integration.test.ts` from a botched merge (duplicate `return; }` block) that prevented the suite from compiling. ([#207](https://github.com/opensearch-project/agent-health/pull/207))
 - Guard testCaseIds accesses in evals3 pages to prevent crash on undefined ([#205](https://github.com/opensearch-project/agent-health/pull/205))
 - Prevent duplicate observio instances by starting agent before server ([#205](https://github.com/opensearch-project/agent-health/pull/205))
 - DocType discriminator for shared storage and PATCH sanitization in evaluation runs ([#205](https://github.com/opensearch-project/agent-health/pull/205))
