@@ -1228,3 +1228,6 @@ export interface DataSourceConfig {
  * 'memory' is for testing/demo
  */
 export type DataSourceAdapterType = 'file' | 'opensearch' | 'memory';
+
+// Skill evaluator types
+export * from './skills';
