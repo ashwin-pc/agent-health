@@ -33,6 +33,8 @@ import { asyncTestCaseStorage, asyncRunStorage, asyncBenchmarkStorage } from '@/
 import { TestCase, TestCaseRun, Benchmark } from '@/types';
 import { formatRelativeTime } from '@/lib/utils';
 import { TestCaseEditor } from '@/components/TestCaseEditor';
+import { useClusterContext } from '@/hooks/useClusterContext';
+import { ClusterContextBanner } from '@/components/comparison/ClusterContextBanner';
 import { QuickRunModal } from '@/components/QuickRunModal';
 import { Breadcrumbs } from '@/components/evals3/Breadcrumbs';
 import { validateTestCasesArrayJson } from '@/lib/testCaseValidation';
@@ -61,7 +63,12 @@ function getPassFail(run: TestCaseRun): 'pass' | 'fail' | 'running' | 'unknown' 
   if (run.status === 'running') return 'running';
   if (run.passFailStatus === 'passed') return 'pass';
   if (run.passFailStatus === 'failed') return 'fail';
-  if (run.status === 'completed') return run.metrics?.accuracy >= 50 ? 'pass' : 'fail';
+  // No verdict from the judge — don't fabricate one from a single metric
+  // value. The previous fallback of `accuracy >= 50` only worked under the
+  // RCA Default evaluator (the only one that emits a metric named
+  // `accuracy`), so for runs scored by any other evaluator it always
+  // returned 'fail' regardless of how the judge actually scored the run.
+  // 'unknown' is the honest answer.
   return 'unknown';
 }
 
@@ -114,6 +121,19 @@ export const TestCasesPage4: React.FC = () => {
   const [editingTestCase, setEditingTestCase] = useState<TestCase | null>(null);
   const [runningTestCase, setRunningTestCase] = useState<TestCase | null>(null);
   const [showSampleData, setShowSampleData] = useState<boolean | undefined>(undefined);
+
+  // Cluster context — when present, render a banner + auto-open the New
+  // Test Case modal so the user lands in the authoring flow they came
+  // here for (e.g. expanding test coverage for a cluster of failures).
+  const { context: clusterContext } = useClusterContext();
+  const hasOpenedFromCluster = useRef(false);
+  useEffect(() => {
+    if (!clusterContext) return;
+    if (hasOpenedFromCluster.current) return;
+    hasOpenedFromCluster.current = true;
+    setEditingTestCase(null);
+    setShowEditor(true);
+  }, [clusterContext]);
 
   // Sort
   const [sort, setSort] = usePersistedState<{ field: SortField; dir: SortDir }>('test-cases:sort', { field: 'created', dir: 'desc' });
@@ -341,6 +361,11 @@ export const TestCasesPage4: React.FC = () => {
 
   return (
     <div className="p-4 h-full flex flex-col" data-testid="test-cases-page">
+      {clusterContext && (
+        <div className="mb-3">
+          <ClusterContextBanner context={clusterContext} />
+        </div>
+      )}
       <Breadcrumbs
         items={[
           { label: 'Evaluations', href: '/evaluations/benchmarks' },

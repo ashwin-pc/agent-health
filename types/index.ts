@@ -28,6 +28,13 @@ export interface AssistantContext {
   runId?: string;
   traceId?: string;
   testCaseId?: string;
+  /**
+   * On comparison pages (`/compare/:benchmarkId?runs=a,b,…`), the list of run
+   * IDs the user is currently comparing. The assistant pre-loads these into
+   * the grounded snapshot so it can answer cross-run questions even before
+   * reaching for tools.
+   */
+  comparisonRunIds?: string[];
 }
 
 // Connector protocol for agent communication
@@ -349,6 +356,16 @@ export type MetricsStatus = 'pending' | 'calculating' | 'ready' | 'error';
 export interface TestCaseRun {
   id: string;
   timestamp: string;
+  /**
+   * Human-readable name for this run (e.g. "Baseline", "Claude_02").
+   * Set from the user-supplied value in the run config dialog, or auto-generated
+   * server-side as `Run <short-id>` if not provided. Optional for backwards
+   * compatibility with runs created before the field existed — UI consumers
+   * should fall back to a generated label (see `getRunDisplayName`).
+   */
+  name?: string;
+  /** Optional human-readable description of what this run was testing. */
+  description?: string;
   testCaseId: string;
   testCaseVersion?: number;          // Which version was run (optional for backwards compatibility)
   experimentId?: string;             // ID of the benchmark (field name preserved for storage compatibility)
