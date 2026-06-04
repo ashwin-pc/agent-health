@@ -41,6 +41,7 @@ import { fetchRunMetrics, formatCost, formatDuration, formatTokens } from '@/ser
 import { TrajectoryView } from './TrajectoryView';
 import { RawEventsPanel } from './RawEventsPanel';
 import { MatcherResultsPanel } from './MatcherResultsPanel';
+import { getJudgeReasoningText, getJudgeMatcherResults } from '@/lib/matchers/judgeAccessor';
 import TraceVisualization from './traces/TraceVisualization';
 import ViewToggle, { ViewMode } from './traces/ViewToggle';
 import TraceFullScreenView from './traces/TraceFullScreenView';
@@ -511,14 +512,14 @@ export const RunDetailsContent: React.FC<RunDetailsContentProps> = ({
         )}
 
         {/* Evaluation Error: Agent endpoint failed — hidden in inspector panel (status shown in compact bar) */}
-        {!hideMetrics && liveReport.status === 'failed' && liveReport.llmJudgeReasoning && (
+        {!hideMetrics && liveReport.status === 'failed' && getJudgeReasoningText(liveReport) && (
           <Card className="bg-red-500/10 border-red-500/30 mt-4">
             <CardContent className="p-3 flex items-start gap-3">
               <AlertCircle className="text-red-400 shrink-0 mt-0.5" size={18} />
               <div className="flex-1">
                 <div className="text-sm font-medium text-red-400 mb-1">Evaluation Failed</div>
                 <div className="text-xs text-muted-foreground whitespace-pre-wrap">
-                  {liveReport.llmJudgeReasoning}
+                  {getJudgeReasoningText(liveReport)}
                 </div>
               </div>
             </CardContent>
@@ -799,7 +800,7 @@ export const RunDetailsContent: React.FC<RunDetailsContentProps> = ({
             <FileText size={14} className="mr-2" /> Overview
           </TabsTrigger>
           <TabsTrigger value="trajectory" className="rounded-none border-b-2 border-transparent data-[state=active]:border-opensearch-blue data-[state=active]:text-opensearch-blue">
-            <GitBranch size={14} className="mr-2" /> Conversation History
+            <GitBranch size={14} className="mr-2" /> Test Case Output
             <Badge variant="secondary" className="ml-2">{trajectory.length}</Badge>
           </TabsTrigger>
           <TabsTrigger
@@ -983,7 +984,7 @@ export const RunDetailsContent: React.FC<RunDetailsContentProps> = ({
           <TabsContent value="trajectory" className="p-6 mt-0">
             {/* Header with Toggle */}
             <div className="flex items-center justify-between mb-4">
-              <h3 className="text-lg font-semibold">Conversation History</h3>
+              <h3 className="text-lg font-semibold">Test Case Output</h3>
               <div className="flex items-center gap-1 bg-muted rounded-lg p-1">
                 <button
                   onClick={() => setTrajectoryViewMode('processed')}
@@ -1220,22 +1221,26 @@ export const RunDetailsContent: React.FC<RunDetailsContentProps> = ({
               </div>
             )}
 
-            {/* Matcher results — per-assertion breakdown for SDK runs */}
-            {liveReport.matcherResults && liveReport.matcherResults.length > 0 && (
-              <MatcherResultsPanel results={liveReport.matcherResults} />
-            )}
+            {/* Matcher results — the canonical surface for SDK matchers AND
+                LLM judge entries (legacy auto-judge results are pushed into
+                the same array via lib/matchers/judgeAccessor). For old
+                reports that only have the legacy `llmJudgeReasoning` field,
+                getJudgeMatcherResults() synthesizes a virtual entry on read
+                so they still render here. */}
+            {(() => {
+              const judgeEntries = getJudgeMatcherResults(liveReport);
+              const codeEntries = (liveReport.matcherResults ?? []).filter(
+                m => m.method !== 'llm-judge'
+              );
+              const merged = [...codeEntries, ...judgeEntries];
+              return merged.length > 0 ? <MatcherResultsPanel results={merged} /> : null;
+            })()}
 
-            {/* LLM Judge Reasoning */}
-            <div>
-              <h3 className="text-lg font-semibold mb-3">LLM Judge Reasoning</h3>
-              <Card><CardContent className="p-4">
-                <div className="prose dark:prose-invert max-w-none prose-headings:text-sm prose-p:text-sm prose-p:leading-relaxed prose-code:text-opensearch-blue prose-code:bg-muted prose-code:px-1.5 prose-code:py-0.5 prose-code:rounded prose-code:text-xs prose-ul:text-sm prose-ol:text-sm">
-                  <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                    {liveReport.llmJudgeReasoning}
-                  </ReactMarkdown>
-                </div>
-              </CardContent></Card>
-            </div>
+            {/* Judge Reasoning card removed — judge data now flows through
+                the unified MatcherResultsPanel above as `[llm-judge]`
+                entries (see lib/matchers/judgeAccessor.ts). Keeping a
+                dedicated card on top of that would be a duplicate surface,
+                exactly the architectural duplication that caused issue #230. */}
 
             {/* Improvement Strategies */}
             {liveReport.improvementStrategies && liveReport.improvementStrategies.length > 0 && (

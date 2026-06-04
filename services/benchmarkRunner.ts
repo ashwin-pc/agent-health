@@ -25,7 +25,16 @@ import type { Client } from '@opensearch-project/opensearch';
 import type { IStorageModule } from '@/server/adapters/types';
 import { runEvaluationWithConnector, callBedrockJudge } from './evaluation';
 import { connectorRegistry } from '@/services/connectors/server';
-import { startSession, endSession, emptyTracesAccessor } from '@/lib/matchers/index';
+import {
+  startSession,
+  endSession,
+  emptyTracesAccessor,
+  unavailableTracesAccessor,
+  buildTracesAccessor,
+  buildJudgeMatcherEntry,
+  formatExpectedOutcomesAsClaim,
+} from '@/lib/matchers/index';
+import type { TracesAccessor } from '@/lib/matchers/index';
 import type { EvalResult, TrajectoryAccessor, TestFixtures } from '@/lib/testCases/types';
 import { judge as judgeFn } from '@/lib/testCases/judge';
 import { expect as ahExpect } from '@/lib/matchers/expect';
@@ -34,6 +43,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { loadConfigSync } from '@/lib/config/index';
 import { DEFAULT_CONFIG } from '@/lib/constants';
 import { tracePollingManager } from './traces/tracePoller';
+import { fetchSpansForRun } from './traces/fetchSpansForRun';
 import { getCustomAgents } from '@/server/services/customAgentStore';
 import { debug } from '@/lib/debug';
 import { RunResultStatus } from '@/types';
@@ -329,7 +339,12 @@ export async function executeRun(
               runId: report.runId,
               durationMs: report.performanceMetrics?.durationMs ?? 0,
             });
-            const fixtures = buildFixtures(evalResult);
+            // Pre-load the traces fixture for the body. See issue #230:
+            // when useTraces is true the fixture must reflect real OTel
+            // data — or fail loudly if it can't — instead of silently
+            // returning zeros that make `lessThan(N)` matchers pass.
+            const tracesAccessor = await loadTracesAccessor(agentConfig, report.runId);
+            const fixtures = buildFixtures(evalResult, tracesAccessor);
             const session = startSession();
             try {
               await evalFn(Object.assign(evalResult, { ...fixtures, result: evalResult }));
@@ -338,6 +353,9 @@ export async function executeRun(
               (report as any).passFailStatus = anyFailed ? 'failed' : 'passed';
               (report as any).evaluationType = 'deterministic';
               (report as any).matcherResults = matcherResults;
+              // Option B BC shim: legacy field empty for SDK runs;
+              // canonical judge data lives in `matcherResults`.
+              (report as any).llmJudgeReasoning = '';
               (report as any).metrics = anyFailed
                 ? { accuracy: 0, faithfulness: 0, latency_score: 0, trajectory_alignment_score: 0 }
                 : { accuracy: 100, faithfulness: 100, latency_score: 100, trajectory_alignment_score: 100 };
@@ -347,6 +365,7 @@ export async function executeRun(
               (report as any).evaluationType = 'deterministic';
               (report as any).assertionError = evalError.message;
               (report as any).matcherResults = matcherResults;
+              (report as any).llmJudgeReasoning = '';
               (report as any).metrics = { accuracy: 0, faithfulness: 0, latency_score: 0, trajectory_alignment_score: 0 };
             }
             // Mark the report as final so trace-mode polling below skips
@@ -727,6 +746,13 @@ export function startTracePollingForReportWithModule(report: EvaluationReport, t
             passFailStatus: judgment.passFailStatus,
             metrics: judgment.metrics,
             llmJudgeReasoning: judgment.llmJudgeReasoning,
+            // Unified judge surface (issue #230 follow-up).
+            matcherResults: [
+              buildJudgeMatcherEntry(judgment, {
+                claim: formatExpectedOutcomesAsClaim(testCase.expectedOutcomes),
+                model: judgeModelId,
+              }),
+            ],
             improvementStrategies: judgment.improvementStrategies,
           } as any);
 
@@ -814,6 +840,13 @@ function startTracePollingForReport(report: EvaluationReport, testCase: TestCase
             passFailStatus: judgment.passFailStatus,
             metrics: judgment.metrics,
             llmJudgeReasoning: judgment.llmJudgeReasoning,
+            // Unified judge surface (issue #230 follow-up).
+            matcherResults: [
+              buildJudgeMatcherEntry(judgment, {
+                claim: formatExpectedOutcomesAsClaim(testCase.expectedOutcomes),
+                model: judgeModelId,
+              }),
+            ],
             improvementStrategies: judgment.improvementStrategies,
           });
           if (report.experimentId) {
@@ -983,13 +1016,45 @@ function buildEvalResult(input: {
   };
 }
 
-function buildFixtures(result: EvalResult): TestFixtures {
+function buildFixtures(result: EvalResult, traces: TracesAccessor): TestFixtures {
   return {
     result,
     judge: judgeFn,
-    traces: emptyTracesAccessor(),
+    traces,
     expect: ahExpect,
   };
+}
+
+/**
+ * Construct the appropriate `TracesAccessor` for a deterministic eval body.
+ * See {@link loadTracesAccessor} in `services/evaluationRunner.ts` for the
+ * canonical doc — issue #230. Kept as a sibling helper here to avoid a
+ * circular import between the two runners.
+ */
+async function loadTracesAccessor(
+  agentConfig: AgentConfig,
+  runId: string | undefined
+): Promise<TracesAccessor> {
+  if (!agentConfig.useTraces) {
+    return emptyTracesAccessor();
+  }
+  if (!runId) {
+    return unavailableTracesAccessor(
+      'agent has useTraces=true but produced no runId for trace correlation'
+    );
+  }
+  const polling = agentConfig.tracePolling ?? {};
+  const result = await fetchSpansForRun(runId, {
+    maxAttempts: polling.maxAttempts,
+    intervalMs: polling.intervalMs,
+  });
+  if (result.spans.length === 0) {
+    const reason = result.lastError
+      ? `fetch failed for runId=${runId}: ${result.lastError}`
+      : `no spans found for runId=${runId} after polling — verify the agent's OTel exporter is reachable`;
+    return unavailableTracesAccessor(reason);
+  }
+  return buildTracesAccessor(result.spans);
 }
 
 function synthesizeEmptyReport(testCase: TestCase, agentKey: string, modelId: string): EvaluationReport {
