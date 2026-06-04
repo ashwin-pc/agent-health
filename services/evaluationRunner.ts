@@ -19,7 +19,7 @@ import { connectorRegistry } from '@/services/connectors/server';
 import { v4 as uuidv4 } from 'uuid';
 import { startSession, endSession, emptyTracesAccessor } from '@/lib/matchers/index';
 import type { EvalResult, TrajectoryAccessor, TestFixtures } from '@/lib/testCases/types';
-import { judge } from '@/lib/testCases/judge';
+import { bindJudge } from '@/lib/testCases/judge';
 import { expect } from '@/lib/matchers/expect';
 import type { TrajectoryStep } from '@/types';
 import { loadConfigSync } from '@/lib/config/index';
@@ -223,7 +223,17 @@ export async function executeEvaluationRun(
               // directly. New 1-arg bodies that destructure receive the
               // fixtures object. We pass the result twice via Object.assign
               // so both shapes work transparently.
-              const fixtures = buildFixtures(evalResult);
+              //
+              // The judge fixture is pre-bound to the run-level evaluator
+              // (and judge model). This makes SDK runs use exactly the
+              // same evaluator the UI "Run Test" path would, without the
+              // test author having to thread `evaluatorId` through every
+              // `judge()` call. Per-call options on `judge(result, claim,
+              // { evaluatorId })` still win.
+              const fixtures = buildFixtures(evalResult, {
+                evaluatorId: run.evaluatorId,
+                model: bedrockModelId,
+              });
               const arg = Object.assign(evalResult, { ...fixtures, result: evalResult }) as any;
               await evalFn(arg);
               const matcherResults = endSession();
@@ -601,11 +611,18 @@ function buildEvalResult(input: {
  * Build the fixtures object passed to the new Playwright-style test body.
  * The traces fixture is currently always empty \u2014 a follow-up commit will
  * pre-load real OTel data when agentConfig.useTraces is set.
+ *
+ * `defaults.evaluatorId` and `defaults.model` are bound onto the `judge`
+ * fixture so destructured `judge` calls inherit run-level selection. Pass
+ * `undefined` for both to keep behaviour identical to the unbound default.
  */
-function buildFixtures(result: EvalResult): TestFixtures {
+function buildFixtures(
+  result: EvalResult,
+  defaults?: { evaluatorId?: string; model?: string },
+): TestFixtures {
   return {
     result,
-    judge,
+    judge: bindJudge(defaults),
     traces: emptyTracesAccessor(),
     expect,
   };

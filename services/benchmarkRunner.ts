@@ -27,7 +27,7 @@ import { runEvaluationWithConnector, callBedrockJudge } from './evaluation';
 import { connectorRegistry } from '@/services/connectors/server';
 import { startSession, endSession, emptyTracesAccessor } from '@/lib/matchers/index';
 import type { EvalResult, TrajectoryAccessor, TestFixtures } from '@/lib/testCases/types';
-import { judge as judgeFn } from '@/lib/testCases/judge';
+import { bindJudge } from '@/lib/testCases/judge';
 import { expect as ahExpect } from '@/lib/matchers/expect';
 import type { TrajectoryStep } from '@/types';
 import { v4 as uuidv4 } from 'uuid';
@@ -329,7 +329,13 @@ export async function executeRun(
               runId: report.runId,
               durationMs: report.performanceMetrics?.durationMs ?? 0,
             });
-            const fixtures = buildFixtures(evalResult);
+            // Pre-bind run-level evaluator + judge model onto the
+            // judge fixture so destructured `judge` calls in the test
+            // body match the UI "Run Test" path's evaluator selection.
+            const fixtures = buildFixtures(evalResult, {
+              evaluatorId: run.evaluatorId,
+              model: bedrockModelId,
+            });
             const session = startSession();
             try {
               await evalFn(Object.assign(evalResult, { ...fixtures, result: evalResult }));
@@ -983,10 +989,13 @@ function buildEvalResult(input: {
   };
 }
 
-function buildFixtures(result: EvalResult): TestFixtures {
+function buildFixtures(
+  result: EvalResult,
+  defaults?: { evaluatorId?: string; model?: string },
+): TestFixtures {
   return {
     result,
-    judge: judgeFn,
+    judge: bindJudge(defaults),
     traces: emptyTracesAccessor(),
     expect: ahExpect,
   };
