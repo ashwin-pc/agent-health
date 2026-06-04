@@ -8,8 +8,19 @@ import { readFileSync } from 'fs';
 import { resolve, dirname } from 'path';
 import { pathToFileURL } from 'url';
 import { createRequire, Module as NodeModule } from 'module';
-import type { CodeTestCase } from './types.js';
-import { test as testFn, describe as describeFn, setActiveFile, getRegisteredTests, clearRegistry } from './define.js';
+import type { CodeTestCase, RegisteredHook } from './types.js';
+import {
+  test as testFn,
+  describe as describeFn,
+  beforeAll as beforeAllFn,
+  afterAll as afterAllFn,
+  beforeEach as beforeEachFn,
+  afterEach as afterEachFn,
+  setActiveFile,
+  getRegisteredTests,
+  getRegisteredHooks,
+  clearRegistry,
+} from './define.js';
 import { judge as judgeFn, wasJudgeCalled, resetJudgeFlag } from './judge.js';
 import { expect as ahExpect } from '../matchers/expect.js';
 
@@ -27,6 +38,13 @@ export function computeTestCaseHash(tc: CodeTestCase): string {
     context: tc.options.context,
     labels: tc.options.labels,
     description: tc.options.description,
+    // Include the new expected* fields so editing them invalidates the
+    // sourceHash and the upsert path picks up the change. Without this,
+    // a user adding `expectedOutcomes: [...]` to an existing test would
+    // see the test case stay on its old version and the new outcomes
+    // would never reach storage.
+    expectedOutcomes: tc.options.expectedOutcomes,
+    expectedTrajectory: tc.options.expectedTrajectory,
   });
   return createHash('sha256').update(content).digest('hex');
 }
@@ -46,6 +64,12 @@ export interface LoadResult {
    * (CLI / server names it after the filename).
    */
   benchmarks: Map<string, string[]>;
+  /**
+   * All lifecycle hooks (`beforeEach`/`afterEach`/`beforeAll`/`afterAll`)
+   * registered while loading this file. Empty when the file declares none.
+   * The orchestrator filters by `(sourceFile, describePath)` at run time.
+   */
+  hooks: RegisteredHook[];
 }
 
 export async function loadTestCasesFromModule(filePath: string): Promise<LoadResult> {
@@ -101,6 +125,13 @@ export async function loadTestCasesFromModule(filePath: string): Promise<LoadRes
     const sdkExports = {
       test: testFn,
       describe: describeFn,
+      // Lifecycle hooks — exported both as standalone names and (via
+      // namespace merging in define.ts) as `test.beforeEach` etc. CJS
+      // fixtures pick whichever style.
+      beforeAll: beforeAllFn,
+      afterAll: afterAllFn,
+      beforeEach: beforeEachFn,
+      afterEach: afterEachFn,
       judge: judgeFn,
       wasJudgeCalled,
       resetJudgeFlag,
@@ -183,5 +214,10 @@ export async function loadTestCasesFromModule(filePath: string): Promise<LoadRes
     }
   }
 
-  return { testCases: loaded, filePath: absPath, benchmarks };
+  // Collect every hook the file registered. Empty when no
+  // beforeEach/afterEach/beforeAll/afterAll were called — the orchestrator
+  // is a no-op in that case so existing tests are unaffected.
+  const hooks = getRegisteredHooks(absPath);
+
+  return { testCases: loaded, filePath: absPath, benchmarks, hooks };
 }
