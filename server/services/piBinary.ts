@@ -6,7 +6,7 @@
 /**
  * Resolves how to invoke the `pi` CLI used by the pi/agent judges.
  *
- * Prefers the **bundled** `@mariozechner/pi-coding-agent` from `node_modules`
+ * Prefers the **bundled** `@earendil-works/pi-coding-agent` from `node_modules`
  * (declared as an optionalDependency of agent-health) so the agent judge is
  * self-contained — no global `pi` install required. Falls back to a `pi`
  * binary on `PATH` when the package isn't installed (e.g. a slim install that
@@ -21,7 +21,7 @@ import { dirname, join, isAbsolute } from 'path';
 import { fileURLToPath } from 'url';
 import { existsSync, readFileSync } from 'fs';
 
-const PI_PKG = '@mariozechner/pi-coding-agent';
+const PI_PKG = '@earendil-works/pi-coding-agent';
 
 export interface PiCommand {
   /** Executable to spawn (node for the bundled cli.js, else the `pi` binary). */
@@ -56,7 +56,7 @@ function findPiPackageDir(): string | undefined {
   return undefined;
 }
 
-/** Resolve the bundled `@mariozechner/pi-coding-agent` CLI, or fall back to PATH `pi`. */
+/** Resolve the bundled `@earendil-works/pi-coding-agent` CLI, or fall back to PATH `pi`. */
 export function resolvePiCommand(): PiCommand {
   const pkgDir = findPiPackageDir();
   if (pkgDir) {

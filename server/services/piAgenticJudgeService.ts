@@ -14,7 +14,7 @@
  * In-process (SDK) rather than spawning the pi CLI: no subprocess, no NDJSON
  * stdout parsing, no extension file, no env-var scoping, no PATH/bin lookup.
  * The tools capture `runId` via closure so the judging model cannot pivot to
- * other runs. pi ships as the optionalDependency `@mariozechner/pi-coding-agent`.
+ * other runs. pi ships as the optionalDependency `@earendil-works/pi-coding-agent`.
  */
 
 import { buildEvaluationPrompt, JudgeRequest, JudgeResponse } from '@/server/services/bedrockService';
@@ -45,13 +45,13 @@ When you are done investigating, respond with ONLY a JSON object (no prose, opti
  * Dynamically load the pi SDK (optionalDependency). Throws a clear, actionable
  * error when it isn't installed rather than a raw module-not-found.
  */
-async function loadPiSdk(): Promise<typeof import('@mariozechner/pi-coding-agent')> {
+async function loadPiSdk(): Promise<typeof import('@earendil-works/pi-coding-agent')> {
   try {
-    return await import('@mariozechner/pi-coding-agent');
+    return await import('@earendil-works/pi-coding-agent');
   } catch (err: any) {
     throw new Error(
-      'Agent judge requires the optional dependency "@mariozechner/pi-coding-agent". ' +
-        'Reinstall agent-health without --no-optional, or run `npm i @mariozechner/pi-coding-agent`. ' +
+      'Agent judge requires the optional dependency "@earendil-works/pi-coding-agent". ' +
+        'Reinstall agent-health without --no-optional, or run `npm i @earendil-works/pi-coding-agent`. ' +
         `(${err?.message ?? String(err)})`
     );
   }

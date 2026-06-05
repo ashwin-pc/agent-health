@@ -14,7 +14,7 @@
  * the server's existing read endpoints over localhost.
  */
 
-import type { ExtensionAPI, ExtensionFactory } from '@mariozechner/pi-coding-agent';
+import type { ExtensionAPI, ExtensionFactory } from '@earendil-works/pi-coding-agent';
 import { Type } from 'typebox';
 
 function textResult(obj: unknown) {

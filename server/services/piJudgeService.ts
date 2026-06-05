@@ -205,7 +205,7 @@ export function spawnPi(
 
     child.on('error', (error: Error) => {
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
-        reject(new Error('Pi CLI not found. It ships as the optionalDependency "@mariozechner/pi-coding-agent"; reinstall without --no-optional, or install pi from https://pi.dev'));
+        reject(new Error('Pi CLI not found. It ships as the optionalDependency "@earendil-works/pi-coding-agent"; reinstall without --no-optional, or install pi from https://pi.dev'));
       } else {
         reject(error);
       }
