@@ -250,7 +250,7 @@ Every chai BDD matcher works (`.equal`, `.contain`, `.have.length.greaterThan`,
 ```javascript
 await judge(result, 'identifies the root cause');
 await judge(result, 'proposes a remediation', { model: 'claude-sonnet' });
-await judge(result, 'follows the SOP', { evaluatorId: 'system:cp-oncall' });
+await judge(result, 'follows the SOP', { evaluatorId: 'system:rca-default' });
 ```
 
 Calls the server's `/api/judge` endpoint with the test's trajectory plus the
@@ -265,7 +265,7 @@ compatibility with code written against the original PR.
 | Option        | Forwarded as | What it does |
 |---------------|--------------|--------------|
 | `model`       | `modelId`    | Override the judge model. Same provider routing (`bedrock`, `litellm`, `claude-code`, `pi`, `openai-compatible`, `agentic`, `demo`) the UI uses. |
-| `evaluatorId` | `evaluatorId`| Pick a stored evaluator (system or user). Same shape the UI sends — system ids like `system:cp-oncall` resolve via `getSystemEvaluatorById`; user ids resolve via `storage.evaluators.getById`. |
+| `evaluatorId` | `evaluatorId`| Pick a stored evaluator (system or user). Same shape the UI sends — system ids like `system:rca-default` resolve via `getSystemEvaluatorById`; user ids resolve via `storage.evaluators.getById`. |
 | `serverUrl`   | (request URL)| Point at a non-default agent-health server (defaults to `http://localhost:${AGENT_HEALTH_PORT ?? 4001}`). |
 
 #### Run-level evaluator (UI-equivalent)
@@ -277,9 +277,10 @@ author passing it manually:
 
 ```javascript
 // In the test body — no per-call evaluatorId needed.
-test('cp-oncall-investigate', { prompt: '/cp-oncall ...' }, async ({ result, judge }) => {
-  // If the run was created with `evaluatorId: 'system:cp-oncall'`, this
-  // call POSTs `{ ..., evaluatorId: 'system:cp-oncall' }` automatically.
+test('incident-investigate', { prompt: 'Investigate ticket ABC-123 ...' }, async ({ agent, judge }) => {
+  const result = await agent.run();
+  // If the run was created with `evaluatorId: 'system:rca-default'`, this
+  // call POSTs `{ ..., evaluatorId: 'system:rca-default' }` automatically.
   await judge(result, 'identifies the ticket details');
   await judge(result, 'reports the current state');
   await judge(result, 'recommends concrete next steps');
