@@ -13,7 +13,7 @@
  *
  * Per-call options:
  *
- *   await judge(result, claim, { evaluatorId: 'system:rca-default' });
+ *   await judge(result, claim, { evaluatorId: 'system-rca-default' });
  *   await judge(result, claim, { model: 'claude-sonnet' });
  *
  * On evaluation, `judge()` records a MatcherResult and returns a

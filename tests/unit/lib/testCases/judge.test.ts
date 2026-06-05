@@ -76,9 +76,9 @@ describe('judge() — per-call options', () => {
     const { lastBody } = mockJudgeFetch();
     const result = { trajectory: [{ type: 'response', content: 'ok' }] } as any;
 
-    await judge(result, 'identifies the issue', { evaluatorId: 'system:rca-default' });
+    await judge(result, 'identifies the issue', { evaluatorId: 'system-rca-default' });
 
-    expect(lastBody().evaluatorId).toBe('system:rca-default');
+    expect(lastBody().evaluatorId).toBe('system-rca-default');
   });
 
   it('omits evaluatorId from the body when not set (server default applies)', async () => {
@@ -225,17 +225,17 @@ describe('bindJudge() — run-level defaults (UI-equivalent)', () => {
 
   it('injects evaluatorId into every call when no per-call override is given', async () => {
     const { lastBody } = mockJudgeFetch();
-    const bound = bindJudge({ evaluatorId: 'system:rca-default' });
+    const bound = bindJudge({ evaluatorId: 'system-rca-default' });
 
     await bound({ trajectory: [{ type: 'response', content: 'a' }] } as any, 'c1');
     await bound({ trajectory: [{ type: 'response', content: 'b' }] } as any, 'c2');
 
-    expect(lastBody().evaluatorId).toBe('system:rca-default');
+    expect(lastBody().evaluatorId).toBe('system-rca-default');
   });
 
   it('per-call evaluatorId wins over bound default', async () => {
     const { lastBody } = mockJudgeFetch();
-    const bound = bindJudge({ evaluatorId: 'system:rca-default' });
+    const bound = bindJudge({ evaluatorId: 'system-rca-default' });
 
     await bound({ trajectory: [{ type: 'response', content: 'x' }] } as any, 'claim', {
       evaluatorId: 'user:custom-eval',
@@ -275,7 +275,7 @@ describe('bindJudge() — run-level defaults (UI-equivalent)', () => {
 
   it('explicit per-call undefined falls through to bound default (does not clear it)', async () => {
     const { lastBody } = mockJudgeFetch();
-    const bound = bindJudge({ evaluatorId: 'system:rca-default' });
+    const bound = bindJudge({ evaluatorId: 'system-rca-default' });
 
     // Caller passes `{ model: 'foo' }` and forgets to repeat evaluatorId —
     // the run-level default must survive. This is the "destructure judge
@@ -286,7 +286,7 @@ describe('bindJudge() — run-level defaults (UI-equivalent)', () => {
     });
 
     const body = lastBody();
-    expect(body.evaluatorId).toBe('system:rca-default');
+    expect(body.evaluatorId).toBe('system-rca-default');
     expect(body.modelId).toBe('claude-opus-4');
   });
 });

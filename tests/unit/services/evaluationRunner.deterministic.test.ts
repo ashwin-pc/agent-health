@@ -399,7 +399,7 @@ describe('executeEvaluationRun - deterministic evaluation', () => {
       id: 'run-eval-1',
       agentKey: 'test-agent',
       modelId: 'claude-sonnet',
-      evaluatorId: 'system:rca-default',
+      evaluatorId: 'system-rca-default',
       status: 'running',
       results: {},
       createdAt: new Date().toISOString(),
@@ -442,7 +442,7 @@ describe('executeEvaluationRun - deterministic evaluation', () => {
 
     const init = fetchMock.mock.calls[0][1] as RequestInit;
     const body = JSON.parse(init.body as string);
-    expect(body.evaluatorId).toBe('system:rca-default');
+    expect(body.evaluatorId).toBe('system-rca-default');
 
     // Per-call override still wins over the bound run-level evaluator —
     // matches UI behaviour where users can pick a different evaluator

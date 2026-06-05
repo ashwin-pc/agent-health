@@ -34,10 +34,11 @@ test('evaluator-id-smoke: judge fixture inherits run.evaluatorId', {
   description: 'No agent call. Verifies that the destructured judge fixture, when invoked with no per-call options, still posts the run-level evaluatorId to /api/judge.',
   labels: ['category:Smoke', 'feature:sdk-evaluator-id', 'kind:no-prompt'],
   timeout: 30_000,
-}, async function ({ result, judge }) {
-  // We don't have an agent run, so synthesize a trajectory the judge
-  // can grade. The mock-judge provider is permissive — any non-empty
-  // trajectory + claim pair returns a synthetic verdict.
+}, async function ({ judge }) {
+  // No agent run — synthesize a trajectory the judge can grade. The
+  // mock-judge provider is permissive: any non-empty trajectory + claim
+  // pair returns a synthetic verdict, so we don't need the runner-
+  // populated `result` fixture (this is a no-prompt smoke test).
   const fakeResult = {
     trajectory: [
       { type: 'action', toolName: 'fake_tool', content: '{"q":"test"}' },
