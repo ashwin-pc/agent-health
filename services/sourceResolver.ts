@@ -140,6 +140,81 @@ export async function resolveTestCaseSources(
   };
 }
 
+/**
+ * Re-materialize the code test bodies (and hooks/scopes) for a set of
+ * already-stored test cases — the benchmark-run entry point.
+ *
+ * Unlike {@link resolveTestCaseSources} (which is given source descriptors,
+ * e.g. `code-import` filenames, and upserts), this starts from test cases
+ * that were persisted by a prior `benchmark -f` import. It discovers their
+ * source files from the stored `sourceFile` provenance, dynamically imports
+ * each unique file, and maps `storedId → evaluate fn` by `(sourceFile, name)`.
+ * It does NOT upsert/bump versions — the test cases already exist.
+ *
+ * This is the single home for benchmark-side code-import resolution: the
+ * `POST /api/storage/benchmarks/:id/run` route used to hand-roll ~95 lines
+ * of equivalent logic inline (#245/#246). Returns empty maps when none of
+ * the stored test cases carry a code `sourceFile`.
+ */
+export async function resolveCodeFnMapForStoredTestCases(
+  storedTestCases: TestCase[],
+): Promise<{
+  evaluateFnMap: Map<string, EvaluateFn>;
+  hooksByFile: Map<string, RegisteredHook[]>;
+  testHookScopes: Map<string, { sourceFile?: string; describePath?: string }>;
+}> {
+  const evaluateFnMap = new Map<string, EvaluateFn>();
+  const hooksByFile = new Map<string, RegisteredHook[]>();
+  const testHookScopes = new Map<string, { sourceFile?: string; describePath?: string }>();
+
+  // Which stored test cases came from a code file? Collect their unique
+  // source files. `.json` provenance is ignored — only executable bodies.
+  const isCodeFile = (sf: string) =>
+    sf.endsWith('.eval.js') || sf.endsWith('.eval.ts') || sf.endsWith('.eval.mjs') ||
+    sf.endsWith('.js') || sf.endsWith('.ts') || sf.endsWith('.mjs');
+
+  const codeFilesToLoad = new Set<string>();
+  const tcByNameAndFile = new Map<string, TestCase>();
+  for (const tc of storedTestCases) {
+    const sf = (tc as any).sourceFile as string | undefined;
+    if (sf && isCodeFile(sf)) {
+      codeFilesToLoad.add(sf);
+      tcByNameAndFile.set(`${sf}\u0000${tc.name}`, tc);
+    }
+  }
+  if (codeFilesToLoad.size === 0) {
+    return { evaluateFnMap, hooksByFile, testHookScopes };
+  }
+
+  const { loadTestCasesFromModule } = await import('@/lib/testCases/loader');
+  for (const filePath of codeFilesToLoad) {
+    try {
+      const loaded = await loadTestCasesFromModule(filePath);
+      // Re-derive the relative key the stored docs were keyed on.
+      const relSourceFile = path.relative(process.cwd(), loaded.filePath);
+      for (const tc of loaded.testCases) {
+        const stored = tcByNameAndFile.get(`${relSourceFile}\u0000${tc.name}`);
+        if (stored && tc.evaluate) {
+          evaluateFnMap.set(stored.id, tc.evaluate as EvaluateFn);
+          testHookScopes.set(stored.id, {
+            sourceFile: loaded.filePath,
+            describePath: tc.benchmarkPath,
+          });
+        }
+      }
+      if (loaded.hooks && loaded.hooks.length > 0) {
+        hooksByFile.set(loaded.filePath, loaded.hooks);
+      }
+    } catch (loadErr: any) {
+      // Non-fatal: a missing/!broken file just means those test cases run
+      // without a code body (classic judge path). Mirrors prior behavior.
+      debug('SourceResolver', `Failed to re-resolve code file ${filePath}: ${loadErr?.message ?? loadErr}`);
+    }
+  }
+
+  return { evaluateFnMap, hooksByFile, testHookScopes };
+}
+
 async function fetchTestCasesByIds(ids: string[], storage: IStorageModule): Promise<TestCase[]> {
   return Promise.all(
     ids.map(async (id) => {
