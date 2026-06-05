@@ -284,6 +284,7 @@ export async function executeEvaluationRun(
               };
               const inv = await invokeAgent(agentConfig, bedrockModelId, invocationTestCase, {
                 registry: connectorRegistry,
+                ...(options?.env ? { env: options.env } : {}),
               });
               const agentOutput = inv.trajectory
                 .filter((s: any) => s.type === 'response' || s.type === 'assistant')

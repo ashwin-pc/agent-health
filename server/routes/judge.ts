@@ -257,11 +257,18 @@ router.post('/api/judge', async (req: Request, res: Response) => {
     if (provider === 'agent') {
       // Agent trace judge: an LLM judge with read-only, run-scoped trace tools
       // (query_spans/query_logs) so it can verify claims against the run's real
-      // OTel spans/logs instead of trusting the trajectory text. runId scopes
-      // the tools to this run.
-      debug('JudgeAPI', 'Agent trace judge - evaluating with run-scoped trace tools (runId=' + (runId ?? 'none') + ')');
+      // OTel spans/logs instead of trusting the trajectory text. runId is the
+      // scoping invariant for those tools — without it they have nothing to
+      // read, so fail loudly rather than spawn a judge that can only report
+      // "no run id" (see piAgenticJudgeService).
+      if (!runId) {
+        return res.status(400).json({
+          error: 'runId is required for the agent (trace) judge provider — its trace tools scope to it'
+        });
+      }
+      debug('JudgeAPI', 'Agent trace judge - evaluating with run-scoped trace tools (runId=' + runId + ')');
       const result = await evaluateWithPiAgenticTrace(
-        { trajectory, expectedOutcomes, expectedTrajectory, logs, runId }
+        { trajectory, expectedOutcomes, expectedTrajectory, logs, runId, modelId: resolvedModelId }
       );
       return res.json(result);
     }

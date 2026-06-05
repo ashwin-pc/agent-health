@@ -4,68 +4,92 @@
  */
 
 /**
- * Unit tests for the pi agentic trace judge (RFC 004 §4.4, #244).
- * The pi spawn itself needs the pi CLI (covered by an integration test);
- * here we mock spawnPi and assert the wiring: the restricted trace-tool
- * extension is loaded and the run id is injected as the scoping env var.
+ * Unit tests for the agent trace judge's pure helpers. The full
+ * `evaluateWithPiAgenticTrace` path drives the in-process pi SDK
+ * (`createAgentSession`) + a live model, so it's covered by e2e validation;
+ * here we test the deterministic helpers and the tool wiring (see
+ * traceJudgeTools.test.ts) that don't need a model.
  */
 
-jest.mock('@/server/services/piJudgeService', () => ({
-  spawnPi: jest.fn(),
-  parsePiJudgeJson: jest.requireActual('@/server/services/piJudgeService').parsePiJudgeJson
-    ?? ((s: string) => JSON.parse(s)),
-  parsePiError: (e: Error) => e.message,
-}));
+import { pickJudgeModel, extractFinalAssistantText, findRequestedModel } from '@/server/services/piAgenticJudgeService';
 
-import { evaluateWithPiAgenticTrace } from '@/server/services/piAgenticJudgeService';
-import { spawnPi } from '@/server/services/piJudgeService';
+describe('pickJudgeModel', () => {
+  const m = (provider: string, id: string) => ({ provider, id });
 
-const mockSpawnPi = spawnPi as jest.Mock;
-
-const VERDICT = JSON.stringify({
-  pass_fail_status: 'passed',
-  accuracy: 90,
-  reasoning: 'verified via spans',
-  metrics: { faithfulness: 88 },
-});
-
-describe('evaluateWithPiAgenticTrace', () => {
-  beforeEach(() => jest.clearAllMocks());
-
-  it('loads the trace-judge extension and scopes tools to the run id', async () => {
-    mockSpawnPi.mockResolvedValue(VERDICT);
-
-    const result = await evaluateWithPiAgenticTrace({
-      trajectory: [{ type: 'response', content: 'done' } as any],
-      expectedOutcomes: ['identifies the DB outage'],
-      runId: 'agent-run-123',
-    });
-
-    expect(mockSpawnPi).toHaveBeenCalledTimes(1);
-    const [, systemPrompt, opts] = mockSpawnPi.mock.calls[0];
-    // System prompt advertises the tools.
-    expect(systemPrompt).toMatch(/query_spans/);
-    expect(systemPrompt).toMatch(/query_logs/);
-    // Trace-judge extension is loaded.
-    expect(opts.extraExtensions.some((p: string) => p.endsWith('server/pi/extensions/trace-judge.ts'))).toBe(true);
-    // Sample-agent base pack is skipped (it pulls in deps the judge doesn't need).
-    expect(opts.omitBasePack).toBe(true);
-    // Run id is injected as the scoping env var.
-    expect(opts.extraEnv.AH_JUDGE_RUN_ID).toBe('agent-run-123');
-    expect(opts.extraEnv.AH_JUDGE_SERVER_URL).toMatch(/^http:\/\//);
-
-    expect(result.passFailStatus).toBe('passed');
-    expect(result.metrics.accuracy).toBe(90);
-    expect(typeof result.duration).toBe('number');
+  it('returns undefined for an empty model list', () => {
+    expect(pickJudgeModel([])).toBeUndefined();
   });
 
-  it('omits AH_JUDGE_RUN_ID when no runId is supplied (degrades to trajectory-only)', async () => {
-    mockSpawnPi.mockResolvedValue(VERDICT);
-    await evaluateWithPiAgenticTrace({
-      trajectory: [{ type: 'response', content: 'x' } as any],
-      expectedOutcomes: ['c'],
-    });
-    const opts = mockSpawnPi.mock.calls[0][2];
-    expect('AH_JUDGE_RUN_ID' in opts.extraEnv).toBe(false);
+  it('prefers sonnet > opus > claude > anything', () => {
+    const models = [m('x', 'gpt-4o'), m('a', 'claude-haiku'), m('b', 'claude-opus-4'), m('c', 'claude-sonnet-4-5')];
+    expect(pickJudgeModel(models)?.id).toBe('claude-sonnet-4-5');
+    expect(pickJudgeModel([m('x', 'gpt-4o'), m('b', 'claude-opus-4'), m('a', 'claude-haiku')])?.id).toBe('claude-opus-4');
+    expect(pickJudgeModel([m('x', 'gpt-4o'), m('a', 'claude-haiku')])?.id).toBe('claude-haiku');
+  });
+
+  it('falls back to the first model when none are claude', () => {
+    expect(pickJudgeModel([m('x', 'gpt-4o'), m('y', 'gemini-2')])?.id).toBe('gpt-4o');
+  });
+});
+
+describe('findRequestedModel (Bedrock inference profiles)', () => {
+  const m = (id: string) => ({ provider: 'amazon-bedrock', id });
+  const OLD = process.env.AWS_REGION;
+  afterEach(() => { process.env.AWS_REGION = OLD; });
+
+  it('returns undefined when no model id is requested', () => {
+    expect(findRequestedModel([m('anthropic.claude-sonnet-4-5')], undefined)).toBeUndefined();
+  });
+
+  it('matches the requested model ignoring the region prefix', () => {
+    const models = [m('anthropic.claude-3-5-sonnet'), m('global.anthropic.claude-sonnet-4-5')];
+    // requested with a us. prefix; only a global. profile exists -> pick it (not the bare/old one)
+    const found = findRequestedModel(models, 'us.anthropic.claude-sonnet-4-5');
+    expect(found?.id).toBe('global.anthropic.claude-sonnet-4-5');
+  });
+
+  it('prefers the region-appropriate inference profile over global/bare', () => {
+    process.env.AWS_REGION = 'us-east-1';
+    const models = [
+      m('anthropic.claude-sonnet-4-5'), // bare (fails on-demand)
+      m('global.anthropic.claude-sonnet-4-5'),
+      m('us.anthropic.claude-sonnet-4-5'),
+    ];
+    expect(findRequestedModel(models, 'us.anthropic.claude-sonnet-4-5')?.id).toBe('us.anthropic.claude-sonnet-4-5');
+  });
+
+  it('prefers an inference-profile variant over the bare id', () => {
+    const models = [m('anthropic.claude-sonnet-4-5'), m('global.anthropic.claude-sonnet-4-5')];
+    expect(findRequestedModel(models, 'anthropic.claude-sonnet-4-5')?.id).toBe('global.anthropic.claude-sonnet-4-5');
+  });
+
+  it('returns undefined when no model shares the requested base id', () => {
+    expect(findRequestedModel([m('amazon.nova-pro')], 'us.anthropic.claude-opus-4')).toBeUndefined();
+  });
+});
+
+describe('extractFinalAssistantText', () => {
+  it('returns the last assistant text content', () => {
+    const messages = [
+      { role: 'user', content: [{ type: 'text', text: 'prompt' }] },
+      { role: 'assistant', content: [{ type: 'text', text: 'first' }] },
+      { role: 'assistant', content: [{ type: 'tool_use', name: 'query_spans' }] }, // no text
+      { role: 'assistant', content: [{ type: 'text', text: 'Verified.\n{"pass_fail_status":"passed"}' }] },
+    ];
+    expect(extractFinalAssistantText(messages)).toBe('Verified.\n{"pass_fail_status":"passed"}');
+  });
+
+  it('ignores non-assistant roles and concatenates multi-part text', () => {
+    const messages = [
+      { role: 'user', content: [{ type: 'text', text: 'ignore me' }] },
+      { role: 'assistant', content: [{ type: 'text', text: 'a' }, { type: 'text', text: 'b' }] },
+    ];
+    expect(extractFinalAssistantText(messages)).toBe('ab');
+  });
+
+  it('returns empty string when there is no assistant text', () => {
+    expect(extractFinalAssistantText([{ role: 'user', content: [{ type: 'text', text: 'x' }] }])).toBe('');
+    expect(extractFinalAssistantText([])).toBe('');
+    expect(extractFinalAssistantText(undefined as any)).toBe('');
   });
 });

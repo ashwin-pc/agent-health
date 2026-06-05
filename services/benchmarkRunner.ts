@@ -399,6 +399,7 @@ export async function executeRun(
               };
               const doInvoke = () => invokeAgent(agentConfig, bedrockModelId, invocationTestCase, {
                 registry: connectorRegistry,
+                ...(opts?.env ? { env: opts.env } : {}),
               });
               const inv = caseSpanContext
                 ? await context.with(caseSpanContext, doInvoke)

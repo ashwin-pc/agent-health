@@ -14,6 +14,7 @@ import { spawn } from 'child_process';
 import { resolve } from 'path';
 import { buildEvaluationPrompt, JudgeRequest, JudgeResponse } from '@/server/services/bedrockService';
 import { JUDGE_SYSTEM_PROMPT } from '@/server/prompts/judgePrompt';
+import { resolvePiCommand } from '@/server/services/piBinary';
 import { debug } from '@/lib/debug';
 
 // ============================================================================
@@ -182,9 +183,10 @@ export function spawnPi(
     if (process.env.AWS_PROFILE) env.AWS_PROFILE = process.env.AWS_PROFILE;
     if (process.env.AWS_REGION) env.AWS_REGION = process.env.AWS_REGION;
 
-    debug('PiJudge', 'Spawning pi CLI with args:', args.slice(0, 4).join(' '));
+    const pi = resolvePiCommand();
+    debug('PiJudge', `Spawning pi CLI (${pi.bundled ? 'bundled' : 'PATH'}) with args:`, args.slice(0, 4).join(' '));
 
-    const child = spawn('pi', args, {
+    const child = spawn(pi.command, [...pi.prefixArgs, ...args], {
       env,
       stdio: ['pipe', 'pipe', 'pipe'],
       timeout: PI_TIMEOUT_MS,
@@ -203,7 +205,7 @@ export function spawnPi(
 
     child.on('error', (error: Error) => {
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
-        reject(new Error('Pi CLI not found. Install it from https://pi.dev'));
+        reject(new Error('Pi CLI not found. It ships as the optionalDependency "@mariozechner/pi-coding-agent"; reinstall without --no-optional, or install pi from https://pi.dev'));
       } else {
         reject(error);
       }

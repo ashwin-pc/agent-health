@@ -153,6 +153,13 @@ export interface InvokeAgentOptions {
   onStep?: (step: TrajectoryStep) => void;
   /** Raw event callback (debugging). */
   onRawEvent?: (event: any) => void;
+  /**
+   * Per-invocation environment variables forwarded to the connector. Merged
+   * into `connectorConfig.env` so subprocess connectors inherit them on the
+   * spawned child (the lowest common denominator every subprocess connector
+   * already honours). Sourced from the SDK's `AgentRunOptions.env`.
+   */
+  env?: Record<string, string>;
 }
 
 /**
@@ -171,17 +178,29 @@ export async function invokeAgent(
   testCase: TestCase,
   options: InvokeAgentOptions
 ): Promise<InvokeAgentResult> {
-  const { registry: connectorRegistry, onStep, onRawEvent } = options;
+  const { registry: connectorRegistry, onStep, onRawEvent, env: runEnv } = options;
 
   // Get connector for this agent
   const agentWithConnector = agent as AgentConfigWithConnector;
   const connector = connectorRegistry.getForAgent(agentWithConnector);
 
+  // Merge any per-invocation env (from the SDK's AgentRunOptions.env) into the
+  // connector config so subprocess connectors forward it to the spawned child.
+  // Static config env stays the base; per-call env wins on key collisions.
+  const baseConnectorConfig = agentWithConnector.connectorConfig as Record<string, any> | undefined;
+  const mergedConnectorConfig: Record<string, any> | undefined =
+    runEnv && Object.keys(runEnv).length > 0
+      ? {
+          ...(baseConnectorConfig || {}),
+          env: { ...((baseConnectorConfig?.env as Record<string, string>) || {}), ...runEnv },
+        }
+      : baseConnectorConfig;
+
   // Build connector request
   let request: ConnectorRequest = {
     testCase,
     modelId,
-    connectorConfig: agentWithConnector.connectorConfig as Record<string, any>,
+    connectorConfig: mergedConnectorConfig,
   };
 
   // Build auth from agent config

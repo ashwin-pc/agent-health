@@ -29,6 +29,11 @@ export interface JudgeRequest {
    * §4.4, #244).
    */
   runId?: string;
+  /**
+   * Bedrock/registry model id the run is configured to judge with. Used by the
+   * agent trace judge to select the matching in-process pi model.
+   */
+  modelId?: string;
 }
 
 export interface JudgeResponse {

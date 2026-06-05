@@ -335,6 +335,43 @@ describe('executeEvaluationRun - deterministic evaluation', () => {
     expect(mockRunEval).not.toHaveBeenCalled();
   });
 
+  it('forwards agent.run() env to invokeAgent (AgentRunOptions.env, RFC 004)', async () => {
+    const evaluateFn: EvaluateFn = jest.fn(async (fixtures: any) => {
+      await fixtures.agent.run('Do something', { env: { WORKSPACE_DIR: '/tmp/ws' } });
+    });
+    const evaluateFnMap = new Map<string, EvaluateFn>([['tc-env', evaluateFn]]);
+
+    const testCase: TestCase = {
+      id: 'tc-env',
+      name: 'Env forwarding',
+      initialPrompt: 'Do something',
+      context: [],
+    } as unknown as TestCase;
+    const run: EvaluationRun = {
+      id: 'run-1',
+      agentKey: 'test-agent',
+      modelId: 'claude-sonnet',
+      status: 'running',
+      results: {},
+      createdAt: new Date().toISOString(),
+    } as unknown as EvaluationRun;
+
+    mockInvokeAgent.mockResolvedValue(stubInvocation({ agentDurationMs: 100 }));
+    (storage.runs.create as jest.Mock).mockImplementation((report: any) => Promise.resolve({ ...report, id: 'report-1' }));
+
+    await executeEvaluationRun(run, [testCase], {
+      storageModule: storage,
+      evaluateFnMap,
+      onProgress: jest.fn(),
+    });
+
+    // The 4th arg to invokeAgent is InvokeAgentOptions — it must carry env.
+    expect(mockInvokeAgent).toHaveBeenCalledTimes(1);
+    expect(mockInvokeAgent.mock.calls[0][3]).toEqual(
+      expect.objectContaining({ env: { WORKSPACE_DIR: '/tmp/ws' } })
+    );
+  });
+
   it('binds run.evaluatorId onto the judge fixture so destructured judge() inherits it (UI-equivalent)', async () => {
     // This is the regression test for the SDK ↔ UI evaluator-parity gap.
     // The runner must hand the test body a `judge` whose POST body to
