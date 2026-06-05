@@ -384,6 +384,10 @@ export async function executeRun(
               spanDuration: (name: string) => loadedTraces.spanDuration(name),
             };
 
+            // Captured result from agent.run(), reflected into fixtures.result
+            // before afterEach/afterAll so hooks that read `result` see the
+            // real run (not the empty placeholder). See #248.
+            let capturedResult: EvalResult | undefined;
             const invoke = async (prompt: string, opts?: AgentRunOptions): Promise<EvalResult> => {
               const invocationTestCase: TestCase = {
                 ...testCase,
@@ -416,6 +420,7 @@ export async function executeRun(
               };
               (report as any).connectorProtocol = inv.connector.type;
               loadedTraces = await loadTracesAccessor(agentConfig, inv.runId ?? undefined);
+              capturedResult = evalResult;
               return evalResult;
             };
 
@@ -454,6 +459,9 @@ export async function executeRun(
                   await evalFn(Object.assign(emptyResult, { ...fixtures, result: emptyResult }));
                 }
               } finally {
+                if (fixtures && capturedResult) {
+                  fixtures.result = capturedResult;
+                }
                 const after = await hookOrchestrator.afterTest(desc, fixtures);
                 for (const r of after) recordVerdict(r);
               }

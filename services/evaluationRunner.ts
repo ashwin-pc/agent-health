@@ -267,6 +267,10 @@ export async function executeEvaluationRun(
             // The runner-supplied invocation behind `agent.run()`. Reuses the
             // shared invokeAgent() primitive so the trajectory + trace
             // correlation match the classic path exactly.
+            // Captured result from agent.run(), reflected into fixtures.result
+            // before afterEach/afterAll so hooks that read `result` see the
+            // real run (not the empty placeholder). See #248.
+            let capturedResult: EvalResult | undefined;
             const invoke = async (prompt: string, options?: AgentRunOptions): Promise<EvalResult> => {
               const invocationTestCase: TestCase = {
                 ...testCase,
@@ -287,6 +291,7 @@ export async function executeEvaluationRun(
                 runId: inv.runId ?? undefined,
                 durationMs: inv.agentDurationMs,
               });
+              capturedResult = evalResult;
               // Fold the invocation into the report shell, then load traces
               // for the body (see #230 loud-failure semantics).
               report.trajectory = inv.trajectory;
@@ -342,6 +347,12 @@ export async function executeEvaluationRun(
                   await evalFn(arg);
                 }
               } finally {
+                // Reflect the captured run into fixtures.result so afterEach/
+                // afterAll hooks observe the real result rather than the empty
+                // placeholder (#248).
+                if (fixtures && capturedResult) {
+                  fixtures.result = capturedResult;
+                }
                 // Always run afterEach/afterAll — even when the body threw.
                 const after = await hookOrchestrator.afterTest(desc, fixtures);
                 for (const r of after) recordVerdict(r);

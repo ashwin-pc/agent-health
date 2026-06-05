@@ -11,9 +11,9 @@
  * against `0` regardless of actual token usage — the fixture was hard-coded
  * to `emptyTracesAccessor()`. See https://github.com/opensearch-project/agent-health/issues/230
  *
- * Post-fix: the runner pre-loads real OTel spans into the fixture when
- * `useTraces: true`, or returns a loud-failure accessor (throws on read)
- * when spans aren't retrievable.
+ * Post-fix: the runner loads real OTel spans into the fixture (after
+ * `agent.run()`) when `useTraces: true`, or returns a loud-failure accessor
+ * (throws on read) when spans aren't retrievable.
  *
  * Run against the observio agent (useTraces: true):
  *
@@ -44,7 +44,9 @@ test(
       'Pre-fix this passed silently against 0; post-fix it must reflect real OTel token counts.',
     labels: ['issue:230', 'category:Verification', 'difficulty:Easy'],
   },
-  function ({ result, traces }) {
+  async function ({ agent, traces }) {
+    const result = await agent.run();
+
     // The agent actually ran and produced output.
     expect(result.agentOutput.trim()).to.have.length.greaterThan(0);
 
@@ -81,7 +83,8 @@ test(
       'Tool spans extracted from gen_ai.tool.name must surface in traces.toolCalls.',
     labels: ['issue:230', 'category:Verification', 'difficulty:Medium'],
   },
-  function ({ result, traces }) {
+  async function ({ agent, traces }) {
+    const result = await agent.run();
     expect(result.trajectory).to.haveStepsOfType('action');
 
     // We don't hard-require traces.toolCalls.length > 0 because the
@@ -113,7 +116,8 @@ test(
       'Judge confirms the answer is on-topic AND the traces fixture is populated.',
     labels: ['issue:230', 'category:Verification', 'difficulty:Medium'],
   },
-  async function ({ result, traces, judge }) {
+  async function ({ agent, traces, judge }) {
+    const result = await agent.run();
     expect(result.agentOutput.trim()).to.have.length.greaterThan(0);
 
     // Real token usage — proves the fix.

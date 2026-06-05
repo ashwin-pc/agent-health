@@ -270,7 +270,7 @@ test('cp-oncall-V2215793027-investigate-and-handoff', {
       requiredTools: [],
     },
   ],
-}, async function ({ result, judge, provisioned, testInfo, expect }) {
+}, async function ({ agent, judge, provisioned, testInfo, expect }) {
   // ── Sanity: hooks ran and per-test fixtures are populated ─────────────────
   // These are cheap chai matchers that double as a smoke test for the hook
   // wiring. If `provisioned.artifactDir` is missing here, the orchestrator
@@ -281,6 +281,11 @@ test('cp-oncall-V2215793027-investigate-and-handoff', {
     .to.equal(true);
   expect(testInfo.name, 'testInfo.name should reflect the running test')
     .to.equal('cp-oncall-V2215793027-investigate-and-handoff');
+
+  // ── Drive the agent ─────────────────────────────────────────────────────
+  // The test body owns invocation (RFC 004 control inversion). The test's
+  // `prompt` is the default, so `agent.run()` runs the /cp-oncall command.
+  const result = await agent.run();
 
   // ── Deterministic preflight ────────────────────────────────────────────────
   // The judge alone cannot reliably distinguish a grounded investigation from

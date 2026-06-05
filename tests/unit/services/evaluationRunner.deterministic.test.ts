@@ -476,4 +476,52 @@ describe('executeEvaluationRun - deterministic evaluation', () => {
     const body = JSON.parse(init.body as string);
     expect('evaluatorId' in body).toBe(false);
   });
+
+  it('reflects the agent.run() result into fixtures.result so afterEach hooks observe it (#248)', async () => {
+    const evaluateFn: EvaluateFn = jest.fn(async (fixtures: any) => {
+      await fixtures.agent.run('Investigate');
+    });
+    const evaluateFnMap = new Map<string, EvaluateFn>([['tc-hook', evaluateFn]]);
+
+    // afterEach reads `result` — under control inversion it must see the
+    // captured run, not the empty placeholder.
+    let seenInAfterEach: any;
+    const hooksByFile = new Map<string, any[]>([
+      ['file.eval.js', [{
+        kind: 'afterEach',
+        fn: (fx: any) => { seenInAfterEach = fx.result; },
+        sourceFile: 'file.eval.js',
+      }]],
+    ]);
+    const testHookScopes = new Map<string, { sourceFile?: string; describePath?: string }>([
+      ['tc-hook', { sourceFile: 'file.eval.js' }],
+    ]);
+
+    const testCase: TestCase = {
+      id: 'tc-hook', name: 'Hooked', initialPrompt: 'Investigate', context: [],
+    } as unknown as TestCase;
+    const run: EvaluationRun = {
+      id: 'run-1', agentKey: 'test-agent', modelId: 'claude-sonnet',
+      status: 'running', results: {}, createdAt: new Date().toISOString(),
+    } as unknown as EvaluationRun;
+
+    mockInvokeAgent.mockResolvedValue(stubInvocation({
+      trajectory: [{ type: 'response', content: 'Found the root cause' }],
+      agentDurationMs: 42,
+    }));
+    (storage.runs.create as jest.Mock).mockImplementation((report: any) =>
+      Promise.resolve({ ...report, id: 'report-hook' }));
+
+    await executeEvaluationRun(run, [testCase], {
+      storageModule: storage,
+      evaluateFnMap,
+      hooksByFile,
+      testHookScopes,
+      onProgress: jest.fn(),
+    });
+
+    expect(seenInAfterEach).toBeDefined();
+    expect(seenInAfterEach.agentOutput).toBe('Found the root cause');
+    expect(seenInAfterEach.durationMs).toBe(42);
+  });
 });
