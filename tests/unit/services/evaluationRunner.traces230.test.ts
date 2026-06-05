@@ -24,6 +24,7 @@ import type { EvaluateFn } from '@/services/sourceResolver';
 
 jest.mock('@/services/evaluation', () => ({
   runEvaluationWithConnector: jest.fn(),
+  invokeAgent: jest.fn(),
   callBedrockJudge: jest.fn(),
 }));
 
@@ -97,11 +98,23 @@ jest.mock('@/services/traces/index', () => ({
   fetchTracesByRunIds: jest.fn(),
 }));
 
-import { runEvaluationWithConnector } from '@/services/evaluation';
+import { runEvaluationWithConnector, invokeAgent } from '@/services/evaluation';
 import { fetchTracesByRunIds } from '@/services/traces/index';
 
 const mockRunEval = runEvaluationWithConnector as jest.Mock;
+const mockInvokeAgent = invokeAgent as jest.Mock;
 const mockFetchTraces = fetchTracesByRunIds as jest.MockedFunction<typeof fetchTracesByRunIds>;
+
+/** Build a stub invokeAgent result (the pure invocation primitive). */
+function stubInvocation(opts: { runId?: string | null } = {}) {
+  return {
+    trajectory: [{ type: 'response', content: 'agent output' }],
+    rawEvents: [],
+    runId: 'runId' in opts ? (opts.runId ?? undefined) : 'agent-run-id-123',
+    agentDurationMs: 1000,
+    connector: { type: 'agui-streaming' } as any,
+  };
+}
 
 function createMockStorage(): IStorageModule {
   const passthroughCreate = jest.fn().mockImplementation((report: any) =>
@@ -149,18 +162,12 @@ describe('executeEvaluationRun — issue #230 traces fixture pre-loading', () =>
   beforeEach(() => {
     jest.clearAllMocks();
     storage = createMockStorage();
-    mockRunEval.mockResolvedValue({
-      id: 'report-1',
-      runId: 'agent-run-id-123',
-      trajectory: [{ type: 'response', content: 'agent output' }],
-      rawEvents: [],
-      status: 'completed',
-      performanceMetrics: { durationMs: 1000 },
-    });
+    mockInvokeAgent.mockResolvedValue(stubInvocation());
   });
 
   it('Case A: useTraces=false → traces fixture returns silent zeros', async () => {
-    const evalFn: EvaluateFn = jest.fn(async ({ traces }: any) => {
+    const evalFn: EvaluateFn = jest.fn(async ({ agent, traces }: any) => {
+      await agent.run('Test prompt');
       // Explicitly read the fixture to prove it does not throw.
       expect(traces.totalTokens).toBe(0);
       expect(traces.totalCost).toBe(0);
@@ -183,7 +190,8 @@ describe('executeEvaluationRun — issue #230 traces fixture pre-loading', () =>
     mockFetchTraces.mockResolvedValue({ spans: [], total: 0 } as any);
 
     let caught: unknown;
-    const evalFn: EvaluateFn = jest.fn(async ({ traces }: any) => {
+    const evalFn: EvaluateFn = jest.fn(async ({ agent, traces }: any) => {
+      await agent.run('Test prompt');
       try {
         // Pre-fix: this returned 0 silently → assertion passed.
         // Post-fix: reading totalTokens throws.
@@ -224,7 +232,8 @@ describe('executeEvaluationRun — issue #230 traces fixture pre-loading', () =>
       total: 1,
     } as any);
 
-    const evalFn: EvaluateFn = jest.fn(async ({ traces, expect: ahExpect }: any) => {
+    const evalFn: EvaluateFn = jest.fn(async ({ agent, traces, expect: ahExpect }: any) => {
+      await agent.run('Test prompt');
       ahExpect(traces.totalTokens).to.be.lessThan(10_000);
     });
 
@@ -260,7 +269,8 @@ describe('executeEvaluationRun — issue #230 traces fixture pre-loading', () =>
       total: 1,
     } as any);
 
-    const evalFn: EvaluateFn = jest.fn(async ({ traces, expect: ahExpect }: any) => {
+    const evalFn: EvaluateFn = jest.fn(async ({ agent, traces, expect: ahExpect }: any) => {
+      await agent.run('Test prompt');
       // Reading totalTokens gives the real aggregate, not 0.
       expect(traces.totalTokens).toBe(5000);
       ahExpect(traces.totalTokens).to.be.lessThan(10_000);
@@ -276,17 +286,11 @@ describe('executeEvaluationRun — issue #230 traces fixture pre-loading', () =>
   });
 
   it('Case E: useTraces=true but agent did not return a runId → traces accessor throws on read with the no-runId reason', async () => {
-    mockRunEval.mockResolvedValue({
-      id: 'report-1',
-      runId: undefined, // <-- missing
-      trajectory: [{ type: 'response', content: 'agent output' }],
-      rawEvents: [],
-      status: 'completed',
-      performanceMetrics: { durationMs: 1000 },
-    });
+    mockInvokeAgent.mockResolvedValue(stubInvocation({ runId: undefined }));
 
     let caught: unknown;
-    const evalFn: EvaluateFn = jest.fn(async ({ traces }: any) => {
+    const evalFn: EvaluateFn = jest.fn(async ({ agent, traces }: any) => {
+      await agent.run('Test prompt');
       try {
         const value = traces.totalTokens;
         void value;
@@ -311,7 +315,8 @@ describe('executeEvaluationRun — issue #230 traces fixture pre-loading', () =>
     mockFetchTraces.mockRejectedValue(new Error('OpenSearch 503: cluster overloaded'));
 
     let caught: unknown;
-    const evalFn: EvaluateFn = jest.fn(async ({ traces }: any) => {
+    const evalFn: EvaluateFn = jest.fn(async ({ agent, traces }: any) => {
+      await agent.run('Test prompt');
       try {
         const value = traces.totalTokens;
         void value;
@@ -337,24 +342,13 @@ describe('executeEvaluationRun — issue #230 traces fixture pre-loading', () =>
 
   it('Case G: deterministic verdict on a useTraces=true agent must clear the trace-mode "Waiting for traces…" placeholder llmJudgeReasoning', async () => {
     // Repro: any deterministic body running against an agent with
-    // `useTraces: true` produces a report whose `llmJudgeReasoning`
-    // was initialised to 'Waiting for traces to become available...'
-    // by the trace-mode init in `services/evaluation/index.ts`. The
-    // deterministic runner overwrites metrics + matcherResults but
-    // pre-fix did NOT clear that placeholder, so the UI's Judge
-    // Reasoning panel showed it indefinitely — confusing users into
-    // thinking the LLM judge was still pending when in fact the
-    // verdict was already final.
-    mockRunEval.mockResolvedValue({
-      id: 'report-1',
-      runId: 'agent-run-id-123',
-      trajectory: [{ type: 'response', content: 'agent output' }],
-      rawEvents: [],
-      status: 'completed',
-      metricsStatus: 'pending',
-      llmJudgeReasoning: 'Waiting for traces to become available...',
-      performanceMetrics: { durationMs: 1000 },
-    });
+    // `useTraces: true` must not surface a stale "Waiting for traces…"
+    // placeholder. Under control inversion the report starts from
+    // synthesizeEmptyReport (llmJudgeReasoning: '') and the deterministic
+    // branch re-asserts '' — the placeholder can never appear. This guards
+    // against a regression where the trace-mode placeholder leaked into the
+    // saved report and the UI's Judge Reasoning panel showed it forever.
+    mockInvokeAgent.mockResolvedValue(stubInvocation());
     mockFetchTraces.mockResolvedValue({
       spans: [
         {
@@ -366,7 +360,8 @@ describe('executeEvaluationRun — issue #230 traces fixture pre-loading', () =>
       total: 1,
     } as any);
 
-    const evalFn: EvaluateFn = jest.fn(async ({ result }: any) => {
+    const evalFn: EvaluateFn = jest.fn(async ({ agent }: any) => {
+      const result = await agent.run('Test prompt');
       expect(result.agentOutput.length).toBeGreaterThan(0);
     });
 

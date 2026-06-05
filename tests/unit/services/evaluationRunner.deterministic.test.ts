@@ -10,6 +10,7 @@ import type { EvaluateFn } from '@/services/sourceResolver';
 
 jest.mock('@/services/evaluation', () => ({
   runEvaluationWithConnector: jest.fn(),
+  invokeAgent: jest.fn(),
   callBedrockJudge: jest.fn(),
 }));
 
@@ -43,9 +44,26 @@ jest.mock('@/services/traces/tracePoller', () => ({
   tracePollingManager: { startPolling: jest.fn() },
 }));
 
-import { runEvaluationWithConnector } from '@/services/evaluation';
+import { runEvaluationWithConnector, invokeAgent } from '@/services/evaluation';
 
 const mockRunEval = runEvaluationWithConnector as jest.Mock;
+const mockInvokeAgent = invokeAgent as jest.Mock;
+
+/** Build a stub invokeAgent result (the pure invocation primitive). */
+function stubInvocation(opts: {
+  trajectory?: any[];
+  rawEvents?: any[];
+  runId?: string | null;
+  agentDurationMs?: number;
+} = {}) {
+  return {
+    trajectory: opts.trajectory ?? [],
+    rawEvents: opts.rawEvents ?? [],
+    runId: opts.runId ?? null,
+    agentDurationMs: opts.agentDurationMs ?? 0,
+    connector: { type: 'agui-streaming' } as any,
+  };
+}
 
 function createMockStorage(): IStorageModule {
   return {
@@ -69,8 +87,11 @@ describe('executeEvaluationRun - deterministic evaluation', () => {
     storage = createMockStorage();
   });
 
-  it('calls evaluate function instead of LLM judge when evaluateFnMap has entry', async () => {
-    const evaluateFn: EvaluateFn = jest.fn();
+  it('drives the agent via agent.run() and runs the deterministic body (no LLM judge)', async () => {
+    let captured: any;
+    const evaluateFn: EvaluateFn = jest.fn(async (fixtures: any) => {
+      captured = await fixtures.agent.run('Test prompt');
+    });
     const evaluateFnMap = new Map<string, EvaluateFn>([['tc-1', evaluateFn]]);
 
     const testCase: TestCase = {
@@ -90,13 +111,10 @@ describe('executeEvaluationRun - deterministic evaluation', () => {
       createdAt: new Date().toISOString(),
     } as unknown as EvaluationRun;
 
-    mockRunEval.mockResolvedValue({
-      id: 'report-1',
+    mockInvokeAgent.mockResolvedValue(stubInvocation({
       trajectory: [{ type: 'response', content: 'Agent output' }],
-      rawEvents: [],
-      status: 'completed',
-      performanceMetrics: { durationMs: 1000 },
-    });
+      agentDurationMs: 1000,
+    }));
 
     (storage.runs.create as jest.Mock).mockResolvedValue({
       id: 'report-1',
@@ -116,38 +134,30 @@ describe('executeEvaluationRun - deterministic evaluation', () => {
       onProgress,
     });
 
-    // Verify skipJudge was passed
-    expect(mockRunEval).toHaveBeenCalledWith(
-      expect.anything(),
-      expect.anything(),
-      expect.anything(),
-      expect.anything(),
-      expect.objectContaining({ skipJudge: true })
-    );
+    // Control inversion: the classic eager judge path is NOT used; the body
+    // invokes the agent itself via agent.run() → invokeAgent().
+    expect(mockRunEval).not.toHaveBeenCalled();
+    expect(mockInvokeAgent).toHaveBeenCalledTimes(1);
 
-    // Verify evaluate function was called with correct args
-    expect(evaluateFn).toHaveBeenCalledWith(expect.objectContaining({
-      trajectory: [{ type: 'response', content: 'Agent output' }],
+    // The result returned by agent.run() carries the captured trajectory.
+    expect(captured).toMatchObject({
       agentOutput: 'Agent output',
       rawEvents: [],
       durationMs: 1000,
-    }));
+    });
+    expect(captured.trajectory).toEqual([{ type: 'response', content: 'Agent output' }]);
   });
 
   it('marks report as passed when evaluate function does not throw', async () => {
-    const evaluateFn: EvaluateFn = jest.fn();
+    const evaluateFn: EvaluateFn = jest.fn(async (fixtures: any) => {
+      await fixtures.agent.run('P');
+    });
     const evaluateFnMap = new Map<string, EvaluateFn>([['tc-1', evaluateFn]]);
 
     const testCase: TestCase = { id: 'tc-1', name: 'Test', initialPrompt: 'P', context: [] } as unknown as TestCase;
     const run: EvaluationRun = { id: 'run-1', agentKey: 'test-agent', modelId: 'claude-sonnet', status: 'running', results: {}, createdAt: new Date().toISOString() } as unknown as EvaluationRun;
 
-    mockRunEval.mockResolvedValue({
-      id: 'report-1',
-      trajectory: [],
-      rawEvents: [],
-      status: 'completed',
-      performanceMetrics: { durationMs: 500 },
-    });
+    mockInvokeAgent.mockResolvedValue(stubInvocation({ agentDurationMs: 500 }));
 
     (storage.runs.create as jest.Mock).mockImplementation((report: any) => {
       expect(report.passFailStatus).toBe('passed');
@@ -165,19 +175,19 @@ describe('executeEvaluationRun - deterministic evaluation', () => {
   });
 
   it('marks report as failed when evaluate function throws', async () => {
-    const evaluateFn: EvaluateFn = jest.fn().mockRejectedValue(new Error('expected 0 to not equal 0'));
+    const evaluateFn: EvaluateFn = jest.fn(async (fixtures: any) => {
+      await fixtures.agent.run('P');
+      throw new Error('expected 0 to not equal 0');
+    });
     const evaluateFnMap = new Map<string, EvaluateFn>([['tc-1', evaluateFn]]);
 
     const testCase: TestCase = { id: 'tc-1', name: 'Test', initialPrompt: 'P', context: [] } as unknown as TestCase;
     const run: EvaluationRun = { id: 'run-1', agentKey: 'test-agent', modelId: 'claude-sonnet', status: 'running', results: {}, createdAt: new Date().toISOString() } as unknown as EvaluationRun;
 
-    mockRunEval.mockResolvedValue({
-      id: 'report-1',
+    mockInvokeAgent.mockResolvedValue(stubInvocation({
       trajectory: [{ type: 'response', content: 'Bad output' }],
-      rawEvents: [],
-      status: 'completed',
-      performanceMetrics: { durationMs: 500 },
-    });
+      agentDurationMs: 500,
+    }));
 
     (storage.runs.create as jest.Mock).mockImplementation((report: any) => {
       expect(report.passFailStatus).toBe('failed');
@@ -267,8 +277,9 @@ describe('executeEvaluationRun - deterministic evaluation', () => {
       onProgress: jest.fn(),
     });
 
-    // Verify the connector was NEVER called — agent invocation skipped
+    // Verify neither invocation path ran — body never called agent.run()
     expect(mockRunEval).not.toHaveBeenCalled();
+    expect(mockInvokeAgent).not.toHaveBeenCalled();
 
     // Verify the deterministic body still ran with an empty result
     expect(evaluateFn).toHaveBeenCalledTimes(1);
@@ -288,8 +299,10 @@ describe('executeEvaluationRun - deterministic evaluation', () => {
     expect(run.results['tc-noprompt'].status).toBe('completed');
   });
 
-  it('still calls agent when prompt is present even if evaluate function exists', async () => {
-    const evaluateFn: EvaluateFn = jest.fn();
+  it('invokes the agent via agent.run() when the body calls it', async () => {
+    const evaluateFn: EvaluateFn = jest.fn(async (fixtures: any) => {
+      await fixtures.agent.run('Do something');
+    });
     const evaluateFnMap = new Map<string, EvaluateFn>([['tc-prompt', evaluateFn]]);
 
     const testCase: TestCase = {
@@ -307,13 +320,7 @@ describe('executeEvaluationRun - deterministic evaluation', () => {
       createdAt: new Date().toISOString(),
     } as unknown as EvaluationRun;
 
-    mockRunEval.mockResolvedValue({
-      id: 'report-1',
-      trajectory: [],
-      rawEvents: [],
-      status: 'completed',
-      performanceMetrics: { durationMs: 100 },
-    });
+    mockInvokeAgent.mockResolvedValue(stubInvocation({ agentDurationMs: 100 }));
     (storage.runs.create as jest.Mock).mockImplementation((report: any) => Promise.resolve({ ...report, id: 'report-1' }));
 
     await executeEvaluationRun(run, [testCase], {
@@ -322,8 +329,10 @@ describe('executeEvaluationRun - deterministic evaluation', () => {
       onProgress: jest.fn(),
     });
 
-    // Connector WAS called — prompt is present
-    expect(mockRunEval).toHaveBeenCalledTimes(1);
+    // invokeAgent WAS called via the body's agent.run(); the classic eager
+    // judge path was not used.
+    expect(mockInvokeAgent).toHaveBeenCalledTimes(1);
+    expect(mockRunEval).not.toHaveBeenCalled();
   });
 
   it('binds run.evaluatorId onto the judge fixture so destructured judge() inherits it (UI-equivalent)', async () => {
