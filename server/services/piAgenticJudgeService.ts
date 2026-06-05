@@ -18,6 +18,7 @@
 import { resolve } from 'path';
 import { buildEvaluationPrompt, JudgeRequest, JudgeResponse } from '@/server/services/bedrockService';
 import { spawnPi, parsePiJudgeJson, parsePiError } from '@/server/services/piJudgeService';
+import { readEnv } from '@/lib/envCompat';
 import { debug } from '@/lib/debug';
 
 /** Absolute path to the shipped trace-judge pi extension. */
@@ -71,7 +72,7 @@ export async function evaluateWithPiAgenticTrace(
       ...(runId ? { AH_JUDGE_RUN_ID: runId } : {}),
       AH_JUDGE_SERVER_URL:
         process.env.AH_JUDGE_SERVER_URL ||
-        `http://localhost:${process.env.AH_PORT || process.env.AGENT_HEALTH_PORT || '4001'}`,
+        `http://localhost:${readEnv('AH_PORT', 'AGENT_HEALTH_PORT') || '4001'}`,
     },
   });
   const duration = Date.now() - startTime;
