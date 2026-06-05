@@ -111,6 +111,68 @@ export interface JudgeOptions {
    * back to the default evaluator when omitted on both call and bind.
    */
   evaluatorId?: string;
+  /**
+   * Skip the LLM call entirely. The judge returns a non-gating `skipped`
+   * verdict (pass: true, skipped: true). Useful for fast/offline iteration.
+   * The global `AH_SKIP_JUDGE=1` env var forces this for every judge call.
+   */
+  skip?: boolean;
+}
+
+// ─── Content-addressed verdict cache ────────────────────────────────────
+// Identical judge inputs (evaluator + model + claims + trajectory) yield the
+// same verdict, so we memoise the raw judge response per process. This keeps
+// repeated judge() calls on the same result cheap (RFC 004 §4.5) — e.g. a
+// ret ried test, or several claims that re-judge the same trajectory.
+interface RawJudgeResponse {
+  passFailStatus?: 'passed' | 'failed';
+  metrics?: { accuracy?: number; [k: string]: number | undefined };
+  llmJudgeReasoning?: string;
+  improvementStrategies?: unknown[];
+}
+const verdictCache = new Map<string, RawJudgeResponse>();
+
+/** Clear the in-process judge verdict cache (test isolation / new run). */
+export function clearJudgeCache(): void {
+  verdictCache.clear();
+}
+
+/**
+ * Stable, collision-resistant cache key over the judging inputs. Uses
+ * `sha256` when Node's crypto is available, falling back to a fast JS hash
+ * so the SDK stays bundler-safe.
+ */
+function judgeCacheKey(input: {
+  evaluatorId?: string;
+  model?: string;
+  claims: string[];
+  trajectory: unknown;
+}): string {
+  const canonical = JSON.stringify({
+    evaluatorId: input.evaluatorId ?? '',
+    model: input.model ?? '',
+    claims: input.claims,
+    trajectory: input.trajectory,
+  });
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { createHash } = require('crypto');
+    return createHash('sha256').update(canonical).digest('hex');
+  } catch {
+    // FNV-1a fallback — non-cryptographic but fine for cache addressing.
+    let h = 0x811c9dc5;
+    for (let i = 0; i < canonical.length; i++) {
+      h ^= canonical.charCodeAt(i);
+      h = Math.imul(h, 0x01000193);
+    }
+    return (h >>> 0).toString(16);
+  }
+}
+
+/** Whether judging is globally skipped via env (CLI `--no-judge`). */
+function judgeSkippedByEnv(): boolean {
+  const v = readEnv('AH_SKIP_JUDGE', 'AGENT_HEALTH_SKIP_JUDGE');
+  return v === '1' || v === 'true' || v === 'yes';
 }
 
 let judgeCalledInCurrentEval = false;
@@ -214,6 +276,74 @@ async function runJudge(
   if (options?.model) requestBody.modelId = options.model;
   if (options?.evaluatorId) requestBody.evaluatorId = options.evaluatorId;
 
+  // Record the success path identically whether the verdict came fresh from
+  // the endpoint or from the in-process cache.
+  const finalize = (raw: RawJudgeResponse, durationMs: number): Verdict => {
+    const accuracy = raw.metrics?.accuracy ?? 0;
+    const verdict = makeVerdict({
+      passFailStatus: raw.passFailStatus ?? 'failed',
+      accuracy,
+      reasoning: raw.llmJudgeReasoning ?? '',
+      role,
+      skipped: false,
+      errored: false,
+    });
+    recordVerdict({
+      description,
+      pass: verdict.pass,
+      method: 'llm-judge',
+      role,
+      durationMs,
+      score: verdict.score,
+      reasoning: verdict.reasoning,
+      model: options?.model,
+      errorMessage: verdict.passFailStatus === 'failed' ? verdict.reasoning : undefined,
+      // Preserve the rest of the judge payload — these were silently
+      // dropped before, which made SDK `judge()` calls strictly less
+      // informative than the legacy auto-judge path. See MatcherResult.
+      ...(Array.isArray(raw.improvementStrategies) && raw.improvementStrategies.length > 0
+        ? { improvementStrategies: raw.improvementStrategies as any }
+        : {}),
+      ...(raw.metrics && typeof raw.metrics === 'object'
+        ? { judgeMetrics: { ...raw.metrics } }
+        : {}),
+    });
+    return verdict;
+  };
+
+  // SKIP: no LLM call. Return a non-gating `skipped` verdict (pass:true) and
+  // record an observational entry so the UI shows the judge was bypassed.
+  if (options?.skip || judgeSkippedByEnv()) {
+    recordVerdict({
+      description: `${description} (skipped)`,
+      pass: true,
+      method: 'llm-judge',
+      role: 'observe',
+      durationMs: 0,
+      reasoning: 'Judge skipped (AH_SKIP_JUDGE / skip option).',
+    });
+    return makeVerdict({
+      passFailStatus: 'passed',
+      accuracy: 0,
+      reasoning: 'Judge skipped.',
+      role,
+      skipped: true,
+      errored: false,
+    });
+  }
+
+  // CACHE: identical (evaluator, model, claims, trajectory) → reuse verdict.
+  const cacheKey = judgeCacheKey({
+    evaluatorId: options?.evaluatorId,
+    model: options?.model,
+    claims,
+    trajectory,
+  });
+  const cached = verdictCache.get(cacheKey);
+  if (cached) {
+    return finalize(cached, 0);
+  }
+
   const startedAt = Date.now();
   let response: Response;
   try {
@@ -271,41 +401,10 @@ async function runJudge(
     });
   }
 
-  const result = (await response.json()) as any;
-  const accuracy = result.metrics?.accuracy ?? 0;
-  const verdict = makeVerdict({
-    passFailStatus: result.passFailStatus ?? 'failed',
-    accuracy,
-    reasoning: result.llmJudgeReasoning ?? '',
-    role,
-    skipped: false,
-    errored: false,
-  });
-
-  // Record once for the overall judge call. `observe`-role failures do
-  // not gate the test (the runner filters on role).
-  recordVerdict({
-    description,
-    pass: verdict.pass,
-    method: 'llm-judge',
-    role,
-    durationMs: Date.now() - startedAt,
-    score: verdict.score,
-    reasoning: verdict.reasoning,
-    model: options?.model,
-    errorMessage: verdict.passFailStatus === 'failed' ? verdict.reasoning : undefined,
-    // Preserve the rest of the judge payload — these were silently
-    // dropped before, which made SDK `judge()` calls strictly less
-    // informative than the legacy auto-judge path. See MatcherResult.
-    ...(Array.isArray(result.improvementStrategies) && result.improvementStrategies.length > 0
-      ? { improvementStrategies: result.improvementStrategies }
-      : {}),
-    ...(result.metrics && typeof result.metrics === 'object'
-      ? { judgeMetrics: { ...result.metrics } }
-      : {}),
-  });
-
-  return verdict;
+  const raw = (await response.json()) as RawJudgeResponse;
+  // Only successful, non-errored verdicts are cached.
+  verdictCache.set(cacheKey, raw);
+  return finalize(raw, Date.now() - startedAt);
 }
 
 /**
@@ -351,10 +450,11 @@ export function bindJudge(defaults?: {
   evaluatorId?: string;
   model?: string;
   serverUrl?: string;
+  skip?: boolean;
 }): JudgeFn {
   // No defaults set → return the unbound function unchanged. Keeps zero
   // overhead for tests that don't use a run-level evaluator.
-  if (!defaults || (!defaults.evaluatorId && !defaults.model && !defaults.serverUrl)) {
+  if (!defaults || (!defaults.evaluatorId && !defaults.model && !defaults.serverUrl && !defaults.skip)) {
     return judge;
   }
   const mergeOptions = (options?: JudgeOptions): JudgeOptions => ({
@@ -365,6 +465,7 @@ export function bindJudge(defaults?: {
     serverUrl: options?.serverUrl ?? defaults.serverUrl,
     model: options?.model ?? defaults.model,
     evaluatorId: options?.evaluatorId ?? defaults.evaluatorId,
+    skip: options?.skip ?? defaults.skip,
   });
   const bound: JudgeFn = Object.assign(
     (resultOrTrajectory: ResultLike | TrajectoryStep[], claimOrClaims: string | string[], options?: JudgeOptions) =>

@@ -39,7 +39,7 @@ import type { TracesAccessor } from '@/lib/matchers/index';
 import type { EvalResult, TrajectoryAccessor, TestFixtures, RegisteredHook } from '@/lib/testCases/types';
 import { createAgentFixture } from '@/lib/testCases/agentFixture';
 import type { AgentRunOptions } from '@/lib/testCases/agentFixture';
-import { judge as judgeFn, bindJudge } from '@/lib/testCases/judge';
+import { judge as judgeFn, bindJudge, clearJudgeCache } from '@/lib/testCases/judge';
 import { expect as ahExpect } from '@/lib/matchers/expect';
 import type { TrajectoryStep } from '@/types';
 import { createHookOrchestrator, type TestDescriptor } from './hookOrchestrator';
@@ -204,6 +204,8 @@ export async function executeRun(
 ): Promise<BenchmarkRun> {
   const totalTestCases = benchmark.testCaseIds.length;
   const { cancellationToken, client, storageModule, onTestCaseComplete, evaluateFnMap, hooksByFile, testHookScopes } = options;
+  // Fresh judge verdict cache per run (see evaluationRunner for rationale).
+  clearJudgeCache();
   const concurrency = run.concurrency ?? 1;
   const runStartTime = Date.now();
 

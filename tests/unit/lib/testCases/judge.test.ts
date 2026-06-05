@@ -22,7 +22,7 @@
  * exercise that here.
  */
 
-import { judge, bindJudge } from '@/lib/testCases/judge';
+import { judge, bindJudge, clearJudgeCache } from '@/lib/testCases/judge';
 import { startSession, endSession } from '@/lib/matchers/session';
 
 type JsonBody = {
@@ -65,6 +65,7 @@ function mockJudgeFetch(verdict: { passFailStatus: 'passed' | 'failed'; metrics?
 describe('judge() — per-call options', () => {
   beforeEach(() => {
     startSession();
+    clearJudgeCache();
   });
   afterEach(() => {
     endSession();
@@ -126,6 +127,7 @@ describe('judge() — per-call options', () => {
     expect(() => failed.orThrow()).toThrow(/FAILED.*accuracy: 10/s);
 
     mockJudgeFetch({ passFailStatus: 'passed', metrics: { accuracy: 99 } });
+    clearJudgeCache();
     const passed = await judge({ trajectory: [{ type: 'response', content: 'x' }] } as any, 'claim');
     expect(passed.orThrow()).toBe(passed); // chainable, no throw
   });
@@ -150,11 +152,59 @@ describe('judge() — per-call options', () => {
     // orThrow surfaces the error too.
     expect(() => verdict.orThrow()).toThrow(/errored/);
   });
+
+  it('skip option returns a non-gating skipped verdict and makes no HTTP call', async () => {
+    const { fetchMock } = mockJudgeFetch();
+    const verdict = await judge(
+      { trajectory: [{ type: 'response', content: 'x' }] } as any,
+      'claim',
+      { skip: true },
+    );
+    expect(verdict.skipped).toBe(true);
+    expect(verdict.pass).toBe(true); // never gates
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('AH_SKIP_JUDGE=1 env forces skip for every judge call', async () => {
+    const prev = process.env.AH_SKIP_JUDGE;
+    process.env.AH_SKIP_JUDGE = '1';
+    try {
+      const { fetchMock } = mockJudgeFetch();
+      const verdict = await judge({ trajectory: [{ type: 'response', content: 'x' }] } as any, 'claim');
+      expect(verdict.skipped).toBe(true);
+      expect(fetchMock).not.toHaveBeenCalled();
+    } finally {
+      if (prev === undefined) delete process.env.AH_SKIP_JUDGE;
+      else process.env.AH_SKIP_JUDGE = prev;
+    }
+  });
+
+  it('caches identical judge inputs — second call hits the cache, no second HTTP call', async () => {
+    clearJudgeCache();
+    const { fetchMock } = mockJudgeFetch({ passFailStatus: 'passed', metrics: { accuracy: 88 } });
+    const traj = [{ type: 'response', content: 'same' }];
+
+    const v1 = await judge({ trajectory: traj } as any, 'claim');
+    const v2 = await judge({ trajectory: traj } as any, 'claim');
+
+    expect(v1.accuracy).toBe(88);
+    expect(v2.accuracy).toBe(88);
+    expect(fetchMock).toHaveBeenCalledTimes(1); // second call served from cache
+  });
+
+  it('does not cache across different claims/trajectories', async () => {
+    clearJudgeCache();
+    const { fetchMock } = mockJudgeFetch();
+    await judge({ trajectory: [{ type: 'response', content: 'a' }] } as any, 'claim-1');
+    await judge({ trajectory: [{ type: 'response', content: 'b' }] } as any, 'claim-2');
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
 });
 
 describe('bindJudge() — run-level defaults (UI-equivalent)', () => {
   beforeEach(() => {
     startSession();
+    clearJudgeCache();
   });
   afterEach(() => {
     endSession();
