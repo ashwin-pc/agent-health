@@ -108,12 +108,47 @@ describe('judge() — per-call options', () => {
     expect(body.expectedOutcomes).toEqual(['c1', 'c2']);
   });
 
-  it('throws on judge "failed" verdict and records a failed MatcherResult', async () => {
+  it('returns a non-throwing failed verdict and records a failed gate MatcherResult', async () => {
     mockJudgeFetch({ passFailStatus: 'failed', metrics: { accuracy: 30 }, reasoning: 'missed key fact' });
 
-    await expect(
-      judge({ trajectory: [{ type: 'response', content: 'x' }] } as any, 'claim'),
-    ).rejects.toThrow(/FAILED.*accuracy: 30/s);
+    const verdict = await judge({ trajectory: [{ type: 'response', content: 'x' }] } as any, 'claim');
+    expect(verdict.pass).toBe(false);
+    expect(verdict.passFailStatus).toBe('failed');
+    expect(verdict.accuracy).toBe(30);
+    expect(verdict.score).toBeCloseTo(0.3);
+    expect(verdict.role).toBe('gate');
+    expect(verdict.errored).toBe(false);
+  });
+
+  it('verdict.orThrow() throws on a failed verdict, is a no-op on a passing one', async () => {
+    mockJudgeFetch({ passFailStatus: 'failed', metrics: { accuracy: 10 }, reasoning: 'nope' });
+    const failed = await judge({ trajectory: [{ type: 'response', content: 'x' }] } as any, 'claim');
+    expect(() => failed.orThrow()).toThrow(/FAILED.*accuracy: 10/s);
+
+    mockJudgeFetch({ passFailStatus: 'passed', metrics: { accuracy: 99 } });
+    const passed = await judge({ trajectory: [{ type: 'response', content: 'x' }] } as any, 'claim');
+    expect(passed.orThrow()).toBe(passed); // chainable, no throw
+  });
+
+  it('judge.observe() records an observe-role verdict (never gates)', async () => {
+    mockJudgeFetch({ passFailStatus: 'failed', metrics: { accuracy: 20 }, reasoning: 'meh' });
+    const verdict = await judge.observe({ trajectory: [{ type: 'response', content: 'x' }] } as any, 'claim');
+    expect(verdict.role).toBe('observe');
+    expect(verdict.pass).toBe(false);
+  });
+
+  it('returns an errored verdict (not failed) when the judge endpoint errors', async () => {
+    const fetchMock = jest.fn().mockResolvedValue({
+      ok: false, status: 500, json: async () => ({}), text: async () => 'boom',
+    });
+    (global as any).fetch = fetchMock as unknown as typeof fetch;
+
+    const verdict = await judge({ trajectory: [{ type: 'response', content: 'x' }] } as any, 'claim');
+    expect(verdict.errored).toBe(true);
+    expect(verdict.pass).toBe(false);
+    expect(verdict.errorMessage).toMatch(/Judge HTTP 500: boom/);
+    // orThrow surfaces the error too.
+    expect(() => verdict.orThrow()).toThrow(/errored/);
   });
 });
 

@@ -467,26 +467,44 @@ export async function executeRun(
               }
             });
 
-            const anyFailed = matcherResults.some(m => !m.pass);
-            const failed = anyFailed || evalError !== undefined;
-            (report as any).passFailStatus = failed ? 'failed' : 'passed';
+            // observe-role signals never gate; errored signals are bucketed
+            // separately as `errored` (excluded from pass-rate), not `failed`.
+            const erroredMatchers = matcherResults.filter(m => m.errored);
+            const anyErrored = erroredMatchers.length > 0;
+            const anyGateFailed = matcherResults.some(
+              m => !m.pass && m.role !== 'observe' && !m.errored,
+            );
+            const failed = anyGateFailed || evalError !== undefined;
             (report as any).evaluationType = 'deterministic';
             (report as any).matcherResults = matcherResults;
             if (evalError !== undefined) {
               (report as any).assertionError =
                 (evalError as any)?.message ?? String(evalError);
             }
-            // Option B BC shim: legacy field empty for SDK runs;
-            // canonical judge data lives in `matcherResults`.
-            (report as any).llmJudgeReasoning = '';
-            (report as any).metrics = failed
-              ? { accuracy: 0, faithfulness: 0, latency_score: 0, trajectory_alignment_score: 0 }
-              : { accuracy: 100, faithfulness: 100, latency_score: 100, trajectory_alignment_score: 100 };
-            // Mark the report as final so trace-mode polling below skips
-            // the Bedrock judge fallback (which would error with empty
-            // expectedOutcomes for SDK-loaded test cases).
-            (report as any).metricsStatus = 'completed';
-            (report as any).skipJudge = true;
+
+            if (anyErrored) {
+              // At least one judge/evaluator could not run. Bucket as `errored`
+              // via the canonical #247 patch instead of a misleading score-0
+              // `failed` — errored runs are excluded from pass-rate.
+              Object.assign(
+                report,
+                buildEvaluatorErrorPatch('judge_failed', erroredMatchers[0].errorMessage ?? 'judge errored'),
+              );
+              (report as any).skipJudge = true;
+            } else {
+              (report as any).passFailStatus = failed ? 'failed' : 'passed';
+              // Option B BC shim: legacy field empty for SDK runs;
+              // canonical judge data lives in `matcherResults`.
+              (report as any).llmJudgeReasoning = '';
+              (report as any).metrics = failed
+                ? { accuracy: 0, faithfulness: 0, latency_score: 0, trajectory_alignment_score: 0 }
+                : { accuracy: 100, faithfulness: 100, latency_score: 100, trajectory_alignment_score: 100 };
+              // Mark the report as final so trace-mode polling below skips
+              // the Bedrock judge fallback (which would error with empty
+              // expectedOutcomes for SDK-loaded test cases).
+              (report as any).metricsStatus = 'completed';
+              (report as any).skipJudge = true;
+            }
           } else {
             // CLASSIC PATH: no code body. Eagerly invoke + Bedrock judge.
             // Wrap in context.with(caseSpanContext) so the connector sees the

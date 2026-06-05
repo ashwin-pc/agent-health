@@ -16,9 +16,17 @@
  *   await judge(result, claim, { evaluatorId: 'system:cp-oncall' });
  *   await judge(result, claim, { model: 'claude-sonnet' });
  *
- * On pass: returns a JudgeVerdict and records a MatcherResult.
- * On fail: throws (so the test body bails out) and records a failed
- * MatcherResult before throwing.
+ * On evaluation, `judge()` records a MatcherResult and returns a
+ * {@link Verdict} **without throwing** (RFC 004 §4.8). A failing
+ * `gate`-role verdict still fails the test (the runner inspects the
+ * recorded results), but the body keeps running so every signal is
+ * collected. To hard-stop the body on a bad verdict, call
+ * `(await judge(...)).orThrow()` or assert `expect(verdict).toPass()`.
+ *
+ * Two roles:
+ *   - `judge(result, claim)`         — gate: a failing verdict fails the test.
+ *   - `judge.observe(result, claim)` — observe: feeds score + insights only,
+ *                                       never fails the test.
  *
  * Calls the Agent Health server's /api/judge endpoint with the same
  * payload shape (`{ trajectory, expectedOutcomes, modelId, evaluatorId }`)
@@ -37,11 +45,46 @@ import type { TrajectoryStep } from '@/types';
 import { recordVerdict } from '../matchers/session.js';
 import { readEnv } from '../envCompat.js';
 
-export interface JudgeVerdict {
+/** Whether a judge signal gates the test verdict or is observational only. */
+export type JudgeRole = 'gate' | 'observe';
+
+/**
+ * The result of a `judge()` call. Carries the verdict data plus a few
+ * convenience flags and an explicit hard-stop escape hatch. Returned
+ * (never thrown) so the body can collect multiple verdicts; the recorded
+ * MatcherResult is what actually gates the test.
+ *
+ * Backward-compatible with the old `JudgeVerdict` (same
+ * `passFailStatus`/`accuracy`/`reasoning` fields).
+ */
+export interface Verdict {
   passFailStatus: 'passed' | 'failed';
+  /** Headline accuracy on the [0, 100] interval. */
   accuracy: number;
+  /** Normalised score on the [0, 1] interval (`accuracy / 100`). */
+  score: number;
+  /** Free-form judge reasoning. */
   reasoning: string;
+  /** Convenience: `passFailStatus === 'passed'`. */
+  pass: boolean;
+  /** Role this verdict was produced with (`gate` or `observe`). */
+  role: JudgeRole;
+  /** True when the judge was skipped (no LLM call was made). */
+  skipped: boolean;
+  /** True when the judge could not run at all (endpoint error). */
+  errored: boolean;
+  /** Underlying error message when `errored` is true. */
+  errorMessage?: string;
+  /**
+   * Hard-stop: throw if the verdict did not pass. A no-op for passing,
+   * skipped verdicts. Returns the verdict so it can be chained:
+   *   const v = (await judge(result, claim)).orThrow();
+   */
+  orThrow(): Verdict;
 }
+
+/** @deprecated Use {@link Verdict}. Retained as a structural alias. */
+export type JudgeVerdict = Verdict;
 
 /**
  * Per-call options for the SDK `judge()` matcher. Mirrors the relevant
@@ -95,16 +138,56 @@ function isResultLike(x: unknown): x is ResultLike {
 }
 
 /**
- * Single-claim ergonomic form.
- * @example
- *   await judge(result, 'identifies the failing dependency');
- *   await judge(result, claim, { evaluatorId: 'system:cp-oncall' });
+ * Build a {@link Verdict} object with the `orThrow()` escape hatch attached.
  */
-export async function judge(
+function makeVerdict(v: Omit<Verdict, 'orThrow' | 'pass' | 'score'> & { score?: number }): Verdict {
+  const verdict: Verdict = {
+    ...v,
+    pass: v.passFailStatus === 'passed',
+    score: v.score ?? (typeof v.accuracy === 'number' ? v.accuracy / 100 : 0),
+    orThrow() {
+      // Passing or skipped verdicts never throw. Failed/errored ones do.
+      if (this.pass || this.skipped) return this;
+      const label = this.errored ? 'errored' : 'FAILED';
+      throw new Error(
+        `LLM Judge: ${label} (accuracy: ${this.accuracy})\n${this.errorMessage ?? this.reasoning}`
+      );
+    },
+  };
+  return verdict;
+}
+
+/**
+ * The callable `judge` surface: a function (gate role) with an `.observe`
+ * method (observe role).
+ */
+export interface JudgeFn {
+  (
+    resultOrTrajectory: ResultLike | TrajectoryStep[],
+    claimOrClaims: string | string[],
+    options?: JudgeOptions
+  ): Promise<Verdict>;
+  /**
+   * Observational judge: records the verdict for score + insights but does
+   * NOT gate the test (a failing observe verdict never fails the run).
+   */
+  observe(
+    resultOrTrajectory: ResultLike | TrajectoryStep[],
+    claimOrClaims: string | string[],
+    options?: JudgeOptions
+  ): Promise<Verdict>;
+}
+
+/**
+ * Core judge implementation. Records exactly one MatcherResult (carrying
+ * `role`) and returns a non-throwing {@link Verdict}.
+ */
+async function runJudge(
   resultOrTrajectory: ResultLike | TrajectoryStep[],
   claimOrClaims: string | string[],
-  options?: JudgeOptions
-): Promise<JudgeVerdict> {
+  options: JudgeOptions | undefined,
+  role: JudgeRole
+): Promise<Verdict> {
   judgeCalledInCurrentEval = true;
 
   const trajectory = isTrajectory(resultOrTrajectory)
@@ -141,15 +224,28 @@ export async function judge(
     });
   } catch (err: any) {
     const errMsg = err?.message || String(err);
+    // Endpoint unreachable — the judge could not run. This is `errored`,
+    // not a clean `pass: false`. The matcher is recorded with errored=true
+    // so the run is bucketed as `errored` (excluded from pass-rate).
     recordVerdict({
       description,
       pass: false,
       method: 'llm-judge',
+      role,
+      errored: true,
       durationMs: Date.now() - startedAt,
       errorMessage: `Judge request failed: ${errMsg}`,
       reasoning: '',
     });
-    throw new Error(`Judge request failed: ${errMsg}`);
+    return makeVerdict({
+      passFailStatus: 'failed',
+      accuracy: 0,
+      reasoning: '',
+      role,
+      skipped: false,
+      errored: true,
+      errorMessage: `Judge request failed: ${errMsg}`,
+    });
   }
 
   if (!response.ok) {
@@ -158,27 +254,43 @@ export async function judge(
       description,
       pass: false,
       method: 'llm-judge',
+      role,
+      errored: true,
       durationMs: Date.now() - startedAt,
       errorMessage: `Judge HTTP ${response.status}: ${text}`,
       reasoning: '',
     });
-    throw new Error(`Judge request failed (${response.status}): ${text}`);
+    return makeVerdict({
+      passFailStatus: 'failed',
+      accuracy: 0,
+      reasoning: '',
+      role,
+      skipped: false,
+      errored: true,
+      errorMessage: `Judge HTTP ${response.status}: ${text}`,
+    });
   }
 
   const result = (await response.json()) as any;
-  const verdict: JudgeVerdict = {
+  const accuracy = result.metrics?.accuracy ?? 0;
+  const verdict = makeVerdict({
     passFailStatus: result.passFailStatus ?? 'failed',
-    accuracy: result.metrics?.accuracy ?? 0,
+    accuracy,
     reasoning: result.llmJudgeReasoning ?? '',
-  };
+    role,
+    skipped: false,
+    errored: false,
+  });
 
-  // Record once for the overall judge call.
+  // Record once for the overall judge call. `observe`-role failures do
+  // not gate the test (the runner filters on role).
   recordVerdict({
     description,
-    pass: verdict.passFailStatus === 'passed',
+    pass: verdict.pass,
     method: 'llm-judge',
+    role,
     durationMs: Date.now() - startedAt,
-    score: typeof verdict.accuracy === 'number' ? verdict.accuracy / 100 : undefined,
+    score: verdict.score,
     reasoning: verdict.reasoning,
     model: options?.model,
     errorMessage: verdict.passFailStatus === 'failed' ? verdict.reasoning : undefined,
@@ -193,12 +305,31 @@ export async function judge(
       : {}),
   });
 
-  if (verdict.passFailStatus === 'failed') {
-    throw new Error(`LLM Judge: FAILED (accuracy: ${verdict.accuracy})\n${verdict.reasoning}`);
-  }
-
   return verdict;
 }
+
+/**
+ * Single-claim ergonomic form (gate role).
+ * @example
+ *   const v = await judge(result, 'identifies the failing dependency');
+ *   if (!v.pass) { ... }                       // non-throwing
+ *   (await judge(result, claim)).orThrow();      // explicit hard-stop
+ *   await judge.observe(result, claim);          // score-only, never gates
+ */
+export const judge: JudgeFn = Object.assign(
+  (
+    resultOrTrajectory: ResultLike | TrajectoryStep[],
+    claimOrClaims: string | string[],
+    options?: JudgeOptions
+  ): Promise<Verdict> => runJudge(resultOrTrajectory, claimOrClaims, options, 'gate'),
+  {
+    observe: (
+      resultOrTrajectory: ResultLike | TrajectoryStep[],
+      claimOrClaims: string | string[],
+      options?: JudgeOptions
+    ): Promise<Verdict> => runJudge(resultOrTrajectory, claimOrClaims, options, 'observe'),
+  }
+);
 
 /**
  * Bind run-level defaults to `judge` and return a callable with the same
@@ -220,25 +351,28 @@ export function bindJudge(defaults?: {
   evaluatorId?: string;
   model?: string;
   serverUrl?: string;
-}): typeof judge {
+}): JudgeFn {
   // No defaults set → return the unbound function unchanged. Keeps zero
   // overhead for tests that don't use a run-level evaluator.
   if (!defaults || (!defaults.evaluatorId && !defaults.model && !defaults.serverUrl)) {
     return judge;
   }
-  const bound: typeof judge = (resultOrTrajectory, claimOrClaims, options) => {
+  const mergeOptions = (options?: JudgeOptions): JudgeOptions => ({
     // Per-call options win on every field that's actually set. We treat
     // an explicit `undefined` the same as a missing field — callers who
     // want to *clear* a bound default should pass an empty string or
-    // call the unbound `judge` directly. Empirically this is what users
-    // expect: `judge(r, c, { model: 'foo' })` should NOT wipe out the
-    // run-level evaluatorId just because the user didn't repeat it.
-    const merged: JudgeOptions = {
-      serverUrl: options?.serverUrl ?? defaults.serverUrl,
-      model: options?.model ?? defaults.model,
-      evaluatorId: options?.evaluatorId ?? defaults.evaluatorId,
-    };
-    return judge(resultOrTrajectory, claimOrClaims, merged);
-  };
+    // call the unbound `judge` directly.
+    serverUrl: options?.serverUrl ?? defaults.serverUrl,
+    model: options?.model ?? defaults.model,
+    evaluatorId: options?.evaluatorId ?? defaults.evaluatorId,
+  });
+  const bound: JudgeFn = Object.assign(
+    (resultOrTrajectory: ResultLike | TrajectoryStep[], claimOrClaims: string | string[], options?: JudgeOptions) =>
+      runJudge(resultOrTrajectory, claimOrClaims, mergeOptions(options), 'gate'),
+    {
+      observe: (resultOrTrajectory: ResultLike | TrajectoryStep[], claimOrClaims: string | string[], options?: JudgeOptions) =>
+        runJudge(resultOrTrajectory, claimOrClaims, mergeOptions(options), 'observe'),
+    }
+  );
   return bound;
 }

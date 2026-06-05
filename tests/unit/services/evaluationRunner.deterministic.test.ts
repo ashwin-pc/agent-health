@@ -524,4 +524,61 @@ describe('executeEvaluationRun - deterministic evaluation', () => {
     expect(seenInAfterEach.agentOutput).toBe('Found the root cause');
     expect(seenInAfterEach.durationMs).toBe(42);
   });
+
+  it('observe-role judge failure does NOT fail the test (RFC 004 gate/observe)', async () => {
+    // Body records an observe verdict that fails — but observe never gates.
+    const evaluateFn: EvaluateFn = jest.fn(async (fixtures: any) => {
+      await fixtures.agent.run('Investigate');
+      await fixtures.judge.observe(
+        { trajectory: [{ type: 'response', content: 'x' }] },
+        'some observational claim',
+      );
+    });
+    const evaluateFnMap = new Map<string, EvaluateFn>([['tc-obs', evaluateFn]]);
+    const testCase: TestCase = { id: 'tc-obs', name: 'Obs', initialPrompt: 'Investigate', context: [] } as unknown as TestCase;
+    const run: EvaluationRun = { id: 'run-1', agentKey: 'test-agent', modelId: 'claude-sonnet', status: 'running', results: {}, createdAt: new Date().toISOString() } as unknown as EvaluationRun;
+
+    mockInvokeAgent.mockResolvedValue(stubInvocation({ trajectory: [{ type: 'response', content: 'out' }], agentDurationMs: 5 }));
+    let saved: any;
+    (storage.runs.create as jest.Mock).mockImplementation((report: any) => { saved = report; return Promise.resolve({ ...report, id: 'r' }); });
+
+    // Judge endpoint returns a FAILED verdict.
+    (global as any).fetch = jest.fn().mockResolvedValue({
+      ok: true, status: 200,
+      json: async () => ({ passFailStatus: 'failed', metrics: { accuracy: 10 }, llmJudgeReasoning: 'off-topic' }),
+      text: async () => '',
+    });
+
+    await executeEvaluationRun(run, [testCase], { storageModule: storage, evaluateFnMap, onProgress: jest.fn() });
+
+    // Observe verdict failed, but the test still PASSES (observe never gates).
+    expect(saved.passFailStatus).toBe('passed');
+    expect(run.results['tc-obs'].status).toBe('completed');
+  });
+
+  it('judge endpoint error buckets the run as errored (not failed)', async () => {
+    const evaluateFn: EvaluateFn = jest.fn(async (fixtures: any) => {
+      await fixtures.agent.run('Investigate');
+      await fixtures.judge({ trajectory: [{ type: 'response', content: 'x' }] }, 'a claim');
+    });
+    const evaluateFnMap = new Map<string, EvaluateFn>([['tc-err', evaluateFn]]);
+    const testCase: TestCase = { id: 'tc-err', name: 'Err', initialPrompt: 'Investigate', context: [] } as unknown as TestCase;
+    const run: EvaluationRun = { id: 'run-1', agentKey: 'test-agent', modelId: 'claude-sonnet', status: 'running', results: {}, createdAt: new Date().toISOString() } as unknown as EvaluationRun;
+
+    mockInvokeAgent.mockResolvedValue(stubInvocation({ trajectory: [{ type: 'response', content: 'out' }], agentDurationMs: 5 }));
+    let saved: any;
+    (storage.runs.create as jest.Mock).mockImplementation((report: any) => { saved = report; return Promise.resolve({ ...report, id: 'r' }); });
+
+    // Judge endpoint errors (HTTP 500).
+    (global as any).fetch = jest.fn().mockResolvedValue({
+      ok: false, status: 500, json: async () => ({}), text: async () => 'judge boom',
+    });
+
+    await executeEvaluationRun(run, [testCase], { storageModule: storage, evaluateFnMap, onProgress: jest.fn() });
+
+    // Errored, not failed: metricsStatus 'error', passFailStatus cleared.
+    expect(saved.metricsStatus).toBe('error');
+    expect(saved.passFailStatus).toBeUndefined();
+    expect(saved.traceError).toMatch(/judge boom/);
+  });
 });
