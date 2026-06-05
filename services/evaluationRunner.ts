@@ -19,8 +19,8 @@ import { buildEvaluatorErrorPatch } from '@/services/evaluation/evaluatorError';
 import { connectorRegistry } from '@/services/connectors/server';
 import { v4 as uuidv4 } from 'uuid';
 import {
-  startSession,
-  endSession,
+  runInSession,
+  recordVerdict,
   emptyTracesAccessor,
   unavailableTracesAccessor,
   buildTracesAccessor,
@@ -287,73 +287,69 @@ export async function executeEvaluationRun(
               describePath: scope?.describePath,
             };
 
-            const session = startSession();
-            // Run beforeAll/beforeEach. Hook results are folded into the
-            // matcher session so the per-matcher UI shows them.
-            const before = await hookOrchestrator.beforeTest(desc);
-            for (const r of before.matcherResults) {
-              (session.results as any).push(r);
-            }
-            // Stamp the per-test fixtures (with testInfo+provisioned+
-            // potentially provide-from-beforeEach) over the EvalResult
-            // object so legacy 1-arg bodies and modern destructuring
-            // bodies both work. Overlay the per-run tracesAccessor too —
-            // the orchestrator's noop factory returns an empty one. The
-            // judge fixture is pre-bound to the run-level evaluator + judge
-            // model (#257) so destructured `judge` calls match the UI "Run
-            // Test" path; per-call `judge(result, claim, { evaluatorId })`
-            // still wins (bindJudge merges per-call options over defaults).
-            const fixtures: TestFixtures = {
-              ...before.fixtures,
-              result: evalResult,
-              traces: tracesAccessor,
-              judge: bindJudge({ evaluatorId: run.evaluatorId, model: bedrockModelId }),
-            };
-            const arg = Object.assign(evalResult, { ...fixtures, result: evalResult }) as any;
+            // Run the body inside a per-test matcher session (ALS-scoped,
+            // so concurrent tests never share verdicts — RFC 004). Hook
+            // results are recorded into the same session so the per-matcher
+            // UI shows them alongside the body's assertions.
+            let fixtures: TestFixtures | undefined;
+            const { results: matcherResults, error: evalError } = await runInSession(async () => {
+              const before = await hookOrchestrator.beforeTest(desc);
+              for (const r of before.matcherResults) recordVerdict(r);
 
-            try {
-              if (!before.aborted) {
-                await evalFn(arg);
+              // Stamp the per-test fixtures (with testInfo+provisioned+
+              // potentially provide-from-beforeEach) over the EvalResult
+              // object so legacy 1-arg bodies and modern destructuring
+              // bodies both work. Overlay the per-run tracesAccessor too —
+              // the orchestrator's noop factory returns an empty one.
+              //
+              // The judge fixture is pre-bound to the run-level evaluator
+              // (and judge model) via bindJudge so SDK runs use exactly the
+              // same evaluator the UI "Run Test" path would, without the
+              // test author threading `evaluatorId` through every judge()
+              // call. Per-call `judge(result, claim, { evaluatorId })` wins
+              // because bindJudge merges per-call options over the defaults.
+              fixtures = {
+                ...before.fixtures,
+                result: evalResult,
+                traces: tracesAccessor,
+                judge: bindJudge({ evaluatorId: run.evaluatorId, model: bedrockModelId }),
+              };
+              const arg = Object.assign(evalResult, { ...fixtures, result: evalResult }) as any;
+
+              try {
+                if (!before.aborted) {
+                  await evalFn(arg);
+                }
+              } finally {
+                // Always run afterEach/afterAll — even when the body or a
+                // beforeEach threw. Errors there become MatcherResult
+                // entries on the test, not runner crashes.
+                const after = await hookOrchestrator.afterTest(desc, fixtures);
+                for (const r of after) recordVerdict(r);
               }
-              // Always run afterEach/afterAll — even when the body or a
-              // beforeEach threw. Errors there become MatcherResult
-              // entries on the test, not runner crashes.
-              const after = await hookOrchestrator.afterTest(desc, fixtures);
-              for (const r of after) {
-                (session.results as any).push(r);
-              }
-              const matcherResults = endSession();
-              const anyFailed = matcherResults.some(m => !m.pass);
-              (report as any).passFailStatus = anyFailed ? 'failed' : 'passed';
-              (report as any).evaluationType = 'deterministic';
-              (report as any).matcherResults = matcherResults;
-              // Option B BC shim: legacy `llmJudgeReasoning` field is a
-              // derived view of `matcherResults`. SDK runs use the
-              // matcher session as the source of truth (multiple
-              // `judge()` calls each become a separate [llm-judge]
-              // entry), so we leave the legacy flat-string field empty.
-              // External readers that haven't migrated to
-              // `getJudgeMatcherResults()` see '' — a clear signal that
-              // judge data lives in `matcherResults`.
-              (report as any).llmJudgeReasoning = '';
-              (report as any).metrics = anyFailed
-                ? { accuracy: 0, faithfulness: 0, latency_score: 0, trajectory_alignment_score: 0 }
-                : { accuracy: 100, faithfulness: 100, latency_score: 100, trajectory_alignment_score: 100 };
-            } catch (evalError: any) {
-              // Body threw: still run afterEach/afterAll so cleanup happens.
-              const after = await hookOrchestrator.afterTest(desc, fixtures);
-              for (const r of after) {
-                (session.results as any).push(r);
-              }
-              const matcherResults = endSession();
-              (report as any).passFailStatus = 'failed';
-              (report as any).evaluationType = 'deterministic';
-              (report as any).assertionError = evalError.message;
-              (report as any).matcherResults = matcherResults;
-              // See success branch above for the Option B BC rationale.
-              (report as any).llmJudgeReasoning = '';
-              (report as any).metrics = { accuracy: 0, faithfulness: 0, latency_score: 0, trajectory_alignment_score: 0 };
+            });
+
+            const anyFailed = matcherResults.some(m => !m.pass);
+            const failed = anyFailed || evalError !== undefined;
+            (report as any).passFailStatus = failed ? 'failed' : 'passed';
+            (report as any).evaluationType = 'deterministic';
+            (report as any).matcherResults = matcherResults;
+            if (evalError !== undefined) {
+              (report as any).assertionError =
+                (evalError as any)?.message ?? String(evalError);
             }
+            // Option B BC shim: legacy `llmJudgeReasoning` field is a
+            // derived view of `matcherResults`. SDK runs use the
+            // matcher session as the source of truth (multiple
+            // `judge()` calls each become a separate [llm-judge]
+            // entry), so we leave the legacy flat-string field empty.
+            // External readers that haven't migrated to
+            // `getJudgeMatcherResults()` see '' — a clear signal that
+            // judge data lives in `matcherResults`.
+            (report as any).llmJudgeReasoning = '';
+            (report as any).metrics = failed
+              ? { accuracy: 0, faithfulness: 0, latency_score: 0, trajectory_alignment_score: 0 }
+              : { accuracy: 100, faithfulness: 100, latency_score: 100, trajectory_alignment_score: 100 };
           }
 
           // Deterministic eval already produced a verdict via the matcher

@@ -27,8 +27,8 @@ import { runEvaluationWithConnector, callBedrockJudge } from './evaluation';
 import { buildEvaluatorErrorPatch } from './evaluation/evaluatorError';
 import { connectorRegistry } from '@/services/connectors/server';
 import {
-  startSession,
-  endSession,
+  runInSession,
+  recordVerdict,
   emptyTracesAccessor,
   unavailableTracesAccessor,
   buildTracesAccessor,
@@ -408,57 +408,50 @@ export async function executeRun(
               sourceFile: scope?.sourceFile,
               describePath: scope?.describePath,
             };
-            const session = startSession();
-            // Run beforeAll/beforeEach hooks first — outcomes folded into
-            // the matcher session so they show up next to body assertions.
-            const before = await hookOrchestrator.beforeTest(desc);
-            for (const r of before.matcherResults) {
-              (session.results as any).push(r);
+            // Run the body inside a per-test matcher session (ALS-scoped,
+            // concurrency-safe — RFC 004). Hook outcomes are recorded into
+            // the same session so they show up next to body assertions.
+            let fixtures: TestFixtures | undefined;
+            const { results: matcherResults, error: evalError } = await runInSession(async () => {
+              const before = await hookOrchestrator.beforeTest(desc);
+              for (const r of before.matcherResults) recordVerdict(r);
+              // Overlay the per-run tracesAccessor (#230) over what the
+              // orchestrator returned. The orchestrator's noop factory
+              // always returns an empty traces accessor. The judge fixture
+              // is pre-bound to the run-level evaluator + judge model (#257)
+              // so destructured `judge` calls match the UI "Run Test" path;
+              // per-call `judge(result, claim, { evaluatorId })` still wins.
+              fixtures = {
+                ...before.fixtures,
+                result: evalResult,
+                traces: tracesAccessor,
+                judge: bindJudge({ evaluatorId: run.evaluatorId, model: bedrockModelId }),
+              };
+              try {
+                if (!before.aborted) {
+                  await evalFn(Object.assign(evalResult, { ...fixtures, result: evalResult }));
+                }
+              } finally {
+                const after = await hookOrchestrator.afterTest(desc, fixtures);
+                for (const r of after) recordVerdict(r);
+              }
+            });
+
+            const anyFailed = matcherResults.some(m => !m.pass);
+            const failed = anyFailed || evalError !== undefined;
+            (report as any).passFailStatus = failed ? 'failed' : 'passed';
+            (report as any).evaluationType = 'deterministic';
+            (report as any).matcherResults = matcherResults;
+            if (evalError !== undefined) {
+              (report as any).assertionError =
+                (evalError as any)?.message ?? String(evalError);
             }
-            // Overlay the per-run tracesAccessor (#230) over what the
-            // orchestrator returned. The orchestrator's noop factory
-            // always returns an empty traces accessor. The judge fixture
-            // is pre-bound to the run-level evaluator + judge model (#257)
-            // so destructured `judge` calls match the UI "Run Test" path;
-            // per-call `judge(result, claim, { evaluatorId })` still wins.
-            const fixtures: TestFixtures = {
-              ...before.fixtures,
-              result: evalResult,
-              traces: tracesAccessor,
-              judge: bindJudge({ evaluatorId: run.evaluatorId, model: bedrockModelId }),
-            };
-            try {
-              if (!before.aborted) {
-                await evalFn(Object.assign(evalResult, { ...fixtures, result: evalResult }));
-              }
-              const after = await hookOrchestrator.afterTest(desc, fixtures);
-              for (const r of after) {
-                (session.results as any).push(r);
-              }
-              const matcherResults = endSession();
-              const anyFailed = matcherResults.some(m => !m.pass);
-              (report as any).passFailStatus = anyFailed ? 'failed' : 'passed';
-              (report as any).evaluationType = 'deterministic';
-              (report as any).matcherResults = matcherResults;
-              // Option B BC shim: legacy field empty for SDK runs;
-              // canonical judge data lives in `matcherResults`.
-              (report as any).llmJudgeReasoning = '';
-              (report as any).metrics = anyFailed
-                ? { accuracy: 0, faithfulness: 0, latency_score: 0, trajectory_alignment_score: 0 }
-                : { accuracy: 100, faithfulness: 100, latency_score: 100, trajectory_alignment_score: 100 };
-            } catch (evalError: any) {
-              const after = await hookOrchestrator.afterTest(desc, fixtures);
-              for (const r of after) {
-                (session.results as any).push(r);
-              }
-              const matcherResults = endSession();
-              (report as any).passFailStatus = 'failed';
-              (report as any).evaluationType = 'deterministic';
-              (report as any).assertionError = evalError.message;
-              (report as any).matcherResults = matcherResults;
-              (report as any).llmJudgeReasoning = '';
-              (report as any).metrics = { accuracy: 0, faithfulness: 0, latency_score: 0, trajectory_alignment_score: 0 };
-            }
+            // Option B BC shim: legacy field empty for SDK runs;
+            // canonical judge data lives in `matcherResults`.
+            (report as any).llmJudgeReasoning = '';
+            (report as any).metrics = failed
+              ? { accuracy: 0, faithfulness: 0, latency_score: 0, trajectory_alignment_score: 0 }
+              : { accuracy: 100, faithfulness: 100, latency_score: 100, trajectory_alignment_score: 100 };
             // Mark the report as final so trace-mode polling below skips
             // the Bedrock judge fallback (which would error with empty
             // expectedOutcomes for SDK-loaded test cases).

@@ -10,6 +10,7 @@
 | **Status**   | Draft                                                              |
 | **Author**   | Ashwin P Chandran                                                  |
 | **Created**  | 2026-06-05                                                         |
+| **Tracking** | [#256](https://github.com/opensearch-project/agent-health/issues/256) |
 | **Supersedes** | the experimental `test()/judge()/expect()` SDK (#207, #198)      |
 | **Resolves** | #245, #243, #242, #244, #238, #248, #230, #232, #246              |
 
