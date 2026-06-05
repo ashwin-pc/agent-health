@@ -125,6 +125,12 @@ export interface TestFixtures {
    */
   agent?: import('./agentFixture.js').AgentFixture;
   /**
+   * The `evaluate` fixture (RFC 004 §4.4): run a custom programmatic
+   * evaluator registered via `defineEvaluator()`. Gates by default;
+   * `.observe()` feeds score/insights only.
+   */
+  evaluate?: import('./evaluators.js').EvaluateFn;
+  /**
    * Static, read-only metadata about the currently-executing test. Useful
    * for naming temp dirs, logging, and routing — never mutate.
    */

@@ -39,6 +39,7 @@ import type { TracesAccessor } from '@/lib/matchers/index';
 import type { EvalResult, TrajectoryAccessor, TestFixtures, RegisteredHook } from '@/lib/testCases/types';
 import { createAgentFixture } from '@/lib/testCases/agentFixture';
 import type { AgentRunOptions } from '@/lib/testCases/agentFixture';
+import { evaluate as evaluateFixture } from '@/lib/testCases/evaluators';
 import { judge as judgeFn, bindJudge, clearJudgeCache } from '@/lib/testCases/judge';
 import { expect as ahExpect } from '@/lib/matchers/expect';
 import type { TrajectoryStep } from '@/types';
@@ -457,6 +458,7 @@ export async function executeRun(
                 agent: agentFixture,
                 traces: tracesView,
                 judge: bindJudge({ evaluatorId: run.evaluatorId, model: bedrockModelId }),
+                evaluate: evaluateFixture,
               };
               try {
                 if (!before.aborted) {

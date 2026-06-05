@@ -18,6 +18,18 @@ export { loadTestCasesFromModule, isCodeFile, computeTestCaseHash } from './load
 export { judge, wasJudgeCalled, resetJudgeFlag } from './judge.js';
 export { clearJudgeCache } from './judge.js';
 export { createAgentFixture } from './agentFixture.js';
+export {
+  defineEvaluator,
+  evaluate,
+  getEvaluator,
+  clearEvaluators,
+} from './evaluators.js';
+export type {
+  EvaluatorContext,
+  EvaluatorResult,
+  EvaluatorFn,
+  EvaluateFn,
+} from './evaluators.js';
 export type {
   AgentFixture,
   AgentRunOptions,

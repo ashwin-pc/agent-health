@@ -581,4 +581,37 @@ describe('executeEvaluationRun - deterministic evaluation', () => {
     expect(saved.passFailStatus).toBeUndefined();
     expect(saved.traceError).toMatch(/judge boom/);
   });
+
+  it('custom evaluate() fixture gates the test (#244)', async () => {
+    const { defineEvaluator, clearEvaluators } = require('@/lib/testCases/evaluators');
+    clearEvaluators();
+    defineEvaluator('output-is-ok', ({ result }: any) => ({
+      pass: result.agentOutput.includes('root cause'),
+      reasoning: 'must mention root cause',
+    }));
+
+    const evaluateFn: EvaluateFn = jest.fn(async (fixtures: any) => {
+      const result = await fixtures.agent.run('Investigate');
+      await fixtures.evaluate(result, 'output-is-ok');
+    });
+    const evaluateFnMap = new Map<string, EvaluateFn>([['tc-ce', evaluateFn]]);
+    const testCase: TestCase = { id: 'tc-ce', name: 'CE', initialPrompt: 'Investigate', context: [] } as unknown as TestCase;
+    const run: EvaluationRun = { id: 'run-1', agentKey: 'test-agent', modelId: 'claude-sonnet', status: 'running', results: {}, createdAt: new Date().toISOString() } as unknown as EvaluationRun;
+    let saved: any;
+    (storage.runs.create as jest.Mock).mockImplementation((report: any) => { saved = report; return Promise.resolve({ ...report, id: 'r' }); });
+
+    // Agent output does NOT mention 'root cause' → evaluator fails → test fails.
+    mockInvokeAgent.mockResolvedValue(stubInvocation({ trajectory: [{ type: 'response', content: 'all good' }], agentDurationMs: 3 }));
+    await executeEvaluationRun(run, [testCase], { storageModule: storage, evaluateFnMap, onProgress: jest.fn() });
+    expect(saved.passFailStatus).toBe('failed');
+    const ev = (saved.matcherResults ?? []).find((m: any) => m.method === 'evaluator');
+    expect(ev).toBeDefined();
+    expect(ev.pass).toBe(false);
+
+    // Now output mentions it → evaluator passes → test passes.
+    mockInvokeAgent.mockResolvedValue(stubInvocation({ trajectory: [{ type: 'response', content: 'the root cause is X' }], agentDurationMs: 3 }));
+    run.results = {};
+    await executeEvaluationRun(run, [testCase], { storageModule: storage, evaluateFnMap, onProgress: jest.fn() });
+    expect(saved.passFailStatus).toBe('passed');
+  });
 });
