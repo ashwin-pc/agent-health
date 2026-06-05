@@ -15,6 +15,7 @@ import { evaluateWithOpenAICompatible, parseOpenAICompatibleError } from '@/serv
 import { evaluateWithLiteLLM, parseLiteLLMError } from '@/server/services/litellmJudgeService';
 import { evaluateWithClaudeCode, parseClaudeCodeError } from '@/server/services/claudeCodeJudgeService';
 import { evaluateWithPi, parsePiError } from '@/server/services/piJudgeService';
+import { evaluateWithPiAgenticTrace } from '@/server/services/piAgenticJudgeService';
 import { evaluateWithAgenticJudge, parseAgenticJudgeError } from '@/server/services/agenticJudgeService';
 import { loadConfigSync } from '@/lib/config/index';
 import serverConfig from '@/server/config';
@@ -253,6 +254,17 @@ router.post('/api/judge', async (req: Request, res: Response) => {
       return res.json(result);
     }
 
+    if (provider === 'pi-agentic') {
+      // Agentic trace judge: pi agent + read-only run-scoped trace tools.
+      // Reuses pi's tool-calling runtime (no bespoke harness). runId lets the
+      // tools scope to this run.
+      debug('JudgeAPI', 'Pi agentic trace judge - spawning pi CLI with trace tools (runId=' + (runId ?? 'none') + ')');
+      const result = await evaluateWithPiAgenticTrace(
+        { trajectory, expectedOutcomes, expectedTrajectory, logs, runId }
+      );
+      return res.json(result);
+    }
+
     if (provider === 'agentic') {
       debug('JudgeAPI', 'Agentic judge provider - running agent-based evaluation');
       const judgeConfig = config.judge || {};
@@ -314,7 +326,7 @@ router.post('/api/judge', async (req: Request, res: Response) => {
 
     const errorMessage = provider === 'agentic'
       ? parseAgenticJudgeError(error)
-      : provider === 'pi'
+      : provider === 'pi' || provider === 'pi-agentic'
         ? parsePiError(error)
         : provider === 'claude-code'
           ? parseClaudeCodeError(error)

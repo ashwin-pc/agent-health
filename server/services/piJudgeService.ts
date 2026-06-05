@@ -26,6 +26,46 @@ const PI_PACKAGE_PATH = resolve(process.cwd(), 'observio-sample-agent/pi-package
 /** Timeout for the pi CLI process (5 minutes) */
 const PI_TIMEOUT_MS = 300_000;
 
+/** Options for spawning the pi judge CLI. @internal */
+export interface SpawnPiOptions {
+  /** Extra `--extension <path>` files to load (e.g. the trace-tool pack). */
+  extraExtensions?: string[];
+  /** Extra env vars to inject into the spawned process. */
+  extraEnv?: Record<string, string>;
+}
+
+/**
+ * Parse the verdict JSON out of a raw pi judge response string. Handles
+ * markdown ```json fences and bare `{...}`. @internal
+ */
+export function parsePiJudgeJson(result: string): JudgeResponse {
+  let jsonText = result.trim();
+  const jsonMatch = jsonText.match(/```json\s*([\s\S]*?)\s*```/);
+  if (jsonMatch) {
+    jsonText = jsonMatch[1];
+  } else {
+    const startIdx = jsonText.indexOf('{');
+    const endIdx = jsonText.lastIndexOf('}');
+    if (startIdx !== -1 && endIdx !== -1) {
+      jsonText = jsonText.slice(startIdx, endIdx + 1);
+    }
+  }
+  const parsed = JSON.parse(jsonText);
+  const accuracy = parsed.accuracy ?? parsed.metrics?.accuracy ?? 0;
+  return {
+    passFailStatus: (parsed.pass_fail_status || 'failed') as 'passed' | 'failed',
+    metrics: {
+      accuracy,
+      faithfulness: parsed.metrics?.faithfulness,
+      latency_score: parsed.metrics?.latency_score,
+      trajectory_alignment_score: parsed.metrics?.trajectory_alignment_score,
+    },
+    llmJudgeReasoning: parsed.reasoning,
+    improvementStrategies: parsed.improvement_strategies || [],
+    duration: 0,
+  };
+}
+
 // ============================================================================
 // Main Evaluation Function
 // ============================================================================
@@ -55,38 +95,10 @@ export async function evaluateWithPi(
   debug('PiJudge', '--- Raw Pi Response ---');
   debug('PiJudge', result.substring(0, 500) + (result.length > 500 ? '...' : ''));
 
-  // Extract JSON from response — handles markdown code blocks and bare JSON
-  let jsonText = result.trim();
-  const jsonMatch = jsonText.match(/```json\s*([\s\S]*?)\s*```/);
-  if (jsonMatch) {
-    jsonText = jsonMatch[1];
-  } else {
-    const startIdx = jsonText.indexOf('{');
-    const endIdx = jsonText.lastIndexOf('}');
-    if (startIdx !== -1 && endIdx !== -1) {
-      jsonText = jsonText.slice(startIdx, endIdx + 1);
-    }
-  }
-
-  const parsed = JSON.parse(jsonText);
-
+  const parsed = parsePiJudgeJson(result);
   debug('PiJudge', '========== PI JUDGE RESPONSE ==========');
-  debug('PiJudge', 'Pass/Fail Status:', parsed.pass_fail_status?.toUpperCase() || 'MISSING');
-
-  const accuracy = parsed.accuracy ?? parsed.metrics?.accuracy ?? 0;
-
-  return {
-    passFailStatus: (parsed.pass_fail_status || 'failed') as 'passed' | 'failed',
-    metrics: {
-      accuracy,
-      faithfulness: parsed.metrics?.faithfulness,
-      latency_score: parsed.metrics?.latency_score,
-      trajectory_alignment_score: parsed.metrics?.trajectory_alignment_score,
-    },
-    llmJudgeReasoning: parsed.reasoning,
-    improvementStrategies: parsed.improvement_strategies || [],
-    duration,
-  };
+  debug('PiJudge', 'Pass/Fail Status:', parsed.passFailStatus?.toUpperCase() || 'MISSING');
+  return { ...parsed, duration };
 }
 
 // ============================================================================
@@ -94,9 +106,17 @@ export async function evaluateWithPi(
 // ============================================================================
 
 /**
- * Spawn the pi CLI and capture its output.
+ * Spawn the pi CLI and capture its output. @internal
+ *
+ * `extraExtensions` adds `--extension <path>` flags (e.g. the trace-tool
+ * pack for the agentic judge); `extraEnv` injects env (e.g. the runId the
+ * trace tools scope to).
  */
-function spawnPi(prompt: string, systemPrompt: string): Promise<string> {
+export function spawnPi(
+  prompt: string,
+  systemPrompt: string,
+  options: SpawnPiOptions = {}
+): Promise<string> {
   return new Promise((resolvePromise, reject) => {
     const args = [
       '--print',
@@ -105,9 +125,13 @@ function spawnPi(prompt: string, systemPrompt: string): Promise<string> {
       '--skill', `${PI_PACKAGE_PATH}/skills/*`,
       '--extension', `${PI_PACKAGE_PATH}/extensions/agent-health.ts`,
     ];
+    for (const ext of options.extraExtensions ?? []) {
+      args.push('--extension', ext);
+    }
 
     const env: Record<string, string> = {
       ...(process.env as Record<string, string>),
+      ...(options.extraEnv ?? {}),
     };
 
     // Inherit AWS credentials

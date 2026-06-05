@@ -41,6 +41,7 @@
     "**/*.spec.ts",
     "**/*.spec.tsx",
     "observio-sample-agent",
+    "server/pi/extensions",
     "services/adapters",
     "scripts/test-adapters.ts",
     "scripts/test-claude-code-adapter.ts",
