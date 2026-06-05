@@ -15,6 +15,8 @@ export {
   clearRegistry,
 } from './define.js';
 export { loadTestCasesFromModule, isCodeFile, computeTestCaseHash } from './loader.js';
+export { migrateEvalSource } from './codemod.js';
+export type { CodemodResult } from './codemod.js';
 export { judge, wasJudgeCalled, resetJudgeFlag } from './judge.js';
 export { clearJudgeCache } from './judge.js';
 export { createAgentFixture } from './agentFixture.js';
