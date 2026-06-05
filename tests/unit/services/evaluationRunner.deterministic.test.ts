@@ -578,6 +578,9 @@ describe('executeEvaluationRun - deterministic evaluation', () => {
     mockInvokeAgent.mockResolvedValue(stubInvocation({ trajectory: [{ type: 'response', content: 'out' }], agentDurationMs: 5 }));
     let saved: any;
     (storage.runs.create as jest.Mock).mockImplementation((report: any) => { saved = report; return Promise.resolve({ ...report, id: 'r' }); });
+    // #258 unified flow: a `running` placeholder is created first, then the
+    // final report persists via runs.update(placeholderId, reportFields).
+    (storage.runs.update as jest.Mock).mockImplementation((_id: any, fields: any) => { saved = fields; return Promise.resolve({ ...fields, id: _id }); });
 
     // Judge endpoint returns a FAILED verdict.
     (global as any).fetch = jest.fn().mockResolvedValue({
@@ -605,6 +608,8 @@ describe('executeEvaluationRun - deterministic evaluation', () => {
     mockInvokeAgent.mockResolvedValue(stubInvocation({ trajectory: [{ type: 'response', content: 'out' }], agentDurationMs: 5 }));
     let saved: any;
     (storage.runs.create as jest.Mock).mockImplementation((report: any) => { saved = report; return Promise.resolve({ ...report, id: 'r' }); });
+    // #258 unified flow: final report persists via runs.update(placeholderId, reportFields).
+    (storage.runs.update as jest.Mock).mockImplementation((_id: any, fields: any) => { saved = fields; return Promise.resolve({ ...fields, id: _id }); });
 
     // Judge endpoint errors (HTTP 500).
     (global as any).fetch = jest.fn().mockResolvedValue({
@@ -636,6 +641,8 @@ describe('executeEvaluationRun - deterministic evaluation', () => {
     const run: EvaluationRun = { id: 'run-1', agentKey: 'test-agent', modelId: 'claude-sonnet', status: 'running', results: {}, createdAt: new Date().toISOString() } as unknown as EvaluationRun;
     let saved: any;
     (storage.runs.create as jest.Mock).mockImplementation((report: any) => { saved = report; return Promise.resolve({ ...report, id: 'r' }); });
+    // #258 unified flow: final report persists via runs.update(placeholderId, reportFields).
+    (storage.runs.update as jest.Mock).mockImplementation((_id: any, fields: any) => { saved = fields; return Promise.resolve({ ...fields, id: _id }); });
 
     // Agent output does NOT mention 'root cause' → evaluator fails → test fails.
     mockInvokeAgent.mockResolvedValue(stubInvocation({ trajectory: [{ type: 'response', content: 'all good' }], agentDurationMs: 3 }));
