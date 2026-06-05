@@ -37,7 +37,7 @@ import {
 } from '@/lib/matchers/index';
 import type { TracesAccessor } from '@/lib/matchers/index';
 import type { EvalResult, TrajectoryAccessor, TestFixtures, RegisteredHook } from '@/lib/testCases/types';
-import { judge as judgeFn } from '@/lib/testCases/judge';
+import { judge as judgeFn, bindJudge } from '@/lib/testCases/judge';
 import { expect as ahExpect } from '@/lib/matchers/expect';
 import type { TrajectoryStep } from '@/types';
 import { createHookOrchestrator, type TestDescriptor } from './hookOrchestrator';
@@ -417,11 +417,15 @@ export async function executeRun(
             }
             // Overlay the per-run tracesAccessor (#230) over what the
             // orchestrator returned. The orchestrator's noop factory
-            // always returns an empty traces accessor.
+            // always returns an empty traces accessor. The judge fixture
+            // is pre-bound to the run-level evaluator + judge model (#257)
+            // so destructured `judge` calls match the UI "Run Test" path;
+            // per-call `judge(result, claim, { evaluatorId })` still wins.
             const fixtures: TestFixtures = {
               ...before.fixtures,
               result: evalResult,
               traces: tracesAccessor,
+              judge: bindJudge({ evaluatorId: run.evaluatorId, model: bedrockModelId }),
             };
             try {
               if (!before.aborted) {
@@ -1121,10 +1125,14 @@ function buildEvalResult(input: {
   };
 }
 
-function buildFixtures(result: EvalResult, traces: TracesAccessor): TestFixtures {
+function buildFixtures(
+  result: EvalResult,
+  traces: TracesAccessor = emptyTracesAccessor(),
+  defaults?: { evaluatorId?: string; model?: string },
+): TestFixtures {
   return {
     result,
-    judge: judgeFn,
+    judge: bindJudge(defaults),
     traces,
     expect: ahExpect,
     testInfo: { name: '' },

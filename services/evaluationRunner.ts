@@ -29,7 +29,7 @@ import {
 } from '@/lib/matchers/index';
 import type { TracesAccessor } from '@/lib/matchers/index';
 import type { EvalResult, TrajectoryAccessor, TestFixtures, RegisteredHook } from '@/lib/testCases/types';
-import { judge } from '@/lib/testCases/judge';
+import { judge, bindJudge } from '@/lib/testCases/judge';
 import { expect } from '@/lib/matchers/expect';
 import type { TrajectoryStep } from '@/types';
 import { createHookOrchestrator, type TestDescriptor } from './hookOrchestrator';
@@ -298,11 +298,16 @@ export async function executeEvaluationRun(
             // potentially provide-from-beforeEach) over the EvalResult
             // object so legacy 1-arg bodies and modern destructuring
             // bodies both work. Overlay the per-run tracesAccessor too —
-            // the orchestrator's noop factory returns an empty one.
+            // the orchestrator's noop factory returns an empty one. The
+            // judge fixture is pre-bound to the run-level evaluator + judge
+            // model (#257) so destructured `judge` calls match the UI "Run
+            // Test" path; per-call `judge(result, claim, { evaluatorId })`
+            // still wins (bindJudge merges per-call options over defaults).
             const fixtures: TestFixtures = {
               ...before.fixtures,
               result: evalResult,
               traces: tracesAccessor,
+              judge: bindJudge({ evaluatorId: run.evaluatorId, model: bedrockModelId }),
             };
             const arg = Object.assign(evalResult, { ...fixtures, result: evalResult }) as any;
 
@@ -718,11 +723,19 @@ function buildEvalResult(input: {
  * Build the fixtures object passed to the new Playwright-style test body.
  * The traces fixture is constructed by {@link loadTracesAccessor} prior
  * to this call — see issue #230.
+ *
+ * `defaults.evaluatorId` and `defaults.model` are bound onto the `judge`
+ * fixture so destructured `judge` calls inherit run-level evaluator
+ * selection (#257). Pass `undefined` to keep the unbound default.
  */
-function buildFixtures(result: EvalResult, traces: TracesAccessor): TestFixtures {
+function buildFixtures(
+  result: EvalResult,
+  traces: TracesAccessor = emptyTracesAccessor(),
+  defaults?: { evaluatorId?: string; model?: string },
+): TestFixtures {
   return {
     result,
-    judge,
+    judge: bindJudge(defaults),
     traces,
     expect,
     // Defaults for tests that bypass the orchestrator (none today — the
