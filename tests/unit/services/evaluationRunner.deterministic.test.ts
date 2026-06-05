@@ -578,7 +578,7 @@ describe('executeEvaluationRun - deterministic evaluation', () => {
 
     // Errored, not failed: metricsStatus 'error', passFailStatus cleared.
     expect(saved.metricsStatus).toBe('error');
-    expect(saved.passFailStatus).toBeUndefined();
+    expect(saved.passFailStatus).toBeNull();
     expect(saved.traceError).toMatch(/judge boom/);
   });
 
