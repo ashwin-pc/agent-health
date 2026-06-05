@@ -48,6 +48,8 @@ describe('evaluateWithPiAgenticTrace', () => {
     expect(systemPrompt).toMatch(/query_logs/);
     // Trace-judge extension is loaded.
     expect(opts.extraExtensions.some((p: string) => p.endsWith('server/pi/extensions/trace-judge.ts'))).toBe(true);
+    // Sample-agent base pack is skipped (it pulls in deps the judge doesn't need).
+    expect(opts.omitBasePack).toBe(true);
     // Run id is injected as the scoping env var.
     expect(opts.extraEnv.AH_JUDGE_RUN_ID).toBe('agent-run-123');
     expect(opts.extraEnv.AH_JUDGE_SERVER_URL).toMatch(/^http:\/\//);

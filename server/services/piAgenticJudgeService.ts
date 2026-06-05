@@ -66,6 +66,7 @@ export async function evaluateWithPiAgenticTrace(
   const startTime = Date.now();
 
   const raw = await spawnPi(userPrompt, AGENTIC_TRACE_JUDGE_SYSTEM_PROMPT, {
+    omitBasePack: true,
     extraExtensions: [TRACE_JUDGE_EXTENSION],
     extraEnv: {
       // The trace tools read these. runId is the scoping invariant.

@@ -32,6 +32,14 @@ export interface SpawnPiOptions {
   extraExtensions?: string[];
   /** Extra env vars to inject into the spawned process. */
   extraEnv?: Record<string, string>;
+  /**
+   * Skip the observio sample-agent base pack (`PI_PACKAGE_PATH` skills +
+   * `agent-health.ts` extension). The agentic trace judge provides its own
+   * self-contained tool pack via `extraExtensions` and must NOT load the
+   * sample-agent extension (it pulls in `@earendil-works/pi-ai` and other
+   * agent-only tools the judge neither needs nor can resolve). @internal
+   */
+  omitBasePack?: boolean;
 }
 
 /**
@@ -112,6 +120,38 @@ export async function evaluateWithPi(
  * pack for the agentic judge); `extraEnv` injects env (e.g. the runId the
  * trace tools scope to).
  */
+/**
+ * Extract the judge verdict text from pi's NDJSON (`--mode json`) output.
+ * pi streams one JSON event per line; the verdict lives either in an explicit
+ * `{ type: 'result', result }` event or in the last assistant message's text
+ * content. Returns `undefined` when no usable text is found. @internal
+ */
+export function extractFromNdjson(stdout: string): string | undefined {
+  const lines = stdout.split('\n').map((l) => l.trim()).filter(Boolean);
+  let resultText: string | undefined;
+  let lastAssistantText: string | undefined;
+  for (const line of lines) {
+    let ev: any;
+    try {
+      ev = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    if (ev?.type === 'result' && ev.result) {
+      resultText = typeof ev.result === 'string' ? ev.result : JSON.stringify(ev.result);
+    }
+    const msg = ev?.message;
+    if (msg?.role === 'assistant' && Array.isArray(msg.content)) {
+      const text = msg.content
+        .filter((c: any) => c?.type === 'text' && typeof c.text === 'string')
+        .map((c: any) => c.text)
+        .join('');
+      if (text.trim()) lastAssistantText = text;
+    }
+  }
+  return resultText ?? lastAssistantText;
+}
+
 export function spawnPi(
   prompt: string,
   systemPrompt: string,
@@ -122,9 +162,13 @@ export function spawnPi(
       '--print',
       '--mode', 'json',
       '--system-prompt', systemPrompt,
-      '--skill', `${PI_PACKAGE_PATH}/skills/*`,
-      '--extension', `${PI_PACKAGE_PATH}/extensions/agent-health.ts`,
     ];
+    if (!options.omitBasePack) {
+      args.push(
+        '--skill', `${PI_PACKAGE_PATH}/skills/*`,
+        '--extension', `${PI_PACKAGE_PATH}/extensions/agent-health.ts`,
+      );
+    }
     for (const ext of options.extraExtensions ?? []) {
       args.push('--extension', ext);
     }
@@ -194,8 +238,18 @@ export function spawnPi(
           resolvePromise(stdout);
         }
       } catch (parseError) {
-        debug('PiJudge', 'Failed to parse Pi CLI output as JSON, using raw stdout:', (parseError as Error).message);
-        resolvePromise(stdout);
+        // pi `--mode json` streams NDJSON (one event per line), not a single
+        // JSON document, so JSON.parse(stdout) throws. Parse line-by-line and
+        // extract the verdict: prefer an explicit `result` event, else the
+        // last assistant message's text content (which carries the JSON the
+        // judge system prompt asked for).
+        const ndjson = extractFromNdjson(stdout);
+        if (ndjson) {
+          resolvePromise(ndjson);
+        } else {
+          debug('PiJudge', 'Failed to parse Pi CLI output as JSON, using raw stdout:', (parseError as Error).message);
+          resolvePromise(stdout);
+        }
       }
     });
 
