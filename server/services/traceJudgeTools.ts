@@ -14,7 +14,7 @@
  * the server's existing read endpoints over localhost.
  */
 
-import type { ExtensionAPI, ExtensionFactory } from '@earendil-works/pi-coding-agent';
+import type { PiExtensionAPI, PiExtensionFactory } from './piSdkTypes';
 import { Type } from 'typebox';
 
 function textResult(obj: unknown) {
@@ -26,8 +26,8 @@ function textResult(obj: unknown) {
  * @param runId   the single run the tools are hard-scoped to (closure, not a tool param)
  * @param serverUrl base URL of this Agent Health server (reuses /api/traces, /api/logs)
  */
-export function createTraceJudgeExtension(runId: string | undefined, serverUrl: string): ExtensionFactory {
-  return (pi: ExtensionAPI) => {
+export function createTraceJudgeExtension(runId: string | undefined, serverUrl: string): PiExtensionFactory {
+  return (pi: PiExtensionAPI) => {
     pi.registerTool({
       name: 'query_spans',
       label: 'Query OTel spans for the run under evaluation',

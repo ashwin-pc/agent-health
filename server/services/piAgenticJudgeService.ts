@@ -20,6 +20,7 @@
 import { buildEvaluationPrompt, JudgeRequest, JudgeResponse } from '@/server/services/bedrockService';
 import { parsePiJudgeJson } from '@/server/services/piJudgeService';
 import { createTraceJudgeExtension } from '@/server/services/traceJudgeTools';
+import type { PiSdk } from '@/server/services/piSdkTypes';
 import { readEnv } from '@/lib/envCompat';
 import { debug } from '@/lib/debug';
 
@@ -44,10 +45,17 @@ When you are done investigating, respond with ONLY a JSON object (no prose, opti
 /**
  * Dynamically load the pi SDK (optionalDependency). Throws a clear, actionable
  * error when it isn't installed rather than a raw module-not-found.
+ *
+ * The specifier is held in a variable (not a string literal) so tsc does NOT
+ * statically resolve `@earendil-works/pi-coding-agent` at compile time — the
+ * package is optional and may be absent (CI / platforms where its native
+ * install scripts fail), and a literal `import()` would make the build require
+ * it. The runtime result is cast to the local {@link PiSdk} surface.
  */
-async function loadPiSdk(): Promise<typeof import('@earendil-works/pi-coding-agent')> {
+async function loadPiSdk(): Promise<PiSdk> {
+  const PI_SDK_MODULE = '@earendil-works/pi-coding-agent';
   try {
-    return await import('@earendil-works/pi-coding-agent');
+    return (await import(PI_SDK_MODULE)) as unknown as PiSdk;
   } catch (err: any) {
     throw new Error(
       'Agent judge requires the optional dependency "@earendil-works/pi-coding-agent". ' +
