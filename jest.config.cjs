@@ -25,6 +25,10 @@ module.exports = {
     '^@/server/utils/version$': '<rootDir>/__mocks__/@/server/utils/version.ts',
     '^\\.\\./utils/version$': '<rootDir>/__mocks__/@/server/utils/version.ts',
     '^\\.\\./utils/version\\.js$': '<rootDir>/__mocks__/@/server/utils/version.ts',
+    // Mock traceJudgeExtensionPath to avoid import.meta.url issues in Jest
+    '^@/server/services/traceJudgeExtensionPath$': '<rootDir>/__mocks__/@/server/services/traceJudgeExtensionPath.ts',
+    '^\./traceJudgeExtensionPath$': '<rootDir>/__mocks__/@/server/services/traceJudgeExtensionPath.ts',
+    '^\./traceJudgeExtensionPath\.js$': '<rootDir>/__mocks__/@/server/services/traceJudgeExtensionPath.ts',
     // Mock data files to avoid JSON import issues in tests
     '^@/data/testCases$': '<rootDir>/__mocks__/@/data/testCases.ts',
     '^@/data/mockComparisonData$': '<rootDir>/__mocks__/@/data/mockComparisonData.ts',

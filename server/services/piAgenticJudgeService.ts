@@ -15,14 +15,18 @@
  * parses the verdict.
  */
 
-import { resolve } from 'path';
 import { buildEvaluationPrompt, JudgeRequest, JudgeResponse } from '@/server/services/bedrockService';
 import { spawnPi, parsePiJudgeJson, parsePiError } from '@/server/services/piJudgeService';
+import { getTraceJudgeExtensionPath } from '@/server/services/traceJudgeExtensionPath';
 import { readEnv } from '@/lib/envCompat';
 import { debug } from '@/lib/debug';
 
-/** Absolute path to the shipped trace-judge pi extension. */
-const TRACE_JUDGE_EXTENSION = resolve(process.cwd(), 'server/pi/extensions/trace-judge.ts');
+/**
+ * Resolve the shipped trace-judge extension relative to THIS package (not the
+ * server's `process.cwd()`), so the agent judge works when the server runs
+ * from a consumer project directory. See `traceJudgeExtensionPath.ts`.
+ */
+const TRACE_JUDGE_EXTENSION = getTraceJudgeExtensionPath();
 
 /**
  * System prompt that tells the judge it has real trace/log access and

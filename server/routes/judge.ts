@@ -254,11 +254,12 @@ router.post('/api/judge', async (req: Request, res: Response) => {
       return res.json(result);
     }
 
-    if (provider === 'pi-agentic') {
-      // Agentic trace judge: pi agent + read-only run-scoped trace tools.
-      // Reuses pi's tool-calling runtime (no bespoke harness). runId lets the
-      // tools scope to this run.
-      debug('JudgeAPI', 'Pi agentic trace judge - spawning pi CLI with trace tools (runId=' + (runId ?? 'none') + ')');
+    if (provider === 'agent') {
+      // Agent trace judge: an LLM judge with read-only, run-scoped trace tools
+      // (query_spans/query_logs) so it can verify claims against the run's real
+      // OTel spans/logs instead of trusting the trajectory text. runId scopes
+      // the tools to this run.
+      debug('JudgeAPI', 'Agent trace judge - evaluating with run-scoped trace tools (runId=' + (runId ?? 'none') + ')');
       const result = await evaluateWithPiAgenticTrace(
         { trajectory, expectedOutcomes, expectedTrajectory, logs, runId }
       );
@@ -326,7 +327,7 @@ router.post('/api/judge', async (req: Request, res: Response) => {
 
     const errorMessage = provider === 'agentic'
       ? parseAgenticJudgeError(error)
-      : provider === 'pi' || provider === 'pi-agentic'
+      : provider === 'pi' || provider === 'agent'
         ? parsePiError(error)
         : provider === 'claude-code'
           ? parseClaudeCodeError(error)
