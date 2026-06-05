@@ -189,6 +189,7 @@ interface ResultLike {
   trajectory?: TrajectoryStep[];
   finalResponse?: () => string;
   agentOutput?: string;
+  runId?: string;
 }
 
 function isTrajectory(x: unknown): x is TrajectoryStep[] {
@@ -255,6 +256,12 @@ async function runJudge(
   const trajectory = isTrajectory(resultOrTrajectory)
     ? resultOrTrajectory
     : (isResultLike(resultOrTrajectory) ? resultOrTrajectory.trajectory ?? [] : []);
+  // Agent run id for trace/log correlation — lets the agentic trace judge
+  // scope its read-only tools to this single run. Only present when the
+  // caller passed a RunResult (not a bare trajectory array).
+  const runId = !isTrajectory(resultOrTrajectory) && isResultLike(resultOrTrajectory)
+    ? resultOrTrajectory.runId
+    : undefined;
   const claims = Array.isArray(claimOrClaims) ? claimOrClaims : [claimOrClaims];
 
   const serverUrl =
@@ -275,6 +282,7 @@ async function runJudge(
   };
   if (options?.model) requestBody.modelId = options.model;
   if (options?.evaluatorId) requestBody.evaluatorId = options.evaluatorId;
+  if (runId) requestBody.runId = runId;
 
   // Record the success path identically whether the verdict came fresh from
   // the endpoint or from the in-process cache.

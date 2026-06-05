@@ -173,7 +173,7 @@ router.get('/api/judge/bedrock-models', async (_req: Request, res: Response) => 
  */
 router.post('/api/judge', async (req: Request, res: Response) => {
   try {
-    const { trajectory, expectedOutcomes, expectedTrajectory, logs, modelId, evaluatorId } = req.body;
+    const { trajectory, expectedOutcomes, expectedTrajectory, logs, modelId, evaluatorId, runId } = req.body;
 
     // Validate required fields
     if (!trajectory || !Array.isArray(trajectory) || trajectory.length === 0) {
@@ -258,7 +258,7 @@ router.post('/api/judge', async (req: Request, res: Response) => {
       const judgeConfig = config.judge || {};
       const backend = resolvedModelId === 'agentic-custom' ? 'custom' : 'claude-code';
       const result = await evaluateWithAgenticJudge(
-        { trajectory, expectedOutcomes, expectedTrajectory, logs },
+        { trajectory, expectedOutcomes, expectedTrajectory, logs, runId },
         {
           backend,
           endpoint: judgeConfig.endpoint,

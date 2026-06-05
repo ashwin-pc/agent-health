@@ -98,6 +98,18 @@ describe('judge() — per-call options', () => {
     expect(lastBody().modelId).toBe('claude-opus-4');
   });
 
+  it('forwards result.runId on the body when the result carries one', async () => {
+    const { lastBody } = mockJudgeFetch();
+    await judge({ trajectory: [{ type: 'response', content: 'ok' }], runId: 'agent-run-99' } as any, 'claim');
+    expect((lastBody() as any).runId).toBe('agent-run-99');
+  });
+
+  it('omits runId from the body for the legacy trajectory-array form', async () => {
+    const { lastBody } = mockJudgeFetch();
+    await judge([{ type: 'response', content: 'ok' }] as any, 'claim');
+    expect('runId' in (lastBody() as any)).toBe(false);
+  });
+
   it('accepts the legacy form judge(trajectory, [claims])', async () => {
     const { lastBody } = mockJudgeFetch();
     const trajectory = [{ type: 'response', content: 'final' }] as any[];
