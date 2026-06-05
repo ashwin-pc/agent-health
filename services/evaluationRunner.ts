@@ -295,7 +295,6 @@ export async function executeEvaluationRun(
                 runId: inv.runId ?? undefined,
                 durationMs: inv.agentDurationMs,
               });
-              capturedResult = evalResult;
               // Fold the invocation into the report shell, then load traces
               // for the body (see #230 loud-failure semantics).
               report.trajectory = inv.trajectory;
@@ -307,6 +306,10 @@ export async function executeEvaluationRun(
               };
               (report as any).connectorProtocol = inv.connector.type;
               loadedTraces = await loadTracesAccessor(agentConfig, inv.runId ?? undefined);
+              // Expose traces on the result too (RFC 004 §4.6) so the body
+              // can read `result.traces.*` in addition to the `traces` fixture.
+              (evalResult as any).traces = loadedTraces;
+              capturedResult = evalResult;
               return evalResult;
             };
 

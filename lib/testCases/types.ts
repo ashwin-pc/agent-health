@@ -219,4 +219,12 @@ export interface EvalResult {
   durationMs: number;
   /** Token usage when reported by the agent. */
   tokenUsage?: { prompt: number; completion: number; total: number };
+  /**
+   * OTel traces for this run, available after `agent.run()` resolves
+   * (RFC 004 §4.6). Mirrors the standalone `traces` fixture but scoped to
+   * the result, so `result.traces.totalTokens` reads the same data. Present
+   * only on results returned by `agent.run()`; reading it on the empty
+   * placeholder (before `agent.run()`) yields the loud-failure accessor.
+   */
+  traces?: import('../matchers/traces.js').TracesAccessor;
 }

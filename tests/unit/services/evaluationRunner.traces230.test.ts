@@ -270,10 +270,13 @@ describe('executeEvaluationRun — issue #230 traces fixture pre-loading', () =>
     } as any);
 
     const evalFn: EvaluateFn = jest.fn(async ({ agent, traces, expect: ahExpect }: any) => {
-      await agent.run('Test prompt');
+      const result = await agent.run('Test prompt');
       // Reading totalTokens gives the real aggregate, not 0.
       expect(traces.totalTokens).toBe(5000);
       ahExpect(traces.totalTokens).to.be.lessThan(10_000);
+      // RFC 004 §4.6: traces are also exposed on the result itself.
+      expect(result.traces).toBeDefined();
+      expect(result.traces.totalTokens).toBe(5000);
     });
 
     await executeEvaluationRun(makeRun('traced-agent'), [TC], {

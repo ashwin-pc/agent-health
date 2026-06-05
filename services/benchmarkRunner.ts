@@ -422,6 +422,8 @@ export async function executeRun(
               };
               (report as any).connectorProtocol = inv.connector.type;
               loadedTraces = await loadTracesAccessor(agentConfig, inv.runId ?? undefined);
+              // Expose traces on the result too (RFC 004 §4.6).
+              (evalResult as any).traces = loadedTraces;
               capturedResult = evalResult;
               return evalResult;
             };
