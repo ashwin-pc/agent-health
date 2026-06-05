@@ -117,6 +117,14 @@ export interface TestFixtures {
   traces: TracesAccessor;
   expect: typeof import('../matchers/expect.js').expect;
   /**
+   * The `agent` fixture (RFC 004 control inversion). The test body calls
+   * `await agent.run(prompt)` to drive the agent itself, instead of the
+   * framework invoking eagerly before the body. Optional during the
+   * transition: present when the runner provides it; `result` remains for
+   * the legacy eager path. Enforces one invocation per test.
+   */
+  agent?: import('./agentFixture.js').AgentFixture;
+  /**
    * Static, read-only metadata about the currently-executing test. Useful
    * for naming temp dirs, logging, and routing — never mutate.
    */

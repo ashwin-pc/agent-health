@@ -16,6 +16,13 @@ export {
 } from './define.js';
 export { loadTestCasesFromModule, isCodeFile, computeTestCaseHash } from './loader.js';
 export { judge, wasJudgeCalled, resetJudgeFlag } from './judge.js';
+export { createAgentFixture } from './agentFixture.js';
+export type {
+  AgentFixture,
+  AgentRunOptions,
+  AgentInvokeFn,
+  CreateAgentFixtureOptions,
+} from './agentFixture.js';
 export type {
   CodeTestCase,
   EvalResult,
