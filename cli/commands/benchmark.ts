@@ -436,6 +436,26 @@ async function exportResults(
  * Create the benchmark command
  */
 /**
+ * Map an array of `-f` file paths to evaluation-run sources, splitting code
+ * eval files (executable bodies → `code-import`) from JSON test-case data
+ * (→ `file-import`). This split is what makes `benchmark -f foo.eval.js`
+ * actually run the SDK body instead of importing it as inert data
+ * (#245/#246). Pure: existence checks are the caller's responsibility.
+ */
+export function buildFileSources(fileArray: string[]): TestCaseSource[] {
+  const out: TestCaseSource[] = [];
+  const codeFiles = fileArray.filter(f => isCodeFile(f));
+  const jsonFiles = fileArray.filter(f => !isCodeFile(f));
+  if (codeFiles.length > 0) {
+    out.push({ type: 'code-import', filenames: codeFiles, testCaseIds: [] });
+  }
+  if (jsonFiles.length > 0) {
+    out.push({ type: 'file-import', filenames: jsonFiles, testCaseIds: [] });
+  }
+  return out;
+}
+
+/**
  * Unified evaluation-run mode: uses the new /api/storage/evaluation-runs endpoint.
  * Triggered when new source flags are used (-d, -t, --label, or multiple -f).
  */
@@ -467,7 +487,12 @@ async function runUnifiedMode(
         process.exit(1);
       }
     }
-    sources.push({ type: 'file-import', filenames: fileArray, testCaseIds: [] });
+    // Code files (.eval.js/.ts/.mjs) carry executable test bodies and must
+    // go through `code-import` so the runner materializes + runs them
+    // (agent.run(), expect/judge/evaluate). JSON files are static test-case
+    // data and use `file-import`. This split is what makes
+    // `benchmark -f foo.eval.js` actually execute the SDK body (#245/#246).
+    sources.push(...buildFileSources(fileArray));
   }
 
   if (options.dir && options.dir.length > 0) {
@@ -698,12 +723,17 @@ export function createBenchmarkCommand(): Command {
 
       // Detect "unified mode" — new flags that use the evaluation-runs API
       const fileArray = Array.isArray(options.file) ? options.file : (options.file ? [options.file] : []);
+      // Code eval files (.eval.js/.ts/.mjs) must run through the unified
+      // evaluation-runs API as `code-import` so their bodies actually
+      // execute. The legacy single-file path only bulk-imports test cases
+      // and never runs the SDK body — so any code file forces unified mode.
+      const hasCodeFile = fileArray.some(f => isCodeFile(f));
       const hasNewFlags = (options.dir && options.dir.length > 0) ||
         (options.testCase && options.testCase.length > 0) ||
         (options.label && options.label.length > 0) ||
         fileArray.length > 1;
 
-      if (hasNewFlags || (fileArray.length > 0 && (options.dir?.length || options.testCase?.length || options.label?.length))) {
+      if (hasNewFlags || hasCodeFile || (fileArray.length > 0 && (options.dir?.length || options.testCase?.length || options.label?.length))) {
         // Unified evaluation-run mode — delegate to new API
         await runUnifiedMode(options, config, serverConfig, isCI, fileArray);
         return;
