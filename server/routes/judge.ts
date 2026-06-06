@@ -266,6 +266,28 @@ router.post('/api/judge', async (req: Request, res: Response) => {
           error: 'runId is required for the agent (trace) judge provider — its trace tools scope to it'
         });
       }
+      // Defense in depth against cross-run/cross-tenant exfiltration: the trace
+      // tools will happily read spans/logs for whatever runId they're given, so
+      // a direct caller could pass a benign trajectory but a *different* run's
+      // runId and leak that run's data through the judge's reasoning text. Bind
+      // the runId to the trajectory the request also carries: when the
+      // trajectory steps carry runId(s) (the SDK path always derives runId from
+      // the judged result, so they match), the requested runId MUST be one of
+      // them. When the trajectory carries no runId we cannot corroborate it —
+      // this provider then trusts the caller and is single-tenant-only (see
+      // AGENTS.md "Trace correlation"; gate it behind auth in shared clusters).
+      const trajectoryRunIds = new Set(
+        (trajectory as any[])
+          .map((s) => s?.runId)
+          .filter((id): id is string => typeof id === 'string' && id.length > 0)
+      );
+      if (trajectoryRunIds.size > 0 && !trajectoryRunIds.has(runId)) {
+        return res.status(403).json({
+          error:
+            'runId does not match the submitted trajectory — the agent (trace) judge ' +
+            'may only inspect the run that produced its trajectory',
+        });
+      }
       debug('JudgeAPI', 'Agent trace judge - evaluating with run-scoped trace tools (runId=' + runId + ')');
       const result = await evaluateWithPiAgenticTrace(
         { trajectory, expectedOutcomes, expectedTrajectory, logs, runId, modelId: resolvedModelId }

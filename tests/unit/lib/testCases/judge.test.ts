@@ -191,6 +191,37 @@ describe('judge() — per-call options', () => {
     }
   });
 
+  it('per-call skip:false overrides AH_SKIP_JUDGE and forces the judge to run (#6 tri-state)', async () => {
+    const prev = process.env.AH_SKIP_JUDGE;
+    process.env.AH_SKIP_JUDGE = '1';
+    try {
+      clearJudgeCache();
+      const { fetchMock } = mockJudgeFetch({ passFailStatus: 'passed', metrics: { accuracy: 90 } });
+      const verdict = await judge({ trajectory: [{ type: 'response', content: 'x' }] } as any, 'claim', { skip: false });
+      expect(verdict.skipped).toBe(false);
+      expect(fetchMock).toHaveBeenCalledTimes(1); // env did NOT win
+    } finally {
+      if (prev === undefined) delete process.env.AH_SKIP_JUDGE;
+      else process.env.AH_SKIP_JUDGE = prev;
+    }
+  });
+
+  it('bindJudge({ skip: false }) binds (does not short-circuit to the unbound judge) and forces a run under AH_SKIP_JUDGE', async () => {
+    const prev = process.env.AH_SKIP_JUDGE;
+    process.env.AH_SKIP_JUDGE = '1';
+    try {
+      clearJudgeCache();
+      const { fetchMock } = mockJudgeFetch({ passFailStatus: 'passed', metrics: { accuracy: 77 } });
+      const bound = bindJudge({ skip: false });
+      const verdict = await bound({ trajectory: [{ type: 'response', content: 'x' }] } as any, 'claim');
+      expect(verdict.skipped).toBe(false);
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    } finally {
+      if (prev === undefined) delete process.env.AH_SKIP_JUDGE;
+      else process.env.AH_SKIP_JUDGE = prev;
+    }
+  });
+
   it('caches identical judge inputs — second call hits the cache, no second HTTP call', async () => {
     clearJudgeCache();
     const { fetchMock } = mockJudgeFetch({ passFailStatus: 'passed', metrics: { accuracy: 88 } });

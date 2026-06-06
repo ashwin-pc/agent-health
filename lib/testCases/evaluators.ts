@@ -67,9 +67,16 @@ export type EvaluatorFn = (
 const evaluatorRegistry = new Map<string, EvaluatorFn>();
 
 /**
- * Register a custom evaluator under `id`. Re-registering the same id
- * overwrites (last definition wins), so editing an evaluator in a watched
- * file behaves intuitively.
+ * Register a custom evaluator under `id`.
+ *
+ * Registering the **same function** under an id again is a no-op (a watched
+ * file re-loading the identical module is fine). Registering a *different*
+ * function under an id that's already taken throws: the registry is
+ * process-global (shared like a helper library), so two `.eval.{js,ts}` files
+ * defining `defineEvaluator('len-check', …)` with different bodies would
+ * otherwise silently shadow each other based on load order. Fail loudly so the
+ * collision is visible at authoring time. Use distinct ids (or a shared helper
+ * module) when you need different implementations.
  */
 export function defineEvaluator(id: string, fn: EvaluatorFn): void {
   if (!id || typeof id !== 'string') {
@@ -77,6 +84,14 @@ export function defineEvaluator(id: string, fn: EvaluatorFn): void {
   }
   if (typeof fn !== 'function') {
     throw new Error(`defineEvaluator('${id}', fn): fn must be a function`);
+  }
+  const existing = evaluatorRegistry.get(id);
+  if (existing && existing !== fn) {
+    throw new Error(
+      `defineEvaluator('${id}', ...): an evaluator with id '${id}' is already ` +
+        `registered with a different function. Evaluator ids are global — use a ` +
+        `unique id per evaluator (or share one function) to avoid silent shadowing.`
+    );
   }
   evaluatorRegistry.set(id, fn);
 }

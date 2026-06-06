@@ -44,10 +44,21 @@ jest.mock('@/services/traces/tracePoller', () => ({
   tracePollingManager: { startPolling: jest.fn() },
 }));
 
+// Telemetry is gated by isEvalTelemetryEnabled(); mock it so a test can inject
+// a sentinel eval-span context and assert invokeAgent runs inside it (Strategy A).
+jest.mock('@/lib/telemetry', () => ({
+  startTestCaseSpan: jest.fn(() => null),
+  finalizeTestCaseSpan: jest.fn(),
+  addEvaluationResultEvents: jest.fn(),
+}));
+
 import { runEvaluationWithConnector, invokeAgent } from '@/services/evaluation';
+import { startTestCaseSpan } from '@/lib/telemetry';
+import { context } from '@opentelemetry/api';
 
 const mockRunEval = runEvaluationWithConnector as jest.Mock;
 const mockInvokeAgent = invokeAgent as jest.Mock;
+const mockStartTestCaseSpan = startTestCaseSpan as jest.Mock;
 
 /** Build a stub invokeAgent result (the pure invocation primitive). */
 function stubInvocation(opts: {
@@ -657,5 +668,58 @@ describe('executeEvaluationRun - deterministic evaluation', () => {
     run.results = {};
     await executeEvaluationRun(run, [testCase], { storageModule: storage, evaluateFnMap, onProgress: jest.fn() });
     expect(saved.passFailStatus).toBe('passed');
+  });
+
+  it('forwards agent.run(prompt, { env }) through to invokeAgent (#256 §4.6)', async () => {
+    const evaluateFn: EvaluateFn = jest.fn(async (fixtures: any) => {
+      await fixtures.agent.run('Investigate', { env: { WORKSPACE_DIR: '/tmp/ws', TOKEN: 'abc' } });
+    });
+    const evaluateFnMap = new Map<string, EvaluateFn>([['tc-env', evaluateFn]]);
+    const testCase: TestCase = { id: 'tc-env', name: 'Env', initialPrompt: 'Investigate', context: [] } as unknown as TestCase;
+    const run: EvaluationRun = { id: 'run-1', agentKey: 'test-agent', modelId: 'claude-sonnet', status: 'running', results: {}, createdAt: new Date().toISOString() } as unknown as EvaluationRun;
+    mockInvokeAgent.mockResolvedValue(stubInvocation({ trajectory: [{ type: 'response', content: 'out' }], agentDurationMs: 1 }));
+    (storage.runs.create as jest.Mock).mockImplementation((r: any) => Promise.resolve({ ...r, id: 'r' }));
+
+    await executeEvaluationRun(run, [testCase], { storageModule: storage, evaluateFnMap, onProgress: jest.fn() });
+
+    // invokeAgent must receive the structured env on its options arg, not drop it.
+    expect(mockInvokeAgent).toHaveBeenCalledTimes(1);
+    const optsArg = mockInvokeAgent.mock.calls[0][3];
+    expect(optsArg.env).toEqual({ WORKSPACE_DIR: '/tmp/ws', TOKEN: 'abc' });
+  });
+
+  it('runs invokeAgent inside the eval-span OTel context so connectors propagate trace context (#256, Strategy A)', async () => {
+    // Inject a sentinel eval-span context; the runner must make it active
+    // (via context.with) while invokeAgent runs — that is what lets connectors
+    // propagate W3C trace context to the agent (AGENTS.md Strategy A).
+    const sentinelCtx = context.active().setValue(Symbol('eval-span'), true);
+    const fakeSpan = { setAttribute: jest.fn(), setStatus: jest.fn(), end: jest.fn() };
+    mockStartTestCaseSpan.mockImplementation(() => ({ span: fakeSpan, context: sentinelCtx }));
+
+    // No OTel SDK/context-manager is registered in unit tests, so context.active()
+    // can't observe the wrap directly (NoopContextManager). Spy on context.with to
+    // assert the runner activates the eval-span context around the invocation — the
+    // noop `with` still executes its callback, so invokeAgent runs as normal.
+    const withSpy = jest.spyOn(context, 'with');
+    let invokeRan = false;
+    mockInvokeAgent.mockImplementation(async () => {
+      invokeRan = true;
+      return stubInvocation({ trajectory: [{ type: 'response', content: 'out' }], agentDurationMs: 1 });
+    });
+
+    const evaluateFn: EvaluateFn = jest.fn(async (fixtures: any) => { await fixtures.agent.run('Investigate'); });
+    const evaluateFnMap = new Map<string, EvaluateFn>([['tc-otel', evaluateFn]]);
+    const testCase: TestCase = { id: 'tc-otel', name: 'Otel', initialPrompt: 'Investigate', context: [] } as unknown as TestCase;
+    const run: EvaluationRun = { id: 'run-1', agentKey: 'test-agent', modelId: 'claude-sonnet', status: 'running', results: {}, createdAt: new Date().toISOString() } as unknown as EvaluationRun;
+    (storage.runs.create as jest.Mock).mockImplementation((r: any) => Promise.resolve({ ...r, id: 'r' }));
+
+    await executeEvaluationRun(run, [testCase], { storageModule: storage, evaluateFnMap, onProgress: jest.fn() });
+
+    expect(mockStartTestCaseSpan).toHaveBeenCalled();
+    expect(invokeRan).toBe(true);
+    // The invocation must be wrapped in the eval span's context (Strategy A).
+    const wrappedInEvalSpan = withSpy.mock.calls.some((c) => c[0] === sentinelCtx);
+    expect(wrappedInEvalSpan).toBe(true);
+    withSpy.mockRestore();
   });
 });

@@ -319,9 +319,15 @@ async function runJudge(
     return verdict;
   };
 
-  // SKIP: no LLM call. Return a non-gating `skipped` verdict (pass:true) and
-  // record an observational entry so the UI shows the judge was bypassed.
-  if (options?.skip || judgeSkippedByEnv()) {
+  // SKIP: no LLM call. `skip` is tri-state and takes precedence over the env:
+  //   skip === true   → always skip
+  //   skip === false  → never skip (force the judge to run, even if AH_SKIP_JUDGE is set)
+  //   skip undefined  → defer to AH_SKIP_JUDGE
+  // This makes a per-call/bound `skip: false` a meaningful override rather than
+  // having the env unconditionally win.
+  const shouldSkip =
+    options?.skip === true || (options?.skip !== false && judgeSkippedByEnv());
+  if (shouldSkip) {
     recordVerdict({
       description: `${description} (skipped)`,
       pass: true,
@@ -461,8 +467,14 @@ export function bindJudge(defaults?: {
   skip?: boolean;
 }): JudgeFn {
   // No defaults set → return the unbound function unchanged. Keeps zero
-  // overhead for tests that don't use a run-level evaluator.
-  if (!defaults || (!defaults.evaluatorId && !defaults.model && !defaults.serverUrl && !defaults.skip)) {
+  // overhead for tests that don't use a run-level evaluator. Note `skip` is
+  // compared against `undefined` (not falsiness) so a binding of
+  // `{ skip: false }` — a meaningful "force the judge to run" — is preserved
+  // rather than short-circuited to the unbound judge.
+  if (
+    !defaults ||
+    (!defaults.evaluatorId && !defaults.model && !defaults.serverUrl && defaults.skip === undefined)
+  ) {
     return judge;
   }
   const mergeOptions = (options?: JudgeOptions): JudgeOptions => ({

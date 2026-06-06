@@ -35,12 +35,22 @@ test('rca', { prompt: 'why?' }, async function ({ result, judge }) {
     expect(code).toContain('const result = await agent.run();');
   });
 
-  it('drops result but keeps agent when both were destructured', () => {
+  it('flags a half-migrated body (agent.run() + still destructures result) for manual review', () => {
     const src = `test('t', { prompt: 'p' }, async ({ agent, result, judge }) => {\n  const r = await agent.run();\n  void result; void judge;\n});`;
-    // already calls agent.run() → skipped (idempotent)
+    // Half-migrated: agent.run() is in but `result` is still destructured (and
+    // would silently read an empty placeholder). The codemod can't safely
+    // rewrite those reads, so it surfaces a review note instead of claiming
+    // "already migrated" (#4).
     const { changed, notes } = migrateEvalSource(src, 'x.eval.js');
     expect(changed).toBe(false);
-    expect(notes.join('\n')).toMatch(/already calls agent\.run/);
+    expect(notes.join('\n')).toMatch(/review.*half-migrated/);
+  });
+
+  it('skips a fully-migrated body (agent.run() and no result binding)', () => {
+    const src = `test('t', { prompt: 'p' }, async ({ agent, judge }) => {\n  const r = await agent.run();\n  void r; void judge;\n});`;
+    const { changed, notes } = migrateEvalSource(src, 'x.eval.js');
+    expect(changed).toBe(false);
+    expect(notes.join('\n')).toMatch(/already migrated/);
   });
 
   it('leaves no-prompt (data-only) tests untouched', () => {

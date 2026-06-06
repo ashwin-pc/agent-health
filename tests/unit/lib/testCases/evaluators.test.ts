@@ -31,6 +31,22 @@ describe('defineEvaluator / evaluate — custom programmatic evaluators (#244)',
     expect(() => defineEvaluator('x', undefined as any)).toThrow(/must be a function/);
   });
 
+  it('re-registering the SAME function under an id is a no-op (watched-file reload)', () => {
+    const fn = () => ({ pass: true });
+    defineEvaluator('dup-eval', fn);
+    expect(() => defineEvaluator('dup-eval', fn)).not.toThrow();
+    expect(getEvaluator('dup-eval')).toBe(fn);
+  });
+
+  it('throws when a DIFFERENT function is registered under an existing id (#5 collision)', () => {
+    // Two .eval files defining the same id with different bodies would silently
+    // shadow by load order; fail loudly instead.
+    defineEvaluator('len-check', () => ({ pass: true }));
+    expect(() => defineEvaluator('len-check', () => ({ pass: false }))).toThrow(
+      /already.*registered with a different function/
+    );
+  });
+
   it('runs the evaluator and records a passing gate MatcherResult', async () => {
     defineEvaluator('always-pass', ({ result }) => ({
       pass: result.agentOutput === 'ok', score: 1, reasoning: 'matched',

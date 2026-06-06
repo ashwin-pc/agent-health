@@ -12,11 +12,16 @@ import {
   AgentConfig,
   RunPerformanceMetrics,
   EvaluationReport,
+  Benchmark,
+  BenchmarkRun,
 } from '@/types';
 import type { IStorageModule } from '@/server/adapters/types';
 import { runEvaluationWithConnector, callBedrockJudge, invokeAgent } from '@/services/evaluation';
 import { buildEvaluatorErrorPatch } from '@/services/evaluation/evaluatorError';
 import { connectorRegistry } from '@/services/connectors/server';
+import { startTestCaseSpan, finalizeTestCaseSpan, addEvaluationResultEvents } from '@/lib/telemetry';
+import { ATTR_AGENT_HEALTH_AGENT_RUN_ID } from '@/lib/telemetry/constants';
+import { SpanStatusCode, context } from '@opentelemetry/api';
 import { v4 as uuidv4 } from 'uuid';
 import {
   runInSession,
@@ -309,6 +314,25 @@ export async function executeEvaluationRun(
           status: 'running',
         };
 
+        // Start the OTel `test_case` eval span BEFORE invoking the agent so the
+        // eval span is the active OTel context when the connector spawns/calls
+        // the agent. Connectors with `traceContext.propagateEnv/Header` then
+        // inject TRACEPARENT/`traceparent`, making the agent's root span a child
+        // of this eval span (Strategy A — single trace tree). Without this wrap
+        // the evaluation-runs path (the headline `benchmark -f *.eval.js` route)
+        // silently degrades to Strategy C; see AGENTS.md "Trace correlation".
+        // We synthesize a benchmark shell (the span helper only reads `.name`
+        // from it and `.id` from the run) since this path has no Benchmark.
+        const synthBenchmark = { name: `evaluation-run:${run.benchmarkId ?? run.id}` } as Benchmark;
+        const caseSpanResult = startTestCaseSpan(
+          context.active(),
+          testCase,
+          synthBenchmark,
+          run as unknown as BenchmarkRun
+        );
+        const caseSpan = caseSpanResult?.span;
+        const caseSpanContext = caseSpanResult?.context;
+
         try {
           // Check if this test case has a deterministic evaluate function
           // (an SDK `test()` body). Code tests use control inversion; classic
@@ -357,10 +381,15 @@ export async function executeEvaluationRun(
                 initialPrompt: prompt,
                 ...(options?.context ? { context: options.context as any } : {}),
               };
-              const inv = await invokeAgent(agentConfig, bedrockModelId, invocationTestCase, {
+              const doInvoke = () => invokeAgent(agentConfig, bedrockModelId, invocationTestCase, {
                 registry: connectorRegistry,
                 ...(options?.env ? { env: options.env } : {}),
               });
+              // Wrap in the eval span's context so connectors propagate W3C
+              // trace context to the agent (Strategy A). Mirrors benchmarkRunner.
+              const inv = caseSpanContext
+                ? await context.with(caseSpanContext, doInvoke)
+                : await doInvoke();
               const agentOutput = inv.trajectory
                 .filter((s: any) => s.type === 'response' || s.type === 'assistant')
                 .map((s: any) => s.content)
@@ -486,14 +515,19 @@ export async function executeEvaluationRun(
           } else {
             // CLASSIC PATH: no code body. Eagerly invoke the agent and run the
             // Bedrock judge (or, for useTraces agents, return a pending report
-            // that the trace-polling block below completes).
-            report = await runEvaluationWithConnector(
+            // that the trace-polling block below completes). Wrapped in the
+            // eval span's context so connectors propagate trace context
+            // (Strategy A), matching benchmarkRunner and the SDK path above.
+            const runEval = () => runEvaluationWithConnector(
               agentConfig,
               bedrockModelId,
               testCase,
               () => {}, // No debug callback needed
               { registry: connectorRegistry, evaluatorId: run.evaluatorId, skipJudge: false }
             );
+            report = caseSpanContext
+              ? await context.with(caseSpanContext, runEval)
+              : await runEval();
           }
 
           // Save the report via storage module. When we successfully
@@ -549,6 +583,16 @@ export async function executeEvaluationRun(
             ...(reportPassFail ? { passFailStatus: reportPassFail } : {}),
           };
 
+          // Finalize the OTel test_case span with the evaluation outcome.
+          if (caseSpan) {
+            caseSpan.setAttribute(ATTR_AGENT_HEALTH_AGENT_RUN_ID, savedReport.runId || '');
+            try {
+              addEvaluationResultEvents(caseSpan, savedReport as any);
+              finalizeTestCaseSpan(caseSpan, savedReport as any);
+            } catch {
+              caseSpan.end();
+            }
+          }
           completedCount++;
           consecutiveThrottles = Math.max(0, consecutiveThrottles - 1);
           debug('EvaluationRunner', `[${testCaseId}] Completed (${completedCount}/${totalTestCases})`);
@@ -569,6 +613,11 @@ export async function executeEvaluationRun(
         } catch (error) {
           const errorMsg = error instanceof Error ? error.message : String(error);
           debug('EvaluationRunner', `[${testCaseId}] Failed: ${errorMsg}`);
+          // End the OTel test_case span with error status.
+          if (caseSpan) {
+            caseSpan.setStatus({ code: SpanStatusCode.ERROR, message: errorMsg });
+            caseSpan.end();
+          }
           // If we pre-persisted a placeholder, mark it failed so the runs
           // list doesn't show a permanently-running row after a crash.
           if (placeholderRunId) {
@@ -888,34 +937,6 @@ function buildEvalResult(input: {
     runId: input.runId,
     durationMs: input.durationMs,
     tokenUsage: input.tokenUsage,
-  };
-}
-
-/**
- * Build the fixtures object passed to the new Playwright-style test body.
- * The traces fixture is constructed by {@link loadTracesAccessor} prior
- * to this call — see issue #230.
- *
- * `defaults.evaluatorId` and `defaults.model` are bound onto the `judge`
- * fixture so destructured `judge` calls inherit run-level evaluator
- * selection (#257). Pass `undefined` to keep the unbound default.
- */
-function buildFixtures(
-  result: EvalResult,
-  traces: TracesAccessor = emptyTracesAccessor(),
-  defaults?: { evaluatorId?: string; model?: string },
-): TestFixtures {
-  return {
-    result,
-    judge: bindJudge(defaults),
-    traces,
-    expect,
-    // Defaults for tests that bypass the orchestrator (none today — the
-    // runner always goes through `hookOrchestrator.beforeTest()` which
-    // overwrites these). Kept here so the function still returns a
-    // complete TestFixtures and is safe for any future caller.
-    testInfo: { name: '' },
-    provisioned: {},
   };
 }
 

@@ -698,5 +698,46 @@ describe('Judge Routes', () => {
         expect.objectContaining({ passFailStatus: 'passed' })
       );
     });
+
+    it('returns 403 when runId does not match the runId carried by the submitted trajectory (#3 cross-run guard)', async () => {
+      mockGetEvaluatorById.mockResolvedValue(agentEvaluator);
+
+      const { req, res } = createMocks({
+        // Trajectory came from run 'run-OWN', but the caller asks the judge to
+        // inspect a different run's traces.
+        trajectory: [{ type: 'action', toolName: 'search', runId: 'run-OWN' }],
+        expectedOutcomes: ['Identify issue'],
+        evaluatorId: 'custom-trace-eval',
+        runId: 'run-SOMEONE-ELSE',
+      });
+      const handler = getRouteHandler(judgeRoutes, 'post', '/api/judge');
+
+      await handler(req, res);
+
+      expect(res.status).toHaveBeenCalledWith(403);
+      expect(mockEvaluateWithPiAgenticTrace).not.toHaveBeenCalled();
+    });
+
+    it('allows when the requested runId matches a runId in the trajectory', async () => {
+      mockGetEvaluatorById.mockResolvedValue(agentEvaluator);
+      mockEvaluateWithPiAgenticTrace.mockResolvedValue({
+        passFailStatus: 'passed', metrics: { accuracy: 91 }, llmJudgeReasoning: 'ok', improvementStrategies: [],
+      } as any);
+
+      const { req, res } = createMocks({
+        trajectory: [{ type: 'action', toolName: 'search', runId: 'run-OWN' }],
+        expectedOutcomes: ['Identify issue'],
+        evaluatorId: 'custom-trace-eval',
+        runId: 'run-OWN',
+      });
+      const handler = getRouteHandler(judgeRoutes, 'post', '/api/judge');
+
+      await handler(req, res);
+
+      expect(res.status).not.toHaveBeenCalledWith(403);
+      expect(mockEvaluateWithPiAgenticTrace).toHaveBeenCalledWith(
+        expect.objectContaining({ runId: 'run-OWN' })
+      );
+    });
   });
 });

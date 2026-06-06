@@ -259,6 +259,13 @@ async function resolveCodeImport(
   testScopes: Map<string, { sourceFile?: string; describePath?: string }>;
 }> {
   const { loadTestCasesFromModule } = await import('@/lib/testCases/loader');
+  const { clearEvaluators } = await import('@/lib/testCases/evaluators');
+  // Evaluators register into a process-global registry. Clear it before
+  // loading this batch so (a) evaluators from a prior run don't leak into
+  // this one, and (b) re-loading the same file (fresh fn identity each load)
+  // doesn't trip defineEvaluator's duplicate-id guard. Genuine collisions
+  // *within* this batch (two files, same id, different fn) still throw.
+  clearEvaluators();
   const allTestCases: TestCase[] = [];
   const fnMap = new Map<string, EvaluateFn>();
   const hooksByFile = new Map<string, RegisteredHook[]>();

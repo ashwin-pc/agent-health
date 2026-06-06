@@ -126,8 +126,24 @@ export function migrateEvalSource(code: string, fileName = 'eval.ts'): CodemodRe
 
     // Idempotency / applicability guards.
     const bodyText = body.body ? body.body.getText(sf) : '';
-    if (/\bagent\s*\.\s*run\s*\(/.test(bodyText)) {
-      notes.push(`skip  ${name}: already calls agent.run()`);
+    const hasAgentRun = /\bagent\s*\.\s*run\s*\(/.test(bodyText);
+    if (hasAgentRun && !usesResult) {
+      // Fully migrated: calls agent.run() and no longer destructures `result`.
+      notes.push(`skip  ${name}: already migrated (calls agent.run(), no result binding)`);
+      return;
+    }
+    if (hasAgentRun && usesResult) {
+      // Half-migrated: agent.run() is in, but `result` is still destructured
+      // (and almost certainly still referenced). The runner hands the body an
+      // empty placeholder `result` when `agent` is destructured separately, so
+      // those `result.*` reads silently read empties and assertions fail — the
+      // migration *looks* broken when it isn't. We can't safely rename those
+      // reads to the agent.run() return value, so surface for manual review
+      // instead of silently reporting "already migrated".
+      notes.push(
+        `review ${name}: half-migrated — calls agent.run() but still destructures \`result\`. ` +
+          `Capture the agent.run() return value (\`const result = await agent.run()\`) and drop the \`result\` fixture.`
+      );
       return;
     }
     if (!hasPrompt(optionsArg(call))) {

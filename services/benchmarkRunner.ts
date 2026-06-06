@@ -1187,21 +1187,6 @@ function buildEvalResult(input: {
   };
 }
 
-function buildFixtures(
-  result: EvalResult,
-  traces: TracesAccessor = emptyTracesAccessor(),
-  defaults?: { evaluatorId?: string; model?: string },
-): TestFixtures {
-  return {
-    result,
-    judge: bindJudge(defaults),
-    traces,
-    expect: ahExpect,
-    testInfo: { name: '' },
-    provisioned: {},
-  };
-}
-
 /**
  * Construct the appropriate `TracesAccessor` for a deterministic eval body.
  * See {@link loadTracesAccessor} in `services/evaluationRunner.ts` for the

@@ -211,6 +211,34 @@ describe('executeEvaluationRun — issue #230 traces fixture pre-loading', () =>
     expect(mockFetchTraces).not.toHaveBeenCalled();
   });
 
+  it('Case F: body never calls agent.run() but reads traces.totalTokens → throws the "after agent.run()" message (#8)', async () => {
+    // Data-only / no-agent-run bodies cannot read traces: the accessor starts
+    // unavailable and only the invoke callback swaps in a real one. Lock the
+    // exact contract message so it is a stable, discoverable error.
+    let caught: unknown;
+    const evalFn: EvaluateFn = jest.fn(async ({ traces }: any) => {
+      try {
+        const value = traces.totalTokens;
+        void value;
+      } catch (e) {
+        caught = e;
+        throw e;
+      }
+    });
+
+    await executeEvaluationRun(makeRun('traced-agent'), [TC], {
+      storageModule: storage,
+      evaluateFnMap: new Map([[TC.id, evalFn]]),
+      onProgress: jest.fn(),
+    });
+
+    expect(evalFn).toHaveBeenCalled();
+    expect((caught as Error).message).toMatch(/only available after agent\.run\(\) has been called/);
+    // No agent.run() → no invocation, no trace polling.
+    expect(mockInvokeAgent).not.toHaveBeenCalled();
+    expect(mockFetchTraces).not.toHaveBeenCalled();
+  });
+
   it('Case B: useTraces=true, polling yields no spans → reads on traces.* throw and the test fails', async () => {
     mockFetchTraces.mockResolvedValue({ spans: [], total: 0 } as any);
 
