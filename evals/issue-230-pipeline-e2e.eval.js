@@ -36,8 +36,9 @@ test(
       'Proves the full SDK pipeline: useTraces=true agent → spans fetched → fixture populated → judge runs.',
     labels: ['issue:230', 'category:Verification', 'pipeline'],
   },
-  async function ({ result, traces, judge }) {
+  async function ({ agent, traces, judge }) {
     // (1) The agent ran and produced output.
+    const result = await agent.run();
     expect(result.agentOutput.trim()).to.have.length.greaterThan(0);
 
     // (2) Spans were fetched and the fixture is populated.

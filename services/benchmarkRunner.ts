@@ -23,12 +23,12 @@ import {
 } from '@/server/services/storage';
 import type { Client } from '@opensearch-project/opensearch';
 import type { IStorageModule } from '@/server/adapters/types';
-import { runEvaluationWithConnector, callBedrockJudge } from './evaluation';
+import { runEvaluationWithConnector, callBedrockJudge, invokeAgent } from './evaluation';
 import { buildEvaluatorErrorPatch } from './evaluation/evaluatorError';
 import { connectorRegistry } from '@/services/connectors/server';
 import {
-  startSession,
-  endSession,
+  runInSession,
+  recordVerdict,
   emptyTracesAccessor,
   unavailableTracesAccessor,
   buildTracesAccessor,
@@ -37,7 +37,10 @@ import {
 } from '@/lib/matchers/index';
 import type { TracesAccessor } from '@/lib/matchers/index';
 import type { EvalResult, TrajectoryAccessor, TestFixtures, RegisteredHook } from '@/lib/testCases/types';
-import { judge as judgeFn, bindJudge } from '@/lib/testCases/judge';
+import { createAgentFixture } from '@/lib/testCases/agentFixture';
+import type { AgentRunOptions } from '@/lib/testCases/agentFixture';
+import { evaluate as evaluateFixture } from '@/lib/testCases/evaluators';
+import { judge as judgeFn, bindJudge, clearJudgeCache } from '@/lib/testCases/judge';
 import { expect as ahExpect } from '@/lib/matchers/expect';
 import type { TrajectoryStep } from '@/types';
 import { createHookOrchestrator, type TestDescriptor } from './hookOrchestrator';
@@ -202,6 +205,8 @@ export async function executeRun(
 ): Promise<BenchmarkRun> {
   const totalTestCases = benchmark.testCaseIds.length;
   const { cancellationToken, client, storageModule, onTestCaseComplete, evaluateFnMap, hooksByFile, testHookScopes } = options;
+  // Fresh judge verdict cache per run (see evaluationRunner for rationale).
+  clearJudgeCache();
   const concurrency = run.concurrency ?? 1;
   const runStartTime = Date.now();
 
@@ -237,11 +242,6 @@ export async function executeRun(
   const benchmarkTestCases = benchmark.testCaseIds
     .map(id => testCaseMap.get(id))
     .filter((tc): tc is TestCase => !!tc);
-  // Resolve the run-level Bedrock model id once — used to bind the judge
-  // fixture to the same model the UI "Run Test" path would use, alongside
-  // run.evaluatorId. Computed here (not inside the per-test-case loop)
-  // so the orchestrator factory can capture it in its closure.
-  const runLevelBedrockModelId = getBedrockModelId(run.modelId);
   const hookDescriptors: TestDescriptor[] = benchmarkTestCases.map(tc => {
     const scope = testHookScopes?.get(tc.id);
     return {
@@ -256,14 +256,7 @@ export async function executeRun(
     hookDescriptors,
     () => ({
       result: {} as any,
-      // Bind run-level evaluator + judge model so destructured `judge`
-      // calls in the test body inherit the run's evaluator selection,
-      // matching the UI "Run Test" path. Per-call options on
-      // `judge(result, claim, { evaluatorId })` still win.
-      judge: bindJudge({
-        evaluatorId: run.evaluatorId,
-        model: runLevelBedrockModelId,
-      }),
+      judge: judgeFn,
       traces: emptyTracesAccessor(),
       expect: ahExpect,
       testInfo: { name: '' },
@@ -369,50 +362,81 @@ export async function executeRun(
           // matcher session afterwards. Mirrors evaluationRunner.ts.
           const hasDeterministicEval = evaluateFnMap?.has(testCaseId) ?? false;
           const hasPrompt = !!(testCase.initialPrompt && testCase.initialPrompt.trim().length > 0);
-          const skipAgentInvocation = !hasPrompt && hasDeterministicEval;
 
           let report;
-          if (skipAgentInvocation) {
-            debug('BenchmarkRunner', `[${testCaseId}] No prompt — running deterministic body without agent invocation`);
-            report = synthesizeEmptyReport(testCase, agentConfig.key, bedrockModelId);
-          } else {
-            // Run the evaluation using connector. Pass skipJudge when a
-            // deterministic body is going to decide pass/fail.
-            // Wrap in context.with(caseSpanContext) so the connector sees the
-            // eval span as active and propagates W3C trace context to the agent.
-            const runEval = () => runEvaluationWithConnector(
-              agentConfig,
-              bedrockModelId,
-              testCase,
-              () => {},
-              { registry: connectorRegistry, evaluatorId: run.evaluatorId, skipJudge: hasDeterministicEval }
-            );
-            report = caseSpanContext
-              ? await context.with(caseSpanContext, runEval)
-              : await runEval();
-          }
-
-          // If the test has a deterministic body, run it inside a
-          // matcher session and let the verdicts dictate pass/fail.
           if (hasDeterministicEval) {
+            // CONTROL INVERSION (RFC 004 §4.1, #256): the body drives the agent
+            // via the `agent` fixture instead of the framework invoking eagerly.
+            // Mirrors evaluationRunner.ts. The caseSpanContext OTel wrap moves
+            // inside the invoke callback so the connector still sees the eval
+            // span as active and propagates W3C trace context to the agent.
             const evalFn = evaluateFnMap!.get(testCaseId)!;
-            const trajectorySteps = (report.trajectory || []) as TrajectoryStep[];
-            const agentOutput = trajectorySteps
-              .filter((s: any) => s.type === 'response' || s.type === 'assistant')
-              .map((s: any) => s.content)
-              .join('\n');
-            const evalResult = buildEvalResult({
-              trajectory: trajectorySteps,
-              agentOutput,
-              rawEvents: (report as any).rawEvents || [],
-              runId: report.runId,
-              durationMs: report.performanceMetrics?.durationMs ?? 0,
+            report = synthesizeEmptyReport(testCase, agentConfig.key, bedrockModelId);
+
+            // Traces are only meaningful after the agent runs. This view
+            // forwards to the accessor loaded inside the invoke callback;
+            // reading before agent.run() fails loudly (#230 semantics).
+            let loadedTraces: TracesAccessor = unavailableTracesAccessor(
+              'traces are only available after agent.run() has been called'
+            );
+            const tracesView: TracesAccessor = {
+              get totalTokens() { return loadedTraces.totalTokens; },
+              get totalCost() { return loadedTraces.totalCost; },
+              get toolCalls() { return loadedTraces.toolCalls; },
+              get spans() { return loadedTraces.spans; },
+              spanDuration: (name: string) => loadedTraces.spanDuration(name),
+            };
+
+            // Captured result from agent.run(), reflected into fixtures.result
+            // before afterEach/afterAll so hooks that read `result` see the
+            // real run (not the empty placeholder). See #248.
+            let capturedResult: EvalResult | undefined;
+            const invoke = async (prompt: string, opts?: AgentRunOptions): Promise<EvalResult> => {
+              const invocationTestCase: TestCase = {
+                ...testCase,
+                initialPrompt: prompt,
+                ...(opts?.context ? { context: opts.context as any } : {}),
+              };
+              const doInvoke = () => invokeAgent(agentConfig, bedrockModelId, invocationTestCase, {
+                registry: connectorRegistry,
+                ...(opts?.env ? { env: opts.env } : {}),
+              });
+              const inv = caseSpanContext
+                ? await context.with(caseSpanContext, doInvoke)
+                : await doInvoke();
+              const agentOutput = inv.trajectory
+                .filter((s: any) => s.type === 'response' || s.type === 'assistant')
+                .map((s: any) => s.content)
+                .join('\n');
+              const evalResult = buildEvalResult({
+                trajectory: inv.trajectory,
+                agentOutput,
+                rawEvents: inv.rawEvents,
+                runId: inv.runId ?? undefined,
+                durationMs: inv.agentDurationMs,
+              });
+              (report as any).trajectory = inv.trajectory;
+              (report as any).rawEvents = inv.rawEvents;
+              (report as any).runId = inv.runId ?? undefined;
+              (report as any).performanceMetrics = {
+                durationMs: inv.agentDurationMs,
+                agentDurationMs: inv.agentDurationMs,
+              };
+              (report as any).connectorProtocol = inv.connector.type;
+              loadedTraces = await loadTracesAccessor(agentConfig, inv.runId ?? undefined);
+              // Expose traces on the result too (RFC 004 §4.6).
+              (evalResult as any).traces = loadedTraces;
+              capturedResult = evalResult;
+              return evalResult;
+            };
+
+            const agentFixture = createAgentFixture(invoke, {
+              defaultPrompt: hasPrompt ? testCase.initialPrompt : undefined,
             });
-            // Pre-load the traces fixture for the body. See issue #230:
-            // when useTraces is true the fixture must reflect real OTel
-            // data — or fail loudly if it can't — instead of silently
-            // returning zeros that make `lessThan(N)` matchers pass.
-            const tracesAccessor = await loadTracesAccessor(agentConfig, report.runId);
+            const emptyResult = buildEvalResult({
+              trajectory: [], agentOutput: '', rawEvents: [], durationMs: 0,
+            });
+
             const scope = testHookScopes?.get(testCaseId);
             const desc: TestDescriptor = {
               testCaseId,
@@ -420,58 +444,88 @@ export async function executeRun(
               sourceFile: scope?.sourceFile,
               describePath: scope?.describePath,
             };
-            const session = startSession();
-            // Run beforeAll/beforeEach hooks first — outcomes folded into
-            // the matcher session so they show up next to body assertions.
-            const before = await hookOrchestrator.beforeTest(desc);
-            for (const r of before.matcherResults) {
-              (session.results as any).push(r);
+            // Run the body inside a per-test matcher session (ALS-scoped,
+            // concurrency-safe — RFC 004). Hook outcomes are recorded into
+            // the same session so they show up next to body assertions.
+            // The judge fixture is pre-bound to the run-level evaluator +
+            // judge model (#257); per-call evaluatorId still wins.
+            let fixtures: TestFixtures | undefined;
+            const { results: matcherResults, error: evalError } = await runInSession(async () => {
+              const before = await hookOrchestrator.beforeTest(desc);
+              for (const r of before.matcherResults) recordVerdict(r);
+              fixtures = {
+                ...before.fixtures,
+                result: emptyResult,
+                agent: agentFixture,
+                traces: tracesView,
+                judge: bindJudge({ evaluatorId: run.evaluatorId, model: bedrockModelId }),
+                evaluate: evaluateFixture,
+              };
+              try {
+                if (!before.aborted) {
+                  await evalFn(Object.assign(emptyResult, { ...fixtures, result: emptyResult }));
+                }
+              } finally {
+                if (fixtures && capturedResult) {
+                  fixtures.result = capturedResult;
+                }
+                const after = await hookOrchestrator.afterTest(desc, fixtures);
+                for (const r of after) recordVerdict(r);
+              }
+            });
+
+            // observe-role signals never gate; errored signals are bucketed
+            // separately as `errored` (excluded from pass-rate), not `failed`.
+            const erroredMatchers = matcherResults.filter(m => m.errored);
+            const anyErrored = erroredMatchers.length > 0;
+            const anyGateFailed = matcherResults.some(
+              m => !m.pass && m.role !== 'observe' && !m.errored,
+            );
+            const failed = anyGateFailed || evalError !== undefined;
+            (report as any).evaluationType = 'deterministic';
+            (report as any).matcherResults = matcherResults;
+            if (evalError !== undefined) {
+              (report as any).assertionError =
+                (evalError as any)?.message ?? String(evalError);
             }
-            // Overlay the per-run tracesAccessor (#230) over what the
-            // orchestrator returned. The orchestrator's noop factory
-            // always returns an empty traces accessor.
-            const fixtures: TestFixtures = {
-              ...before.fixtures,
-              result: evalResult,
-              traces: tracesAccessor,
-            };
-            try {
-              if (!before.aborted) {
-                await evalFn(Object.assign(evalResult, { ...fixtures, result: evalResult }));
-              }
-              const after = await hookOrchestrator.afterTest(desc, fixtures);
-              for (const r of after) {
-                (session.results as any).push(r);
-              }
-              const matcherResults = endSession();
-              const anyFailed = matcherResults.some(m => !m.pass);
-              (report as any).passFailStatus = anyFailed ? 'failed' : 'passed';
-              (report as any).evaluationType = 'deterministic';
-              (report as any).matcherResults = matcherResults;
+
+            if (anyErrored) {
+              // At least one judge/evaluator could not run. Bucket as `errored`
+              // via the canonical #247 patch instead of a misleading score-0
+              // `failed` — errored runs are excluded from pass-rate.
+              Object.assign(
+                report,
+                buildEvaluatorErrorPatch('judge_failed', erroredMatchers[0].errorMessage ?? 'judge errored'),
+              );
+              (report as any).skipJudge = true;
+            } else {
+              (report as any).passFailStatus = failed ? 'failed' : 'passed';
               // Option B BC shim: legacy field empty for SDK runs;
               // canonical judge data lives in `matcherResults`.
               (report as any).llmJudgeReasoning = '';
-              (report as any).metrics = anyFailed
+              (report as any).metrics = failed
                 ? { accuracy: 0, faithfulness: 0, latency_score: 0, trajectory_alignment_score: 0 }
                 : { accuracy: 100, faithfulness: 100, latency_score: 100, trajectory_alignment_score: 100 };
-            } catch (evalError: any) {
-              const after = await hookOrchestrator.afterTest(desc, fixtures);
-              for (const r of after) {
-                (session.results as any).push(r);
-              }
-              const matcherResults = endSession();
-              (report as any).passFailStatus = 'failed';
-              (report as any).evaluationType = 'deterministic';
-              (report as any).assertionError = evalError.message;
-              (report as any).matcherResults = matcherResults;
-              (report as any).llmJudgeReasoning = '';
-              (report as any).metrics = { accuracy: 0, faithfulness: 0, latency_score: 0, trajectory_alignment_score: 0 };
+              // Mark the report as final so trace-mode polling below skips
+              // the Bedrock judge fallback (which would error with empty
+              // expectedOutcomes for SDK-loaded test cases).
+              (report as any).metricsStatus = 'completed';
+              (report as any).skipJudge = true;
             }
-            // Mark the report as final so trace-mode polling below skips
-            // the Bedrock judge fallback (which would error with empty
-            // expectedOutcomes for SDK-loaded test cases).
-            (report as any).metricsStatus = 'completed';
-            (report as any).skipJudge = true;
+          } else {
+            // CLASSIC PATH: no code body. Eagerly invoke + Bedrock judge.
+            // Wrap in context.with(caseSpanContext) so the connector sees the
+            // eval span as active and propagates W3C trace context.
+            const runEval = () => runEvaluationWithConnector(
+              agentConfig,
+              bedrockModelId,
+              testCase,
+              () => {},
+              { registry: connectorRegistry, evaluatorId: run.evaluatorId, skipJudge: false }
+            );
+            report = caseSpanContext
+              ? await context.with(caseSpanContext, runEval)
+              : await runEval();
           }
 
           // Save the report to OpenSearch and get the actual stored ID
@@ -1130,17 +1184,6 @@ function buildEvalResult(input: {
     runId: input.runId,
     durationMs: input.durationMs,
     tokenUsage: input.tokenUsage,
-  };
-}
-
-function buildFixtures(result: EvalResult, traces: TracesAccessor): TestFixtures {
-  return {
-    result,
-    judge: judgeFn,
-    traces,
-    expect: ahExpect,
-    testInfo: { name: '' },
-    provisioned: {},
   };
 }
 

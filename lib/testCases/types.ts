@@ -117,6 +117,20 @@ export interface TestFixtures {
   traces: TracesAccessor;
   expect: typeof import('../matchers/expect.js').expect;
   /**
+   * The `agent` fixture (RFC 004 control inversion). The test body calls
+   * `await agent.run(prompt)` to drive the agent itself, instead of the
+   * framework invoking eagerly before the body. Optional during the
+   * transition: present when the runner provides it; `result` remains for
+   * the legacy eager path. Enforces one invocation per test.
+   */
+  agent?: import('./agentFixture.js').AgentFixture;
+  /**
+   * The `evaluate` fixture (RFC 004 §4.4): run a custom programmatic
+   * evaluator registered via `defineEvaluator()`. Gates by default;
+   * `.observe()` feeds score/insights only.
+   */
+  evaluate?: import('./evaluators.js').EvaluateFn;
+  /**
    * Static, read-only metadata about the currently-executing test. Useful
    * for naming temp dirs, logging, and routing — never mutate.
    */
@@ -211,4 +225,12 @@ export interface EvalResult {
   durationMs: number;
   /** Token usage when reported by the agent. */
   tokenUsage?: { prompt: number; completion: number; total: number };
+  /**
+   * OTel traces for this run, available after `agent.run()` resolves
+   * (RFC 004 §4.6). Mirrors the standalone `traces` fixture but scoped to
+   * the result, so `result.traces.totalTokens` reads the same data. Present
+   * only on results returned by `agent.run()`; reading it on the empty
+   * placeholder (before `agent.run()`) yields the loud-failure accessor.
+   */
+  traces?: import('../matchers/traces.js').TracesAccessor;
 }

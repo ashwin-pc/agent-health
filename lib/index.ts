@@ -95,6 +95,10 @@ export type {
   HookFn,
   RegisteredHook,
 } from './testCases/types.js';
+export type { AgentFixture, AgentRunOptions } from './testCases/index.js';
+export type { Verdict, JudgeVerdict, JudgeRole, JudgeFn } from './testCases/index.js';
+export { defineEvaluator, evaluate } from './testCases/index.js';
+export type { EvaluatorContext, EvaluatorResult, EvaluatorFn, EvaluateFn } from './testCases/index.js';
 
 // Per-matcher results: chai-based `expect` with our recording plugin and
 // custom matchers (haveCalledTool, haveStepsOfType, haveOutputMatching,

@@ -24,9 +24,9 @@
  *      in the "Matcher Results" panel as `[llm-judge]` entries with their
  *      own reasoning. Multiple judge() calls per test → multiple entries.
  *
- * SDK tests pass `skipJudge: true` to `runEvaluationWithConnector`, so the
- * legacy path is intentionally bypassed; the user's explicit `judge()` calls
- * are the canonical signal.
+ * SDK tests drive the agent via `agent.run()` (which calls `invokeAgent`, the
+ * judge-free invocation primitive), so the legacy auto-judge path is never
+ * triggered; the user's explicit `judge()` calls are the canonical signal.
  *
  * This eval makes two judge() calls — one expected to PASS and one
  * expected to FAIL — so we can verify both branches end up in
@@ -53,7 +53,8 @@ test(
       'A judge() call with a claim the agent is expected to satisfy — the [llm-judge] matcher entry must record pass:true with reasoning.',
     labels: ['issue:230', 'category:Verification', 'judge:invocation'],
   },
-  async function ({ result, judge }) {
+  async function ({ agent, judge }) {
+    const result = await agent.run();
     expect(result.agentOutput.trim()).to.have.length.greaterThan(0);
 
     // Single judge call against an on-topic claim. Expected: passing
@@ -73,7 +74,8 @@ test(
       'A judge() call with a deliberately off-topic claim — the [llm-judge] matcher entry must record pass:false with reasoning explaining the mismatch.',
     labels: ['issue:230', 'category:Verification', 'judge:invocation'],
   },
-  async function ({ result, judge }) {
+  async function ({ agent, judge }) {
+    const result = await agent.run();
     expect(result.agentOutput.trim()).to.have.length.greaterThan(0);
 
     // The agent answers about observability; we ask the judge to verify

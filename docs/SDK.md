@@ -267,6 +267,7 @@ compatibility with code written against the original PR.
 | `model`       | `modelId`    | Override the judge model. Same provider routing (`bedrock`, `litellm`, `claude-code`, `pi`, `openai-compatible`, `agentic`, `demo`) the UI uses. |
 | `evaluatorId` | `evaluatorId`| Pick a stored evaluator. Same shape the UI sends — built-in ids are prefixed `system-` (e.g. `system-rca-default`, `system-factuality`) and resolve via `getSystemEvaluatorById`; anything else is a storage id resolved via `storage.evaluators.getById`. |
 | `serverUrl`   | (request URL)| Point at a non-default agent-health server (defaults to `http://localhost:${AGENT_HEALTH_PORT ?? 4001}`). |
+| `skip`        | (no request) | Tri-state. `true` → skip the judge (records a non-gating `skipped` verdict, no HTTP call). `false` → force the judge to run **even if `AH_SKIP_JUDGE` is set**. Omitted → defer to `AH_SKIP_JUDGE`. |
 
 #### Run-level evaluator (UI-equivalent)
 
@@ -277,11 +278,11 @@ author passing it manually:
 
 ```javascript
 // In the test body — no per-call evaluatorId needed.
-test('rca-investigate', { prompt: 'Investigate the failing service ...' }, async ({ result, judge }) => {
+test('rca-investigate', { prompt: 'Investigate the failing service ...' }, async ({ agent, judge }) => {
+  const result = await agent.run();
   // If the run was created with `evaluatorId: 'system-rca-default'`, this
   // call POSTs `{ ..., evaluatorId: 'system-rca-default' }` automatically.
-  // Substitute any user-defined evaluator id (e.g. the storage id of a
-  // saved CP-Oncall judge) and the same binding applies.
+  // Substitute any user-defined evaluator id and the same binding applies.
   await judge(result, 'identifies the ticket details');
   await judge(result, 'reports the current state');
   await judge(result, 'recommends concrete next steps');
@@ -340,6 +341,12 @@ Availability rules:
 
   This turns the silent false-pass described in [#230] into an actionable
   failure.
+
+- **The body never calls `agent.run()`** (a data-only / deterministic test) —
+  the `traces` fixture starts *unavailable* and every read **throws**
+  `traces are only available after agent.run() has been called`. Traces are a
+  property of an agent invocation, so a body that never invokes the agent has
+  none to read. Call `agent.run()` first, or don't read `traces` in that test.
 
 Polling is bounded so the test body never blocks for long: by default
 10 attempts at 1s each (~10s budget). Override per agent via the

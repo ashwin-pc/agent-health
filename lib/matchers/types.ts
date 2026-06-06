@@ -29,6 +29,20 @@ export interface MatcherResult {
   pass: boolean;
   /** Family the matcher belongs to. */
   method: MatcherMethod;
+  /**
+   * Whether this signal gates the test verdict. `gate` (default) means a
+   * failing result fails the test; `observe` means the result is recorded
+   * for score/insights only and never fails the test (RFC 004 §4.8).
+   * `code-assertion` and `traces` matchers are always gates; `llm-judge`
+   * entries are `gate` for `judge()` and `observe` for `judge.observe()`.
+   */
+  role?: 'gate' | 'observe';
+  /**
+   * True when the matcher could not be evaluated at all (e.g. the judge
+   * endpoint errored) — distinct from a clean `pass: false`. Errored
+   * signals are excluded from pass-rate aggregation (status `errored`).
+   */
+  errored?: boolean;
   /** Wall-clock time spent evaluating this matcher (ms). */
   durationMs?: number;
 

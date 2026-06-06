@@ -10,19 +10,12 @@ import { pathToFileURL } from 'url';
 import { createRequire, Module as NodeModule } from 'module';
 import type { CodeTestCase, RegisteredHook } from './types.js';
 import {
-  test as testFn,
-  describe as describeFn,
-  beforeAll as beforeAllFn,
-  afterAll as afterAllFn,
-  beforeEach as beforeEachFn,
-  afterEach as afterEachFn,
   setActiveFile,
   getRegisteredTests,
   getRegisteredHooks,
   clearRegistry,
 } from './define.js';
-import { judge as judgeFn, wasJudgeCalled, resetJudgeFlag } from './judge.js';
-import { expect as ahExpect } from '../matchers/expect.js';
+import { getAuthoringSurface } from './authoringSurface.js';
 
 const CODE_EXTENSIONS = ['.ts', '.js', '.mjs'];
 
@@ -118,28 +111,10 @@ export async function loadTestCasesFromModule(filePath: string): Promise<LoadRes
       id === '@opensearch-project/agent-health' ||
       id === '@opensearch/agent-health' ||
       id === 'agent-health';
-    // What we hand back to the user when they require the SDK. Must be the
-    // same shape as the published @opensearch-project/agent-health package's
-    // top-level exports so fixtures work both in-tree and against the npm
-    // package without code changes.
-    const sdkExports = {
-      test: testFn,
-      describe: describeFn,
-      // Lifecycle hooks — exported both as standalone names and (via
-      // namespace merging in define.ts) as `test.beforeEach` etc. CJS
-      // fixtures pick whichever style.
-      beforeAll: beforeAllFn,
-      afterAll: afterAllFn,
-      beforeEach: beforeEachFn,
-      afterEach: afterEachFn,
-      judge: judgeFn,
-      wasJudgeCalled,
-      resetJudgeFlag,
-      // Pre-resolved matcher API — must be a direct import (not a runtime
-      // require) so it works in bundled ESM contexts (CLI, server) where
-      // the synthetic CJS `require` isn't available at module-top scope.
-      expect: ahExpect,
-    };
+    // The object handed back when a CJS eval file requires the SDK. Single
+    // source of truth shared with the package exports (see authoringSurface)
+    // so `.js` and `.ts`/`.mjs` files see the SAME surface — no drift (#232).
+    const sdkExports = getAuthoringSurface();
     const wrappedRequire = (id: string) => {
       if (isDefineId(id) || isPackageName(id)) {
         return sdkExports;

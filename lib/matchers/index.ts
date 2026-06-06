@@ -21,4 +21,5 @@ export {
   isSessionActive,
   recordVerdict,
   recordWithTiming,
+  runInSession,
 } from './session.js';

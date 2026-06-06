@@ -42,7 +42,8 @@ test(
       'Agents with useTraces:false get a silent-zero traces fixture so existing non-trace matchers still work.',
     labels: ['issue:230', 'category:Verification', 'agent:opt-out'],
   },
-  function ({ result, traces }) {
+  async function ({ agent, traces }) {
+    const result = await agent.run();
     expect(result.agentOutput.trim()).to.have.length.greaterThan(0);
 
     // useTraces:false → fixture is silent zeros.
@@ -66,7 +67,8 @@ test(
       'The judge fixture must invoke the Bedrock judge against a deterministic body and record a verdict.',
     labels: ['issue:230', 'category:Verification', 'judge'],
   },
-  async function ({ result, judge }) {
+  async function ({ agent, judge }) {
+    const result = await agent.run();
     expect(result.agentOutput.trim()).to.have.length.greaterThan(0);
 
     // The judge must run, not throw. A passing judge call records a
