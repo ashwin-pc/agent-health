@@ -284,6 +284,8 @@ describe('loadConfig', () => {
     const mockFs = require('fs');
     mockFs.existsSync.mockImplementation((p: string) => p.endsWith('state.json'));
 
+    // Diagnostics go to stdout only in interactive use (gated by lib/diagnostics).
+    Object.defineProperty(process.stdout, 'isTTY', { value: true, configurable: true });
     const logSpy = jest.spyOn(console, 'log').mockImplementation();
     const { loadConfig, clearConfigCache } = require('@/lib/config/loader');
     clearConfigCache();
@@ -299,6 +301,7 @@ describe('loadConfig', () => {
     const mockFs = require('fs');
     mockFs.existsSync.mockReturnValue(false);
 
+    Object.defineProperty(process.stdout, 'isTTY', { value: true, configurable: true });
     const logSpy = jest.spyOn(console, 'log').mockImplementation();
     const { loadConfig, clearConfigCache } = require('@/lib/config/loader');
     clearConfigCache();
