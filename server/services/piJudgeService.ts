@@ -11,21 +11,26 @@
  */
 
 import { spawn } from 'child_process';
-import { resolve } from 'path';
 import { buildEvaluationPrompt, JudgeRequest, JudgeResponse } from '@/server/services/bedrockService';
-import { JUDGE_SYSTEM_PROMPT } from '@/server/prompts/judgePrompt';
+import { JUDGE_SYSTEM_PROMPT, AGENT_PATH_SYSTEM_ADDENDUM } from '@/server/prompts/judgePrompt';
 import { resolvePiCommand } from '@/server/services/piBinary';
 import { parseJudgeResponse } from '@/server/services/judgeResponseParser';
 import { buildJudgeDebug } from '@/server/services/judgeDebug';
 import { Evaluator } from '@/types';
 import { debug } from '@/lib/debug';
+import { getPiPackagePath } from '@/lib/packagePaths';
+import {
+  getAgentPathForSpawn,
+  getAgentSourceForPrompt,
+  isAgentPathConfigured,
+} from '@/server/services/agentPath';
 
 // ============================================================================
 // Constants
 // ============================================================================
 
 /** Path to the pi-package (for --package flag) */
-const PI_PACKAGE_PATH = resolve(process.cwd(), 'observio-sample-agent/pi-package');
+const PI_PACKAGE_PATH = getPiPackagePath();
 
 /** Timeout for the pi CLI process (5 minutes) */
 const PI_TIMEOUT_MS = 300_000;
@@ -86,16 +91,27 @@ export async function evaluateWithPi(
   debug('PiJudge', 'Expected outcomes:', expectedOutcomes?.length || 0);
   debug('PiJudge', 'Evaluator:', evaluator ? `${evaluator.name} (${evaluator.id})` : '(none, using default prompt)');
 
-  const userPrompt = buildEvaluationPrompt(trajectory, expectedOutcomes, expectedTrajectory, logs);
+  const agentSource = isAgentPathConfigured()
+    ? await getAgentSourceForPrompt({ trajectory, expectedOutcomes })
+    : null;
+
+  const userPrompt = buildEvaluationPrompt(
+    trajectory,
+    expectedOutcomes,
+    expectedTrajectory,
+    logs,
+    agentSource,
+  );
   debug('PiJudge', 'Prompt built, length:', userPrompt.length, 'characters');
 
   // Saved evaluator's prompt fully replaces the hardcoded baseline; falling
   // back keeps back-compat with callers that don't pass an evaluator (the
   // SDK pre-evaluator code path and a couple of integration tests).
   const systemPrompt =
-    evaluator?.systemPrompt && evaluator.systemPrompt.trim().length > 0
+    (evaluator?.systemPrompt && evaluator.systemPrompt.trim().length > 0
       ? evaluator.systemPrompt
-      : JUDGE_SYSTEM_PROMPT;
+      : JUDGE_SYSTEM_PROMPT)
+    + (agentSource ? AGENT_PATH_SYSTEM_ADDENDUM : '');
 
   const startTime = Date.now();
 
@@ -203,6 +219,7 @@ export function spawnPi(
       env,
       stdio: ['pipe', 'pipe', 'pipe'],
       timeout: PI_TIMEOUT_MS,
+      cwd: getAgentPathForSpawn() || undefined,
     });
 
     let stdout = '';
