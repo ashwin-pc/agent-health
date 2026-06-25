@@ -49,14 +49,16 @@ import {
 } from '@/types';
 import {
   fetchTracesByRunIds,
+  fetchTracesForRun,
   processSpansIntoTree,
   calculateTimeRange,
   compareTraces,
   categorizeSpanTree,
 } from '@/services/traces';
-import { spansToFlow, applyDagreLayout } from '@/services/traces/flowTransform';
+import { applyDagreLayout } from '@/services/traces/flowTransform';
 import { nodeTypes } from '@/components/traces/flow/nodeTypes';
 import SpanDetailsPanel from '@/components/traces/SpanDetailsPanel';
+import TraceVisualization from '@/components/traces/TraceVisualization';
 
 type ComparisonMode = 'side-by-side' | 'merged';
 type DiffType = 'matched' | 'added' | 'removed' | 'modified';
@@ -65,6 +67,10 @@ interface TraceFlowComparisonProps {
   runs: BenchmarkRun[];
   reports: Record<string, EvaluationReport>;
   useCaseId: string;
+  /** Trace-window hints per agent runId (Strategy C) so closed-source spans render. */
+  windowAgentsByRunId?: Map<string, { serviceName?: string; startedAt: number; endedAt: number }>;
+  /** A span citation clicked in the deep-dive → select/highlight that span. */
+  highlight?: { runId: string; spanId: string; nonce: number } | null;
 }
 
 interface TraceData {
@@ -174,108 +180,6 @@ const ModeToggle: React.FC<{
 };
 
 /**
- * Inner Flow panel content (must be inside ReactFlowProvider)
- */
-const FlowPanelInner: React.FC<{
-  spanTree: CategorizedSpan[];
-  timeRange: TimeRange;
-  selectedSpan: CategorizedSpan | null;
-  onSelectSpan: (span: CategorizedSpan | null) => void;
-}> = ({ spanTree, timeRange, selectedSpan, onSelectSpan }) => {
-  const [nodes, setNodes, onNodesChange] = useNodesState([]);
-  const [edges, setEdges, onEdgesChange] = useEdgesState([]);
-  const reactFlowInstance = useRef<ReactFlowInstance | null>(null);
-
-  useEffect(() => {
-    if (spanTree.length === 0) {
-      setNodes([]);
-      setEdges([]);
-      return;
-    }
-
-    const { nodes: flowNodes, edges: flowEdges } = spansToFlow(
-      spanTree,
-      timeRange.duration,
-      { direction: 'TB' }
-    );
-
-    setNodes(flowNodes);
-    setEdges(flowEdges);
-
-    // Fit view after nodes are set (with small delay to ensure render)
-    setTimeout(() => {
-      if (reactFlowInstance.current) {
-        reactFlowInstance.current.fitView({ padding: 0.2, maxZoom: 1 });
-      }
-    }, 100);
-  }, [spanTree, timeRange.duration, setNodes, setEdges]);
-
-  const onInit = useCallback((instance: ReactFlowInstance) => {
-    reactFlowInstance.current = instance;
-    setTimeout(() => {
-      instance.fitView({ padding: 0.2, maxZoom: 1 });
-    }, 100);
-  }, []);
-
-  const onNodeClick = useCallback(
-    (_event: React.MouseEvent, node: Node<SpanNodeData>) => {
-      onSelectSpan(node.data.span);
-    },
-    [onSelectSpan]
-  );
-
-  const onPaneClick = useCallback(() => {
-    onSelectSpan(null);
-  }, [onSelectSpan]);
-
-  const minimapNodeColor = (node: Node<SpanNodeData>): string => {
-    const category = node.data?.span?.category;
-    switch (category) {
-      case 'AGENT': return '#6366f1';
-      case 'LLM': return '#a855f7';
-      case 'TOOL': return '#f59e0b';
-      case 'EVAL': return '#10b981';
-      case 'ERROR': return '#ef4444';
-      default: return '#64748b';
-    }
-  };
-
-  return (
-    <ReactFlow
-      nodes={nodes}
-      edges={edges}
-      onNodesChange={onNodesChange}
-      onEdgesChange={onEdgesChange}
-      onNodeClick={onNodeClick}
-      onPaneClick={onPaneClick}
-      onInit={onInit}
-      nodeTypes={nodeTypes}
-      fitView
-      fitViewOptions={{ padding: 0.2, maxZoom: 1 }}
-      minZoom={0.1}
-      maxZoom={2}
-      defaultEdgeOptions={{ type: 'smoothstep' }}
-      proOptions={{ hideAttribution: true }}
-    >
-      <Background
-        variant={BackgroundVariant.Dots}
-        gap={16}
-        size={1}
-        color="#334155"
-      />
-      <MiniMap
-        nodeColor={minimapNodeColor}
-        maskColor="rgba(15, 23, 42, 0.8)"
-        className="!bg-slate-900/50 !border-slate-700 !bottom-2 !right-2"
-        style={{ width: 100, height: 60 }}
-        pannable
-        zoomable
-      />
-    </ReactFlow>
-  );
-};
-
-/**
  * Single Flow panel for side-by-side view.
  * Each panel gets its own ReactFlowProvider to isolate internal stores.
  */
@@ -288,20 +192,25 @@ const FlowPanel: React.FC<{
   onSelectSpan: (span: CategorizedSpan | null) => void;
 }> = ({ spanTree, timeRange, runName, spanCount, selectedSpan, onSelectSpan }) => {
   return (
-    <div className="flex-1 flex flex-col min-h-0 border-r last:border-r-0">
+    <div className="flex-1 flex flex-col min-h-0 min-w-0 border-r last:border-r-0">
       <div className="px-3 py-2 bg-muted/50 border-b text-xs font-medium text-center shrink-0">
         {runName}
         <span className="text-muted-foreground ml-2">({spanCount} spans)</span>
       </div>
-      <div className="flex-1 min-h-0 relative">
-        <ReactFlowProvider>
-          <FlowPanelInner
-            spanTree={spanTree}
-            timeRange={timeRange}
-            selectedSpan={selectedSpan}
-            onSelectSpan={onSelectSpan}
-          />
-        </ReactFlowProvider>
+      {/* Render each run's spans as a TIMELINE (tree/gantt waterfall) via the
+          shared TraceVisualization instead of the react-flow DAG — the DAG hid
+          individual spans and the user couldn't reach them. Selection is
+          controlled by the parent so deep-dive span citations highlight here
+          and surface the SpanDetailsPanel. */}
+      <div className="flex-1 min-h-0 min-w-0 relative overflow-auto">
+        <TraceVisualization
+          spanTree={spanTree as Span[]}
+          timeRange={timeRange}
+          initialViewMode="tree"
+          showViewToggle
+          selectedSpan={selectedSpan as Span | null}
+          onSelectSpan={(s) => onSelectSpan(s as CategorizedSpan | null)}
+        />
       </div>
     </div>
   );
@@ -561,10 +470,13 @@ export const TraceFlowComparison: React.FC<TraceFlowComparisonProps> = ({
   runs,
   reports,
   useCaseId,
+  windowAgentsByRunId,
+  highlight,
 }) => {
   const [mode, setMode] = useState<ComparisonMode>('side-by-side');
   const [traceData, setTraceData] = useState<Map<string, TraceData>>(new Map());
   const [selectedSpan, setSelectedSpan] = useState<CategorizedSpan | null>(null);
+  const detailPanelRef = useRef<HTMLDivElement>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
 
@@ -610,7 +522,14 @@ export const TraceFlowComparison: React.FC<TraceFlowComparisonProps> = ({
         if (!info.agentRunId) return;
 
         try {
-          const result = await fetchTracesByRunIds([info.agentRunId]);
+          const wa = windowAgentsByRunId?.get(info.agentRunId);
+          const result = await fetchTracesForRun({
+            runId: info.agentRunId,
+            includeWindowFallback: true,
+            windowAgents: wa?.serviceName
+              ? [{ serviceName: wa.serviceName, startedAt: wa.startedAt, endedAt: wa.endedAt }]
+              : undefined,
+          });
           const spanTree = processSpansIntoTree(result.spans);
           const categorizedTree = categorizeSpanTree(spanTree);
           const timeRange = calculateTimeRange(result.spans);
@@ -647,12 +566,49 @@ export const TraceFlowComparison: React.FC<TraceFlowComparisonProps> = ({
     );
 
     setIsLoading(false);
-  }, [runInfos]);
+  }, [runInfos, windowAgentsByRunId]);
 
   // Fetch traces on mount
   useEffect(() => {
     fetchAllTraces();
   }, [fetchAllTraces]);
+
+  // Deep-link: a span citation was clicked in the deep-dive → select that span
+  // in its run's trace so its details/evidence surface for the user.
+  useEffect(() => {
+    if (!highlight) return;
+    const findById = (nodes: CategorizedSpan[]): CategorizedSpan | null => {
+      for (const n of nodes) {
+        if (n.spanId === highlight.spanId) return n;
+        const kids = (n.children as CategorizedSpan[] | undefined) || [];
+        const hit = kids.length ? findById(kids) : null;
+        if (hit) return hit;
+      }
+      return null;
+    };
+    for (const td of traceData.values()) {
+      if (td.runId !== highlight.runId) continue;
+      const hit = findById(td.spanTree);
+      if (hit) {
+        setSelectedSpan(hit);
+        break;
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [highlight?.nonce, traceData]);
+
+  // After a deep-link selects a span, scroll its details panel into view. The
+  // panel renders to the RIGHT of the side-by-side flow inside a horizontally
+  // scrolling table, so without this the user lands on the Traces tab but the
+  // span they clicked is off-screen to the right.
+  useEffect(() => {
+    if (!highlight || !selectedSpan) return;
+    const t = setTimeout(() => {
+      detailPanelRef.current?.scrollIntoView({ behavior: 'smooth', inline: 'nearest', block: 'nearest' });
+    }, 300);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [highlight?.nonce, selectedSpan?.spanId]);
 
   // Get first two traces for comparison
   const traceArray = Array.from(traceData.values());
@@ -753,7 +709,7 @@ export const TraceFlowComparison: React.FC<TraceFlowComparisonProps> = ({
   const maxDuration = Math.max(leftTrace.timeRange.duration, rightTrace.timeRange.duration);
 
   return (
-    <Card className="bg-card/50 overflow-hidden">
+    <Card className="bg-card/50 overflow-hidden" data-testid="trace-flow-comparison">
       <CardHeader className="py-2 px-4 border-b">
         <div className="flex items-center justify-between">
           <CardTitle className="text-sm font-medium flex items-center gap-2">
@@ -813,7 +769,11 @@ export const TraceFlowComparison: React.FC<TraceFlowComparisonProps> = ({
 
         {/* Details panel */}
         {selectedSpan && (
-          <div className="w-80 border-l overflow-auto">
+          <div
+            ref={detailPanelRef}
+            className="w-80 border-l overflow-auto ring-1 ring-inset ring-opensearch-blue/40"
+            data-selected-span-id={selectedSpan.spanId}
+          >
             <SpanDetailsPanel
               span={selectedSpan}
               onClose={() => setSelectedSpan(null)}
