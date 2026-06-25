@@ -57,6 +57,12 @@ export interface JudgeAgentsHint {
   serviceName: string;
   startedAt: number;
   endedAt: number;
+  /**
+   * Agent-emitted session id (Strategy D). When present, trace queries
+   * correlate precisely on `attributes.session.id` (unioned with the
+   * service.name + window fallback). Sourced from `report.sessionId`.
+   */
+  sessionId?: string;
 }
 
 /**
@@ -97,7 +103,7 @@ export function resolveAgentServiceName(args: {
  * Strategy B (runIds-only) without breaking.
  */
 export function buildJudgeAgentsHints(
-  report: Pick<TestCaseRun, 'agentKey' | 'connectorProtocol' | 'timestamp' | 'performanceMetrics'>,
+  report: Pick<TestCaseRun, 'agentKey' | 'connectorProtocol' | 'timestamp' | 'performanceMetrics' | 'sessionId'>,
   agentTraceServiceName?: string
 ): JudgeAgentsHint[] {
   const serviceName = resolveAgentServiceName({
@@ -107,9 +113,21 @@ export function buildJudgeAgentsHints(
   });
   if (!serviceName) return [];
 
-  const endedAt = Date.parse(report.timestamp || '') || Date.now();
+  const ts = Date.parse(report.timestamp || '') || Date.now();
   const durationMs = report.performanceMetrics?.durationMs ?? 0;
-  const lookbackMs = durationMs > 0 ? durationMs + SLACK_MS : FALLBACK_LOOKBACK_MS;
-  const startedAt = endedAt - lookbackMs;
-  return [{ serviceName, startedAt, endedAt: endedAt + SLACK_MS }];
+  const span = durationMs > 0 ? durationMs + SLACK_MS : FALLBACK_LOOKBACK_MS;
+  // `report.timestamp` is NOT reliably the run END: trace-mode / subprocess
+  // reports (e.g. Claude Code) are persisted at run START, so anchoring the
+  // window's `endedAt` on the timestamp and looking only backwards lands the
+  // entire window BEFORE the run and misses every span. Anchor SYMMETRICALLY
+  // around the timestamp by ±(duration + slack) so the window covers the run
+  // whether the timestamp marks its start or its end (empty-by-default is the
+  // worse failure mode — see trace-correlation notes). Mirrors the deep-dive's
+  // resolveWindow.
+  return [{
+    serviceName,
+    startedAt: ts - span,
+    endedAt: ts + span,
+    ...(report.sessionId ? { sessionId: report.sessionId } : {}),
+  }];
 }

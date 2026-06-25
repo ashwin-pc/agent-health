@@ -13,7 +13,7 @@
  *
  * The fake OpenSearch client below stores spans in the plain-raw shape that
  * stock Data Prepper produces (a nested `attributes` object keyed by literal
- * dotted OTel names, e.g. attributes['gen_ai.request.id']) and resolves query
+ * dotted OTel names, e.g. attributes['agent_health.run.id']) and resolves query
  * fields the way OpenSearch maps them. If the services queried the legacy
  * custom `span.attributes.gen_ai@request@id` shape, field resolution returns
  * `undefined`, the fake index returns 0 hits, and these tests fail — exactly
@@ -57,7 +57,7 @@ const INDEX: Record<string, any>[] = [
     name: 'invoke_agent Strands Agent',
     durationInNanos: 3_000_000_000,
     attributes: {
-      'gen_ai.request.id': RUN_A,
+      'agent_health.run.id': RUN_A,
       'gen_ai.conversation.id': 'thread-AAA',
       'gen_ai.agent.name': 'retail-agent',
     },
@@ -66,7 +66,7 @@ const INDEX: Record<string, any>[] = [
     spanId: 'llm-A',
     name: 'chat us.amazon.nova-pro-v1:0',
     attributes: {
-      'gen_ai.request.id': RUN_A,
+      'agent_health.run.id': RUN_A,
       'gen_ai.request.model': 'us.amazon.nova-pro-v1:0',
       'gen_ai.usage.input_tokens': 1200,
       'gen_ai.usage.output_tokens': 300,
@@ -76,7 +76,7 @@ const INDEX: Record<string, any>[] = [
     spanId: 'tool-A',
     name: 'execute_tool search_products',
     attributes: {
-      'gen_ai.request.id': RUN_A,
+      'agent_health.run.id': RUN_A,
       'gen_ai.tool.name': 'search_products',
     },
   }),
@@ -86,8 +86,34 @@ const INDEX: Record<string, any>[] = [
     traceId: 'trace-BBB',
     name: 'invoke_agent Strands Agent',
     attributes: {
-      'gen_ai.request.id': RUN_B,
+      'agent_health.run.id': RUN_B,
       'gen_ai.usage.input_tokens': 999,
+    },
+  }),
+  // --- #313: span correlated ONLY by the OTEL-standard gen_ai.conversation.id
+  // (no agent_health.run.id). A subprocess/eval span that adopted the standard
+  // attribute must still be found by a runIds query. ---
+  plainRawSpan({
+    spanId: 'conv-only',
+    traceId: 'trace-CONV',
+    name: 'chat',
+    attributes: {
+      'gen_ai.conversation.id': 'conv-XYZ',
+      'gen_ai.usage.input_tokens': 42,
+    },
+  }),
+  // --- #313: span correlated ONLY by session.id (no run.id / conversation.id),
+  // emitted by a subprocess agent (Claude Code). Found via Strategy D. The
+  // service name + time deliberately fall OUTSIDE any window we pass, so only
+  // the session.id clause can surface it. ---
+  plainRawSpan({
+    spanId: 'sess-only',
+    traceId: 'trace-SESS',
+    serviceName: 'claude-code-agent',
+    startTime: '2020-01-01T00:00:00.000000000Z',
+    attributes: {
+      'session.id': 'sess-D',
+      'gen_ai.tool.name': 'read_file',
     },
   }),
 ];
@@ -144,14 +170,14 @@ function createPlainRawClient() {
 
 describe('plain-raw trace correlation (#296)', () => {
   describe('fetchTraces', () => {
-    it('correlates a run by runId against attributes.gen_ai.request.id and normalizes attributes', async () => {
+    it('correlates a run by runId against attributes.agent_health.run.id and normalizes attributes', async () => {
       const client = createPlainRawClient();
 
       const result = await fetchTraces({ runIds: [RUN_A] }, client);
 
       // 3 spans for run A, none from the run-B decoy.
       expect(result.spans).toHaveLength(3);
-      expect(result.spans.every((s) => s.attributes['gen_ai.request.id'] === RUN_A)).toBe(true);
+      expect(result.spans.every((s) => s.attributes['agent_health.run.id'] === RUN_A)).toBe(true);
       expect(result.spans.map((s) => s.spanId).sort()).toEqual(['llm-A', 'root-A', 'tool-A']);
 
       // transformSpan surfaced the nested dotted keys as normalized attributes.
@@ -165,8 +191,38 @@ describe('plain-raw trace correlation (#296)', () => {
       await fetchTraces({ runIds: [RUN_A] }, client);
 
       const sent = JSON.stringify(client.search.mock.calls[0][0].body.query);
-      expect(sent).toContain('attributes.gen_ai.request.id');
+      expect(sent).toContain('attributes.agent_health.run.id');
       expect(sent).not.toContain('gen_ai@request@id');
+    });
+
+    it('also correlates a runId against the OTEL-standard gen_ai.conversation.id (#313)', async () => {
+      const client = createPlainRawClient();
+
+      // 'conv-XYZ' is stamped only as gen_ai.conversation.id (no run.id), yet a
+      // runIds query must still surface it via the Strategy-B OR branch.
+      const result = await fetchTraces({ runIds: ['conv-XYZ'] }, client);
+
+      expect(result.spans.map((s) => s.spanId)).toEqual(['conv-only']);
+    });
+
+    it('Strategy D: correlates a subprocess span by session.id even when service+window miss (#313)', async () => {
+      const client = createPlainRawClient();
+
+      // runIds + agents → union. The sess-only span has no run.id and a
+      // service/time outside the window, so ONLY the session.id clause matches.
+      const result = await fetchTraces({
+        runIds: [RUN_A],
+        agents: [{
+          serviceName: 'claude-code-agent',
+          startedAt: Date.parse('2026-06-17T08:00:00Z'),
+          endedAt: Date.parse('2026-06-17T10:00:00Z'),
+          sessionId: 'sess-D',
+        }],
+      }, client);
+
+      const ids = result.spans.map((s) => s.spanId).sort();
+      // Run A's 3 spans (Strategy B) PLUS the session-correlated span (Strategy D).
+      expect(ids).toEqual(['llm-A', 'root-A', 'sess-only', 'tool-A']);
     });
   });
 

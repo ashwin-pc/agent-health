@@ -159,6 +159,8 @@ export interface InvokeAgentResult {
   rawEvents: any[];
   /** Wall-clock duration of the connector.execute() call in ms. */
   agentDurationMs: number;
+  /** Connector-supplied metadata (e.g. Claude Code `sessionId`, exitCode). */
+  metadata?: Record<string, any>;
   /** The connector that handled the request (for protocol metadata). */
   connector: AgentConnector;
 }
@@ -304,6 +306,7 @@ export async function invokeAgent(
     runId: result.runId,
     rawEvents: result.rawEvents || [],
     agentDurationMs,
+    metadata: result.metadata,
     connector,
   };
 }
@@ -324,6 +327,7 @@ export async function runEvaluationWithConnector(
   let fullTrajectory: TrajectoryStep[] = [];
   let rawEvents: any[] = [];
   let agentRunId: string | null = null;
+  let agentSessionId: string | undefined;
 
   debug('Eval', 'Config:', { agent: agent.name, model: modelId, testCase: testCase.id });
 
@@ -343,6 +347,7 @@ export async function runEvaluationWithConnector(
 
     fullTrajectory = invocation.trajectory;
     agentRunId = invocation.runId;
+    agentSessionId = invocation.metadata?.sessionId ?? undefined;
     rawEvents = invocation.rawEvents;
 
     debug('Eval', 'Trajectory captured:', fullTrajectory.length, 'steps');
@@ -371,6 +376,7 @@ export async function runEvaluationWithConnector(
         llmJudgeReasoning: 'Waiting for traces to become available...',
         improvementStrategies: [],
         runId: agentRunId || undefined,
+        sessionId: agentSessionId || undefined,
         rawEvents,
         connectorProtocol: connector.type as ConnectorProtocol,
         performanceMetrics: {
@@ -397,6 +403,7 @@ export async function runEvaluationWithConnector(
         llmJudgeReasoning: '',
         improvementStrategies: [],
         runId: agentRunId || undefined,
+        sessionId: agentSessionId || undefined,
         rawEvents,
         connectorProtocol: connector.type as ConnectorProtocol,
         performanceMetrics: {
@@ -495,6 +502,7 @@ export async function runEvaluationWithConnector(
       improvementStrategies: judgment.improvementStrategies,
       llmJudgeResponse,
       runId: agentRunId || undefined,
+      sessionId: agentSessionId || undefined,
       rawEvents,
       connectorProtocol: connector.type as ConnectorProtocol,
       performanceMetrics: {
@@ -631,6 +639,7 @@ export async function runEvaluation(
   let fullTrajectory: TrajectoryStep[] = [];
   let rawEvents: AGUIEvent[] = [];
   let agentRunId: string | null = null;
+  let agentSessionId: string | undefined;
 
   debug('Eval', 'Config:', { agent: agent.name, model: modelId, testCase: testCase.id });
 
@@ -677,6 +686,7 @@ export async function runEvaluation(
         llmJudgeReasoning: 'Waiting for traces to become available...',
         improvementStrategies: [],
         runId: agentRunId || undefined,
+        sessionId: agentSessionId || undefined,
         rawEvents,
       };
     }
@@ -758,6 +768,7 @@ export async function runEvaluation(
       llmJudgeResponse,
       openSearchLogs: logs,
       runId: agentRunId || undefined,
+      sessionId: agentSessionId || undefined,
       logs: logs || undefined,
       rawEvents,
     };

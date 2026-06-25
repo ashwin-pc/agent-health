@@ -55,12 +55,14 @@ describe('FileObservabilityModule', () => {
       await mod.ingest([
         // Strategy A: traceId
         span({ traceId: 'trace-A', spanId: 'a1', attributes: { 'service.name': 'svc1' } }),
-        // Strategy B: gen_ai.request.id == runId
-        span({ traceId: 'trace-B', spanId: 'b1', attributes: { 'gen_ai.request.id': 'run-1', 'service.name': 'svc2' } }),
+        // Strategy B: agent_health.run.id == runId
+        span({ traceId: 'trace-B', spanId: 'b1', attributes: { 'agent_health.run.id': 'run-1', 'service.name': 'svc2' } }),
         // Strategy C: service.name within window
         span({ traceId: 'trace-C', spanId: 'c1', startMs: Date.parse('2024-06-01T12:00:00Z'), attributes: { 'service.name': 'svc3' } }),
         // session
         span({ traceId: 'trace-D', spanId: 'd1', attributes: { 'session.id': 'sess-9', 'service.name': 'svc4' } }),
+        // Strategy B': OTEL-standard gen_ai.conversation.id == runId (#313)
+        span({ traceId: 'trace-E', spanId: 'e1', attributes: { 'gen_ai.conversation.id': 'run-conv', 'service.name': 'svc5' } }),
       ]);
     });
 
@@ -69,7 +71,7 @@ describe('FileObservabilityModule', () => {
       expect(r.spans.map((s) => s.spanId)).toEqual(['a1']);
     });
 
-    it('B: matches by runId (gen_ai.request.id)', async () => {
+    it('B: matches by runId (agent_health.run.id)', async () => {
       const r = await mod.traces.query({ runIds: ['run-1'] });
       expect(r.spans.map((s) => s.spanId)).toEqual(['b1']);
     });
@@ -94,6 +96,20 @@ describe('FileObservabilityModule', () => {
 
     it('matches by sessionId (must-filter)', async () => {
       const r = await mod.traces.query({ sessionId: 'sess-9' });
+      expect(r.spans.map((s) => s.spanId)).toEqual(['d1']);
+    });
+
+    it("B': matches by OTEL-standard gen_ai.conversation.id == runId (#313)", async () => {
+      const r = await mod.traces.query({ runIds: ['run-conv'] });
+      expect(r.spans.map((s) => s.spanId)).toEqual(['e1']);
+    });
+
+    it('D: matches by agents[].sessionId on attributes.session.id (#313)', async () => {
+      // No service/window match (svc4 not given, window excludes it) — only the
+      // sessionId clause can pull span d1.
+      const r = await mod.traces.query({
+        agents: [{ serviceName: 'nope', startedAt: 0, endedAt: 1, sessionId: 'sess-9' }],
+      });
       expect(r.spans.map((s) => s.spanId)).toEqual(['d1']);
     });
 
