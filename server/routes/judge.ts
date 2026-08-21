@@ -24,6 +24,7 @@ import { readEnv } from '@/lib/envCompat';
 import { getStorageModule } from '@/server/adapters';
 import { getDefaultEvaluator, getSystemEvaluatorById, isSystemEvaluatorId } from '@/server/prompts/evaluatorTemplates';
 import type { Evaluator } from '@/types';
+import { resolveConnectorWorkspaceDir } from '@/services/connectors/types';
 
 const router = Router();
 
@@ -481,15 +482,13 @@ router.post('/api/judge', async (req: Request, res: Response) => {
           evidenceContext: evidenceContext && typeof evidenceContext === 'object'
             ? {
                 ...evidenceContext,
-                // Never trust a caller-supplied filesystem path. Workspace
-                // capture is allowed only from this server's authored agent
-                // config for the stated agent key.
-                workspaceDir: (() => {
-                  const configuredAgent = config.agents.find((agent) => agent.key === evidenceContext.agentKey);
-                  return typeof configuredAgent?.connectorConfig?.cwd === 'string'
-                    ? configuredAgent.connectorConfig.cwd
-                    : undefined;
-                })(),
+                // Prefer the connector's actual per-run workspace (for
+                // example, its temporary fixture copy), then fall back to the
+                // configured static cwd for connectors that do not report one.
+                workspaceDir: resolveConnectorWorkspaceDir(
+                  evidenceContext.metadata,
+                  config.agents.find((agent) => agent.key === evidenceContext.agentKey)?.connectorConfig
+                ),
               }
             : undefined,
           keepEvidence: config.judge?.keepEvidence === true,
