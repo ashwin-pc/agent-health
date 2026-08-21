@@ -17,9 +17,7 @@ import { generateMockTrajectory } from './mockTrajectory';
 import { callBedrockJudge } from './bedrockJudge';
 import { buildJudgeMatcherEntry, formatExpectedOutcomesAsClaim } from '@/lib/matchers/judgeAccessor';
 import type { MatcherResult } from '@/lib/matchers/types';
-import type { TracesAccessor } from '@/lib/matchers/traces';
 import { buildJudgeAgentsHints } from '@/services/traces/judgeAgentsHints';
-import { buildEvaluatorErrorPatch } from '@/services/evaluation/evaluatorError';
 
 // Re-export for use by experimentRunner when calling judge after trace polling
 export { callBedrockJudge };
@@ -154,11 +152,7 @@ export function computeSdkMatcherSessionMetrics(
     };
   }
 
-  // `notReached` entries are a synthetic runner-appended marker (see
-  // appendNotReachedMarker below), not a matcher the user's body actually
-  // ran — exclude them from the gate denominator exactly like `observe`
-  // and `errored` entries, so they can't skew the pass-rate aggregate.
-  const gates = matcherResults.filter(m => m.role !== 'observe' && !m.errored && !m.notReached);
+  const gates = matcherResults.filter(m => m.role !== 'observe' && !m.errored);
   const total = gates.length;
   const passing = gates.filter(m => m.pass).length;
   // Vacuous pass when there are no gates (e.g. body just calls the agent
@@ -196,93 +190,6 @@ export function computeSdkMatcherSessionMetrics(
     out[k] = Math.round(sums[k] / counts[k]);
   }
   return out;
-}
-
-// ─── Always-record: objective actuals survive a mid-body throw ────────────
-//
-// Bug (owner-hit, measurement-harness-defeating): chai's `expect()` is
-// fail-fast — the first failing assertion throws and the rest of the test
-// body (later expect()/judge()/evaluate() calls) never executes. For a
-// pass/fail assertion that's the intended Playwright-style contract, but an
-// optimizer reading these reports needs ALL FOUR axes (accuracy, latency,
-// tokens, cost) for every run, even when one gate fails — a token-budget
-// gate failing shouldn't erase the cost figure or a judge score that
-// would otherwise have been recorded.
-//
-// `durationMs`/`agentDurationMs` already survive a later throw: the runner
-// stamps them onto `report.performanceMetrics` the instant `agent.run()`
-// resolves (inside the `invoke()` closure in evaluationRunner.ts /
-// benchmarkRunner.ts), which happens BEFORE the body gets a chance to run
-// (and fail on) any further code. `totalTokens`/`totalCostUsd` did NOT get
-// the same treatment — nothing wrote them onto the report unless a matcher
-// in the body happened to read `result.traces.totalTokens`/`totalCost`,
-// which never happens if the body throws before reaching that line.
-//
-// `stampObjectiveActuals` closes that gap: it reads straight from the SAME
-// `TracesAccessor` the body would have read (`loadedTraces`, loaded once
-// right after `agent.run()` resolves) and writes onto
-// `report.performanceMetrics`, independent of whether any matcher asserted
-// on them. See docs/SDK.md "Always-record guarantee".
-//
-// judge() score is deliberately NOT handled here: `judge()` (RFC 004) is
-// already non-throwing and records its own MatcherResult synchronously the
-// moment it's called — so a REACHED judge call is already always-recorded
-// today with zero extra code. A judge call placed AFTER a throwing
-// `expect()` in the user's source is a pure ordering problem: the runner
-// cannot record a call that never executed. Only `expect.soft()` (see
-// lib/matchers/expect.ts) rescues that case, by not throwing in the first
-// place so the body reaches the judge() call at all.
-export function stampObjectiveActuals(
-  performanceMetrics: TestCasePerformanceMetrics | undefined,
-  loadedTraces: TracesAccessor,
-  hasCapturedResult: boolean,
-): void {
-  if (!hasCapturedResult || !performanceMetrics) return;
-  try {
-    const { totalTokens, totalCost } = loadedTraces;
-    if (typeof totalTokens === 'number') performanceMetrics.totalTokens = totalTokens;
-    if (typeof totalCost === 'number') performanceMetrics.totalCostUsd = totalCost;
-  } catch {
-    // `loadedTraces` is the "loud failure" accessor (#230) when
-    // `useTraces: true` but spans never arrived — every read throws. Leave
-    // totalTokens/totalCostUsd unset rather than writing a misleading `0`
-    // (0 would assert "no cost incurred", which we don't actually know).
-  }
-}
-
-/**
- * Append a synthetic "not reached" MatcherResult when the test body threw
- * before completing, so the matcher panel can render a clearly distinct row
- * for the tail of the test that never ran (the "T3 judge not reached"
- * symptom) instead of silently omitting it. Callers must invoke this AFTER
- * computing their own gate/error booleans from the real matcherResults —
- * this function mutates the array in place, and the synthetic entry is
- * excluded from gating everywhere via its `notReached: true` flag (see the
- * `computeSdkMatcherSessionMetrics` gates filter above).
- *
- * No-op for an agent crash (`agentFailed`): there's no "test body" telling
- * a coherent story when the agent itself never produced a trajectory —
- * that case already has its own clearly-labelled `agent_failed` patch.
- */
-export function appendNotReachedMarker(
-  matcherResults: MatcherResult[],
-  evalError: unknown,
-  agentFailed: boolean,
-): void {
-  if (evalError === undefined || agentFailed) return;
-  matcherResults.push({
-    description:
-      'Test body did not complete: an error was thrown before reaching ' +
-      'further matcher calls in source order, so any expect()/judge()/' +
-      'evaluate() calls after that point never executed. If the error came ' +
-      'from a failing expect() assertion (not a bug elsewhere in the test ' +
-      'body), expect.soft(...) records instead of throwing so later matchers ' +
-      'still run (see docs/SDK.md "Always-record guarantee").',
-    pass: false,
-    method: 'code-assertion',
-    notReached: true,
-    errorMessage: evalError instanceof Error ? evalError.message : String(evalError),
-  });
 }
 
 /**
@@ -526,6 +433,7 @@ export async function runEvaluationWithConnector(
     });
     const connector = invocation.connector;
     const agentDurationMs = invocation.agentDurationMs;
+    const connectorMetadata = invocation.metadata;
 
     fullTrajectory = invocation.trajectory;
     agentRunId = invocation.runId;
@@ -613,78 +521,40 @@ export async function runEvaluationWithConnector(
       process.env.BEDROCK_MODEL_ID ||
       modelConfig?.model_id ||
       modelId;
-
-    // The judge call gets its OWN try/catch, separate from agent invocation
-    // above. Pre-fix, a judge failure here (e.g. the agent-trace-judge's
-    // "needs a runId or trace correlation hint" validation error for a
-    // `useTraces: false` REST agent -- the reported incident) fell through
-    // to the OUTER catch below and was indistinguishable from a genuine
-    // agent crash: `status: 'failed'`, no `metricsStatus`, generic
-    // "Evaluation failed: ..." reasoning. That shape is invisible to
-    // retry-judgement's `isJudgeFailedCase` (requires `metricsStatus:
-    // 'error'` on a `'completed'` result) and buckets as `failed` instead of
-    // `errored` in the runs list/stats (lib/runStats.ts), silently
-    // misattributing an evaluator problem as "the agent did badly". The
-    // agent DID complete here (we have `fullTrajectory`) -- use the
-    // canonical `buildEvaluatorErrorPatch('judge_failed', ...)` shape so
-    // this case is `status: 'completed'` + `metricsStatus: 'error'`,
-    // exactly like every other judge-failure code path in this codebase
-    // (evaluationRunner.ts, benchmarkRunner.ts, retryJudgement.ts,
-    // browserRecovery.ts).
-    let judgment: Awaited<ReturnType<typeof callBedrockJudge>>;
-    try {
-      judgment = await callBedrockJudge(
-        fullTrajectory,
+    const judgment = await callBedrockJudge(
+      fullTrajectory,
+      {
+        expectedOutcomes: testCase.expectedOutcomes,
+        expectedTrajectory: testCase.expectedTrajectory,
+      },
+      undefined, // No logs in direct connector mode
+      (chunk) => debug('Eval', 'Judge progress:', chunk.slice(0, 100)),
+      judgeModelId,
+      evaluatorId,
+      // Forward agent runId so the `agent` (trace) judge provider can
+      // scope its query_spans/query_logs tools. See callBedrockJudge.
+      agentRunId || undefined,
+      // Strategy C correlation hints (#264) so the trace judge tool can
+      // find spans the agent emits under its OWN correlation (claude-code
+      // session ids etc.), not just spans matching agent-health's runId
+      // via gen_ai.request.id.
+      buildJudgeAgentsHints(
         {
-          expectedOutcomes: testCase.expectedOutcomes,
-          expectedTrajectory: testCase.expectedTrajectory,
+          agentKey: agent.key,
+          connectorProtocol: (agent.connectorType as any),
+          timestamp: new Date().toISOString(),
+          performanceMetrics: { durationMs: Date.now() - evalStartTime, agentDurationMs },
         },
-        undefined, // No logs in direct connector mode
-        (chunk) => debug('Eval', 'Judge progress:', chunk.slice(0, 100)),
-        judgeModelId,
-        evaluatorId,
-        // Forward agent runId so the `agent` (trace) judge provider can
-        // scope its query_spans/query_logs tools. See callBedrockJudge.
-        agentRunId || undefined,
-        // Strategy C correlation hints (#264) so the trace judge tool can
-        // find spans the agent emits under its OWN correlation (claude-code
-        // session ids etc.), not just spans matching agent-health's runId
-        // via gen_ai.request.id.
-        buildJudgeAgentsHints(
-          {
-            agentKey: agent.key,
-            connectorProtocol: (agent.connectorType as any),
-            timestamp: new Date().toISOString(),
-            performanceMetrics: { durationMs: Date.now() - evalStartTime, agentDurationMs },
-          },
-          agent.traceServiceName
-        )
-      );
-    } catch (judgeError) {
-      console.error('[Eval] Judge call failed:', judgeError instanceof Error ? judgeError.message : judgeError);
-      return {
-        id: reportId,
-        timestamp: new Date().toISOString(),
-        agentName: agent.name,
+        agent.traceServiceName
+      ),
+      {
+        prompt: testCase.initialPrompt,
         agentKey: agent.key,
-        modelName: modelId,
-        modelId,
-        testCaseId: testCase.id,
-        testCaseVersion: testCase.currentVersion ?? 1,
-        status: 'completed',
-        trajectory: fullTrajectory,
-        ...buildEvaluatorErrorPatch('judge_failed', judgeError),
-        improvementStrategies: [],
-        runId: agentRunId || undefined,
-        sessionId: agentSessionId || undefined,
-        rawEvents,
-        connectorProtocol: connector.type as ConnectorProtocol,
-        performanceMetrics: {
-          durationMs: Date.now() - evalStartTime,
-          agentDurationMs,
-        },
-      };
-    }
+        timings: { agentDurationMs, evaluationElapsedMs: Date.now() - evalStartTime },
+        metadata: connectorMetadata,
+        workspaceDir: typeof agent.connectorConfig?.cwd === 'string' ? agent.connectorConfig.cwd : undefined,
+      }
+    );
 
     debug('Eval', 'Metrics:', judgment.metrics);
 
@@ -719,9 +589,6 @@ export async function runEvaluationWithConnector(
       trajectory: fullTrajectory,
       metrics: judgment.metrics,
       llmJudgeReasoning: judgment.llmJudgeReasoning,
-      // Set only by the agent (trace) judge provider -- see
-      // JudgeResponse.judgeMode / TestCaseRun.judgeMode.
-      ...(judgment.judgeMode ? { judgeMode: judgment.judgeMode } : {}),
       // Unified judge surface (Option-B BC: legacy field above kept).
       matcherResults: [
         buildJudgeMatcherEntry(judgment, {
@@ -987,9 +854,6 @@ export async function runEvaluation(
       trajectory: fullTrajectory,
       metrics: judgment.metrics,
       llmJudgeReasoning: judgment.llmJudgeReasoning,
-      // Set only by the agent (trace) judge provider -- see
-      // JudgeResponse.judgeMode / TestCaseRun.judgeMode.
-      ...(judgment.judgeMode ? { judgeMode: judgment.judgeMode } : {}),
       // Unified judge surface (Option-B BC: legacy field above kept).
       matcherResults: [
         buildJudgeMatcherEntry(judgment, {

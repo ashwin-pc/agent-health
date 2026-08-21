@@ -388,6 +388,10 @@ export interface LLMJudgeResponse {
     systemPrompt?: string;
     /** The user-message prompt the model received. */
     userPrompt?: string;
+    /** Restricted evidence bash commands issued by the judging agent. */
+    toolCalls?: Array<{ tool: string; command: string }>;
+    /** Retained evidence tmpdir when local debugging explicitly enables it. */
+    evidenceDir?: string;
   };
 }
 
