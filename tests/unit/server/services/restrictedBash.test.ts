@@ -128,6 +128,57 @@ describe('confinement and failure semantics', () => {
     expect((await run('cat evidence/link')).stderr).toMatch(/symlinks are not allowed/);
   });
 
+  it('lists and reads exact canonical files through a zero-copy read-only mount', async () => {
+    const traceDir = await fs.mkdtemp(path.join(os.tmpdir(), 'restricted-mount-store-'));
+    const source1 = path.join(traceDir, 'session-one.ndjson');
+    const source2 = path.join(traceDir, 'session-two.ndjson');
+    const sibling = path.join(traceDir, 'another-session.ndjson');
+    await fs.writeFile(source1, '{"spanId":"s1","durationMs":3}\n');
+    await fs.writeFile(source2, '{"spanId":"s2","durationMs":4}\n');
+    await fs.writeFile(sibling, '{"spanId":"SECRET"}\n');
+    try {
+      const mounted = await RestrictedBash.create({
+        rootDir: root,
+        mounts: [{ virtualPath: 'evidence/spans.ndjson', sourcePaths: [source1, source2] }],
+      });
+      expect((await mounted.execute('ls evidence')).stdout).toContain('spans.ndjson');
+      expect((await mounted.execute("jq -s 'map(.durationMs) | add' evidence/spans.ndjson")).stdout.trim()).toBe('7');
+      expect((await mounted.execute('find evidence -maxdepth 1 -type f')).stdout).toContain('evidence/spans.ndjson');
+      // The virtual entry has no inode in the judgment tmpdir: the resolver,
+      // not a symlink or copy, provides the bytes.
+      await expect(fs.lstat(path.join(root, 'evidence', 'spans.ndjson'))).rejects.toMatchObject({ code: 'ENOENT' });
+      expect((await mounted.execute('echo x > evidence/spans.ndjson')).stderr).toMatch(/writes are allowed only under scratch/);
+    } finally {
+      await fs.rm(traceDir, { recursive: true, force: true });
+    }
+  });
+
+  it('a mounted canonical file cannot be pivoted to a sibling trace-store file', async () => {
+    const traceDir = await fs.mkdtemp(path.join(os.tmpdir(), 'restricted-mount-escape-'));
+    const allowed = path.join(traceDir, 'allowed.ndjson');
+    const sibling = path.join(traceDir, 'other-session.ndjson');
+    await fs.writeFile(allowed, '{"spanId":"allowed"}\n');
+    await fs.writeFile(sibling, '{"spanId":"SECRET"}\n');
+    try {
+      const mounted = await RestrictedBash.create({
+        rootDir: root,
+        mounts: [{ virtualPath: 'evidence/spans.ndjson', sourcePaths: [allowed] }],
+      });
+      expect((await mounted.execute('cat evidence/spans.ndjson')).stdout).toContain('allowed');
+      expect((await mounted.execute('cat evidence/spans.ndjson/../other-session.ndjson')).stderr).toMatch(/path escape rejected/);
+      expect((await mounted.execute('cat evidence/other-session.ndjson')).stderr).toMatch(/no such file/);
+      expect((await mounted.execute(`cat ${sibling}`)).stderr).toMatch(/outside judgment directory/);
+      expect((await mounted.execute('rg SECRET evidence')).stdout).toBe('');
+      await fs.rm(allowed);
+      await fs.symlink(sibling, allowed);
+      const swapped = await mounted.execute('cat evidence/spans.ndjson');
+      expect(swapped.stderr).toMatch(/no longer the exact allowed canonical file/);
+      expect(swapped.stdout).not.toContain('SECRET');
+    } finally {
+      await fs.rm(traceDir, { recursive: true, force: true });
+    }
+  });
+
   it('rejects `echo x > evidence/t` and all writes outside scratch', async () => {
     expect((await run('echo x > evidence/t')).stderr).toMatch(/writes are allowed only under scratch/);
     expect((await run(`echo x > ${path.join(root, 'outside')}`)).stderr).toMatch(/writes are allowed only under scratch/);

@@ -441,8 +441,8 @@ router.post('/api/judge', async (req: Request, res: Response) => {
 
     if (provider === 'agent') {
       // Evidence agent judge: complete trajectory/testcase files are always
-      // available through restricted in-process bash. runId is optional and
-      // only enables the compatible query_spans/query_logs tools.
+      // available through restricted in-process bash. A runId may discover a
+      // file-mode canonical mount or enable cluster-mode query tools.
       // Defense in depth against cross-run/cross-tenant exfiltration: the trace
       // tools will happily read spans/logs for whatever runId they're given, so
       // a direct caller could pass a benign trajectory but a *different* run's
@@ -467,9 +467,8 @@ router.post('/api/judge', async (req: Request, res: Response) => {
       }
       debug('JudgeAPI', 'Agent evidence judge - evaluating with restricted bash (runId=' + (runId || 'none') + ')');
       // Pass the resolved evaluator so a saved `systemPrompt` replaces the
-      // default base prompt (the trace-tool addendum is still appended
-      // inside the service so the judge always knows query_spans/query_logs
-      // exist).
+      // default base prompt (the runtime evidence/tool addendum is still
+      // appended inside the service and describes only actual state).
       const result = await evaluateWithPiAgenticTrace(
         {
           trajectory,

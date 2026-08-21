@@ -666,6 +666,8 @@ export interface Span {
   spanId: string;
   parentSpanId?: string;
   name: string;
+  /** OTLP SpanKind (numeric JSON enum or normalized string from OpenSearch). */
+  kind?: number | string;
   startTime: string;
   endTime: string;
   duration?: number;

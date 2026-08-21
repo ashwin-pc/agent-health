@@ -10,12 +10,29 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import type { JudgeRequest } from './bedrockService';
 import { fetchTraceJudgeLogs, fetchTraceJudgeSpans } from './traceJudgeTools';
+import { TraceStore } from '../adapters/file/TraceStore';
+import type { RestrictedBashMount } from './restrictedBash';
+import type { Span } from '../../types';
+
+export type JudgeTraceMode = 'file' | 'cluster' | 'unknown';
+
+export interface JudgeTraceEvidenceState {
+  mode: JudgeTraceMode;
+  /** True only when trace/log evidence is actually reachable by this judgment. */
+  exists: boolean;
+  spanCount: number;
+  logCount: number;
+}
 
 export interface JudgeEvidenceBundle {
   rootDir: string;
   evidenceDir: string;
   scratchDir: string;
+  /** Complete rendered tree entries, including virtual read-only mounts. */
   files: string[];
+  /** Virtual-to-canonical mappings consumed by RestrictedBash (never symlinks/copies). */
+  mounts: RestrictedBashMount[];
+  trace: JudgeTraceEvidenceState;
 }
 
 function safeName(value: string | undefined): string {
@@ -79,10 +96,18 @@ async function listFiles(root: string, dir = root): Promise<string[]> {
   return out;
 }
 
+function traceMode(value: unknown): JudgeTraceMode {
+  if (value === 'file') return 'file';
+  if (value === 'opensearch') return 'cluster';
+  return 'unknown';
+}
+
 /**
  * Build evidence from the ORIGINAL request trajectory, before prompt
- * compaction/truncation. Trace endpoint failures are non-fatal: trajectory-only
- * judging remains fully functional and spans.ndjson/logs.ndjson are absent.
+ * compaction/truncation. Trace endpoint failures are non-fatal. In file mode,
+ * trace bytes remain in their canonical NDJSON store: this bundle contains an
+ * explicit read-only mount table, not copied spans/logs or symlinks. Cluster
+ * mode never materializes or mounts trace data.
  */
 export async function buildJudgeEvidence(
   request: JudgeRequest,
@@ -135,27 +160,49 @@ export async function buildJudgeEvidence(
       }
     }
 
+    const mounts: RestrictedBashMount[] = [];
+    let mode: JudgeTraceMode = 'unknown';
+    let spanCount = 0;
+    let logCount = 0;
+
     if (request.runId) {
       try {
         const spanData: any = await fetchTraceJudgeSpans(request.runId, serverUrl, request.agents);
-        const spans = Array.isArray(spanData?.spans) ? spanData.spans : [];
-        if (spans.length) await fs.writeFile(path.join(evidenceDir, 'spans.ndjson'), ndjson(spans));
+        mode = traceMode(spanData?.backend);
+        const spans: Span[] = Array.isArray(spanData?.spans) ? spanData.spans : [];
+        spanCount = spans.length;
+        if (mode === 'file' && spans.length) {
+          const sourcePaths = await new TraceStore().canonicalFilesForSpans(spans);
+          if (sourcePaths.length) mounts.push({ virtualPath: 'evidence/spans.ndjson', sourcePaths });
+        }
       } catch {
         // Trace-free operation is intentional. Absence means unavailable.
       }
       try {
         const logData: any = await fetchTraceJudgeLogs(request.runId, serverUrl);
         const logs = Array.isArray(logData?.logs) ? logData.logs : [];
-        if (logs.length) await fs.writeFile(path.join(evidenceDir, 'logs.ndjson'), ndjson(logs));
+        logCount = logs.length;
+        // The embedded file backend has no OTLP log receiver/store yet. When
+        // one lands, mount its canonical NDJSON here exactly like spans.
       } catch {
         // Trace-free operation is intentional. Absence means unavailable.
       }
-    } else if (request.logs?.length) {
-      await fs.writeFile(path.join(evidenceDir, 'logs.ndjson'), ndjson(request.logs));
     }
 
     await makeReadOnly(evidenceDir);
-    return { rootDir, evidenceDir, scratchDir, files: await listFiles(rootDir) };
+    const physicalFiles = await listFiles(rootDir);
+    const files = [...new Set([...physicalFiles, ...mounts.map((mount) => mount.virtualPath)])].sort();
+    const exists = mode === 'cluster'
+      ? spanCount > 0 || logCount > 0
+      : mounts.length > 0;
+    return {
+      rootDir,
+      evidenceDir,
+      scratchDir,
+      files,
+      mounts,
+      trace: { mode, exists, spanCount, logCount },
+    };
   } catch (err) {
     await fs.rm(rootDir, { recursive: true, force: true });
     throw err;

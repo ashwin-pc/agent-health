@@ -28,7 +28,7 @@ export type TraceJudgeAgentHint = {
   sessionId?: string;
 };
 
-/** Shared run-scoped fetch used by both interactive tools and evidence files. */
+/** Shared run-scoped fetch used by cluster tools and file-mount discovery. */
 export async function fetchTraceJudgeSpans(
   runId: string,
   serverUrl: string,
@@ -45,7 +45,7 @@ export async function fetchTraceJudgeSpans(
   return res.json();
 }
 
-/** Shared run-scoped log fetch used by both interactive tools and evidence files. */
+/** Shared run-scoped log fetch used by cluster tools and evidence-state discovery. */
 export async function fetchTraceJudgeLogs(
   runId: string,
   serverUrl: string,
