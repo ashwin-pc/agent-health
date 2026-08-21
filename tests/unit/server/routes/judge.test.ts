@@ -703,32 +703,36 @@ describe('Judge Routes', () => {
     });
   });
 
-  describe('POST /api/judge - agent (trace) provider runId guard', () => {
-    // An evaluator whose inferenceConfig selects the trace-judge provider.
+  describe('POST /api/judge - agent evidence provider scoping', () => {
+    // An evaluator whose inferenceConfig selects the evidence-agent provider.
     const agentEvaluator = {
       id: 'custom-trace-eval',
       name: 'Trace Judge',
       inferenceConfig: { provider: 'agent' },
     };
 
-    it('returns 400 when runId is missing (trace tools have nothing to scope to)', async () => {
+    it('works without runId using complete trajectory evidence (trace-free mode)', async () => {
       mockGetEvaluatorById.mockResolvedValue(agentEvaluator);
+      mockEvaluateWithPiAgenticTrace.mockResolvedValue({
+        passFailStatus: 'passed', metrics: { accuracy: 88 }, llmJudgeReasoning: 'trajectory evidence', improvementStrategies: [],
+      } as any);
 
       const { req, res } = createMocks({
         trajectory: [{ type: 'action', toolName: 'search' }],
         expectedOutcomes: ['Identify issue'],
         evaluatorId: 'custom-trace-eval',
-        // no runId
+        // no runId: bash evidence still works; trace tools are unavailable
       });
       const handler = getRouteHandler(judgeRoutes, 'post', '/api/judge');
 
       await handler(req, res);
 
-      expect(res.status).toHaveBeenCalledWith(400);
-      expect(res.json).toHaveBeenCalledWith(
-        expect.objectContaining({ error: expect.stringContaining('runId is required') })
+      expect(res.status).not.toHaveBeenCalledWith(400);
+      expect(mockEvaluateWithPiAgenticTrace).toHaveBeenCalledWith(
+        expect.objectContaining({ runId: undefined, trajectory: expect.any(Array) }),
+        expect.objectContaining({ id: 'custom-trace-eval' })
       );
-      expect(mockEvaluateWithPiAgenticTrace).not.toHaveBeenCalled();
+      expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ passFailStatus: 'passed' }));
     });
 
     it('routes to evaluateWithPiAgenticTrace when runId is present', async () => {

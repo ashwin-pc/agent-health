@@ -433,6 +433,7 @@ export async function runEvaluationWithConnector(
     });
     const connector = invocation.connector;
     const agentDurationMs = invocation.agentDurationMs;
+    const connectorMetadata = invocation.metadata;
 
     fullTrajectory = invocation.trajectory;
     agentRunId = invocation.runId;
@@ -545,7 +546,14 @@ export async function runEvaluationWithConnector(
           performanceMetrics: { durationMs: Date.now() - evalStartTime, agentDurationMs },
         },
         agent.traceServiceName
-      )
+      ),
+      {
+        prompt: testCase.initialPrompt,
+        agentKey: agent.key,
+        timings: { agentDurationMs, evaluationElapsedMs: Date.now() - evalStartTime },
+        metadata: connectorMetadata,
+        workspaceDir: typeof agent.connectorConfig?.cwd === 'string' ? agent.connectorConfig.cwd : undefined,
+      }
     );
 
     debug('Eval', 'Metrics:', judgment.metrics);
