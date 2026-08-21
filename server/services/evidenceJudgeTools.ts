@@ -7,9 +7,10 @@
 
 import { Type } from 'typebox';
 import type { PiExtensionAPI, PiExtensionFactory } from './piSdkTypes';
-import { RestrictedBash } from './restrictedBash';
+import { RestrictedBash, type RestrictedBashMount } from './restrictedBash';
 
 export interface EvidenceBashToolOptions {
+  mounts?: readonly RestrictedBashMount[];
   onCommand?: (command: string) => void;
   timeoutMs?: number;
   outputCapBytes?: number;

@@ -8,6 +8,8 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { buildJudgeEvidence, removeJudgeEvidence } from '@/server/services/judgeEvidence';
 import { createEvidenceJudgeExtension } from '@/server/services/evidenceJudgeTools';
+import { TraceStore } from '@/server/adapters/file/TraceStore';
+import type { Span } from '@/types';
 
 const request: any = {
   runId: 'run/full:1',
@@ -19,9 +21,23 @@ const request: any = {
   evidenceContext: { prompt: 'inspect without writes', agentKey: 'example', timings: { agentDurationMs: 42 } },
 };
 
+const ORIGINAL_DATA_DIR = process.env.AGENT_HEALTH_DATA_DIR;
+
 afterEach(() => {
   (global.fetch as any) = undefined;
+  if (ORIGINAL_DATA_DIR === undefined) delete process.env.AGENT_HEALTH_DATA_DIR;
+  else process.env.AGENT_HEALTH_DATA_DIR = ORIGINAL_DATA_DIR;
 });
+
+function span(over: Partial<Span> = {}): Span {
+  return {
+    traceId: 'trace-1', spanId: 's1', name: 'execute_tool',
+    startTime: '2024-01-01T00:00:00.000Z', endTime: '2024-01-01T00:00:00.100Z',
+    duration: 100, status: 'OK',
+    attributes: { 'session.id': request.runId, 'service.name': 'pi-agent', 'gen_ai.tool.name': 'read' },
+    ...over,
+  };
+}
 
 describe('judge evidence bundle', () => {
   it('writes the full untruncated trajectory, per-step files, and read-only evidence', async () => {
@@ -39,6 +55,7 @@ describe('judge evidence bundle', () => {
         'scratch/',
       ]));
       expect(bundle.files).not.toContain('evidence/spans.ndjson');
+      expect(bundle.files.some((file) => /README|manifest/i.test(file))).toBe(false);
       expect((await fs.stat(bundle.evidenceDir)).mode & 0o777).toBe(0o555);
       expect((await fs.stat(bundle.scratchDir)).mode & 0o777).toBe(0o755);
     } finally {
@@ -47,14 +64,45 @@ describe('judge evidence bundle', () => {
     await expect(fs.stat(bundle.rootDir)).rejects.toMatchObject({ code: 'ENOENT' });
   });
 
-  it('writes spans/logs only when returned by the shared trace fetch', async () => {
+  it('mounts file-mode spans from the canonical store without copying an inode', async () => {
+    const dataDir = await fs.mkdtemp(path.join(os.tmpdir(), 'judge-trace-store-'));
+    process.env.AGENT_HEALTH_DATA_DIR = dataDir;
+    const stored = span({ attributes: { 'session.id': 'run-safe', 'service.name': 'pi-agent', 'gen_ai.tool.name': 'read' } });
+    await new TraceStore().writeSpans([stored]);
     (global as any).fetch = jest.fn()
-      .mockResolvedValueOnce({ ok: true, json: async () => ({ spans: [{ spanId: 's1' }] }) })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ backend: 'file', spans: [stored] }) })
+      .mockResolvedValueOnce({ ok: false, status: 503 });
+    const bundle = await buildJudgeEvidence(request, 'http://localhost:4001');
+    try {
+      expect(bundle.trace).toEqual(expect.objectContaining({ mode: 'file', exists: true, spanCount: 1 }));
+      expect(bundle.files).toContain('evidence/spans.ndjson');
+      expect(bundle.mounts).toHaveLength(1);
+      expect(bundle.mounts[0].sourcePaths[0]).toMatch(/traces\/session-run-safe\.ndjson$/);
+      await expect(fs.lstat(path.join(bundle.evidenceDir, 'spans.ndjson'))).rejects.toMatchObject({ code: 'ENOENT' });
+
+      const tools = new Map<string, any>();
+      createEvidenceJudgeExtension(bundle.rootDir, { mounts: bundle.mounts })(
+        { registerTool: (tool: any) => tools.set(tool.name, tool) } as any
+      );
+      const result = await tools.get('bash').execute('1', { command: "jq -s '.[0].spanId' evidence/spans.ndjson" });
+      expect(result.content[0].text).toContain('s1');
+    } finally {
+      await removeJudgeEvidence(bundle);
+      await fs.rm(dataDir, { recursive: true, force: true });
+    }
+  });
+
+  it('never materializes or mounts cluster-mode spans/logs', async () => {
+    (global as any).fetch = jest.fn()
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ backend: 'opensearch', spans: [{ spanId: 's1' }] }) })
       .mockResolvedValueOnce({ ok: true, json: async () => ({ logs: [{ message: 'ok' }] }) });
     const bundle = await buildJudgeEvidence(request, 'http://localhost:4001');
     try {
-      expect(await fs.readFile(path.join(bundle.evidenceDir, 'spans.ndjson'), 'utf8')).toContain('"spanId":"s1"');
-      expect(await fs.readFile(path.join(bundle.evidenceDir, 'logs.ndjson'), 'utf8')).toContain('"message":"ok"');
+      expect(bundle.trace).toEqual(expect.objectContaining({ mode: 'cluster', exists: true, spanCount: 1, logCount: 1 }));
+      expect(bundle.mounts).toEqual([]);
+      expect(bundle.files).not.toContain('evidence/spans.ndjson');
+      expect(bundle.files).not.toContain('evidence/logs.ndjson');
+      await expect(fs.lstat(path.join(bundle.evidenceDir, 'spans.ndjson'))).rejects.toMatchObject({ code: 'ENOENT' });
     } finally { await removeJudgeEvidence(bundle); }
   });
 
