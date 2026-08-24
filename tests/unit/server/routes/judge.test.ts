@@ -764,6 +764,34 @@ describe('Judge Routes', () => {
       );
     });
 
+    it('does not trust a client-supplied workspace path', async () => {
+      mockGetEvaluatorById.mockResolvedValue(agentEvaluator);
+      mockEvaluateWithPiAgenticTrace.mockResolvedValue({
+        passFailStatus: 'passed', metrics: { accuracy: 90 }, llmJudgeReasoning: 'ok', improvementStrategies: [],
+      } as any);
+
+      const { req, res } = createMocks({
+        trajectory: [{ type: 'action', toolName: 'search' }],
+        expectedOutcomes: ['Identify issue'],
+        evaluatorId: 'custom-trace-eval',
+        evidenceContext: {
+          agentKey: 'attacker-controlled-agent',
+          workspaceDir: '/etc',
+          metadata: { workspaceDir: '/etc' },
+        },
+      });
+      const handler = getRouteHandler(judgeRoutes, 'post', '/api/judge');
+
+      await handler(req, res);
+
+      expect(mockEvaluateWithPiAgenticTrace).toHaveBeenCalledWith(
+        expect.objectContaining({
+          evidenceContext: expect.objectContaining({ workspaceDir: undefined }),
+        }),
+        expect.objectContaining({ id: 'custom-trace-eval' })
+      );
+    });
+
     it('returns 403 when runId does not match the runId carried by the submitted trajectory (#3 cross-run guard)', async () => {
       mockGetEvaluatorById.mockResolvedValue(agentEvaluator);
 
