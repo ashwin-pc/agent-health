@@ -398,7 +398,6 @@ export async function evaluateWithPiAgenticTrace(
       parsed.judgeDebug = {
         ...judgeDebug,
         toolCalls: bashCommands.map((command) => ({ tool: 'bash', command })),
-        ...(keepEvidence ? { evidenceDir: evidence.rootDir } : {}),
       };
     }
     return { ...parsed, improvementStrategies: [] };

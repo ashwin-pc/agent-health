@@ -24,7 +24,6 @@ import { readEnv } from '@/lib/envCompat';
 import { getStorageModule } from '@/server/adapters';
 import { getDefaultEvaluator, getSystemEvaluatorById, isSystemEvaluatorId } from '@/server/prompts/evaluatorTemplates';
 import type { Evaluator } from '@/types';
-import { resolveConnectorWorkspaceDir } from '@/services/connectors/types';
 
 const router = Router();
 
@@ -482,13 +481,18 @@ router.post('/api/judge', async (req: Request, res: Response) => {
           evidenceContext: evidenceContext && typeof evidenceContext === 'object'
             ? {
                 ...evidenceContext,
-                // Prefer the connector's actual per-run workspace (for
-                // example, its temporary fixture copy), then fall back to the
-                // configured static cwd for connectors that do not report one.
-                workspaceDir: resolveConnectorWorkspaceDir(
-                  evidenceContext.metadata,
-                  config.agents.find((agent) => agent.key === evidenceContext.agentKey)?.connectorConfig
-                ),
+                // HTTP clients control evidenceContext metadata, so never
+                // accept a workspace path from it. Only the server-owned agent
+                // configuration may select files for an API-triggered judge.
+                // In-process evaluation still uses the connector's actual
+                // per-run workspace because that metadata never crosses this
+                // untrusted request boundary.
+                workspaceDir: (() => {
+                  const cwd = config.agents.find(
+                    (agent) => agent.key === evidenceContext.agentKey
+                  )?.connectorConfig?.cwd;
+                  return typeof cwd === 'string' && cwd.trim() ? cwd : undefined;
+                })(),
               }
             : undefined,
           keepEvidence: config.judge?.keepEvidence === true,
