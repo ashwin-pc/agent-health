@@ -15,6 +15,8 @@ import {
   BarChart3,
   MessageSquare,
   Wand2,
+  Menu,
+  X,
 } from "lucide-react";
 import OpenSearchLogoDark from "@/assets/opensearch-logo.svg";
 import OpenSearchLogoLight from "@/assets/opensearch-logo-light.svg";
@@ -91,6 +93,10 @@ export const Layout: React.FC<LayoutProps> = ({ children }) => {
   const [testingOpen, setTestingOpen] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
   const [isCollapsed, setIsCollapsed] = usePersistedState<boolean>('sidebar:collapsed', false);
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
+
+  // Route changes close the off-canvas navigation after a mobile selection.
+  useEffect(() => setMobileNavOpen(false), [location.pathname]);
 
   // Collapse the nav when landing on a *specific run* URL (single-run inspect /
   // detail views are dense — no need to waste space on the global nav). Matches
@@ -138,9 +144,17 @@ export const Layout: React.FC<LayoutProps> = ({ children }) => {
   return (
     <SidebarCollapseContext.Provider value={{ isCollapsed, setIsCollapsed }}>
       <SidebarProvider className="h-screen overflow-hidden">
-        <Sidebar 
-        collapsible="none" 
-        className="h-screen flex-shrink-0 transition-all duration-300"
+        {mobileNavOpen && (
+          <button
+            type="button"
+            className="fixed inset-0 z-40 bg-black/40 lg:hidden"
+            aria-label="Close navigation"
+            onClick={() => setMobileNavOpen(false)}
+          />
+        )}
+        <Sidebar
+        collapsible="none"
+        className={`fixed inset-y-0 left-0 z-50 h-screen flex-shrink-0 transition-transform duration-300 lg:static lg:translate-x-0 ${mobileNavOpen ? 'translate-x-0' : '-translate-x-full'}`}
         style={{
           width: isCollapsed ? '64px' : '180px',
           background: isDarkMode ? 'hsl(var(--background))' : '#FFFFFF',
@@ -386,7 +400,20 @@ export const Layout: React.FC<LayoutProps> = ({ children }) => {
         </SidebarFooter>
       </Sidebar>
 
-      <SidebarInset className="overflow-y-auto dashboard-gradient-bg">
+      <SidebarInset className="overflow-y-auto dashboard-gradient-bg mobile-responsive-content">
+        <div className="sticky top-0 z-30 flex h-12 shrink-0 items-center justify-between border-b bg-background/95 px-3 backdrop-blur lg:hidden">
+          <button
+            type="button"
+            className="inline-flex min-h-10 min-w-10 items-center justify-center rounded-md hover:bg-accent"
+            aria-label={mobileNavOpen ? 'Close navigation' : 'Open navigation'}
+            aria-expanded={mobileNavOpen}
+            onClick={() => setMobileNavOpen(open => !open)}
+          >
+            {mobileNavOpen ? <X size={20} /> : <Menu size={20} />}
+          </button>
+          <span className="text-sm font-semibold">AgentHealth</span>
+          <span className="w-10" aria-hidden="true" />
+        </div>
         <AssistantProvider>
           {children}
           <AssistantModal />
