@@ -796,6 +796,9 @@ export class RestrictedBash {
     return await new Promise<CommandResult>((resolve) => {
       const worker = new Worker(`
         const { parentPort, workerData } = require('node:worker_threads');
+        // jq-wasm expects Web Crypto. Node 18 exposes it from node:crypto but
+        // does not install it on globalThis as later Node releases do.
+        if (!globalThis.crypto) globalThis.crypto = require('node:crypto').webcrypto;
         (async () => {
           try {
             const { raw } = await import('jq-wasm/inline');
