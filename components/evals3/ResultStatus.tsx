@@ -15,6 +15,7 @@
 import React from 'react';
 import { CheckCircle2, XCircle, Loader2, Clock, AlertTriangle } from 'lucide-react';
 import type { EvaluationReport } from '@/types';
+import { getJudgeVerdict } from '@/lib/reportVerdict';
 
 export type ResultStatus = 'passed' | 'failed' | 'errored' | 'running' | 'pending' | 'pending_traces' | 'pending_judgment';
 
@@ -29,16 +30,21 @@ export function getResultStatus(
   if (runResult.status === 'pending') return 'pending';
   if (runResult.status === 'failed' || runResult.status === 'cancelled') return 'failed';
 
-  // Metrics still in progress — show granular pending state regardless of passFailStatus
+  // A verdict that already landed is authoritative. In particular, a later
+  // trace timeout is diagnostic metadata and must not turn PASS/FAIL into
+  // ERRORED (#407). matcherResults also recovers legacy reports whose
+  // passFailStatus was accidentally cleared by the timeout patch.
+  const verdict = getJudgeVerdict(report);
+  if (verdict) return verdict.status;
+
+  // No verdict yet: trace/judge lifecycle state determines the placeholder.
   if (report?.metricsStatus === 'pending') return 'pending_traces';
   if (report?.metricsStatus === 'calculating') return 'pending_judgment';
 
-  // Issue #242: judge/trace evaluation failed before producing a verdict.
-  // Surface as a distinct 'errored' status so users don't conflate
-  // "evaluator misconfigured" with "agent answered wrong".
+  // The evaluator genuinely failed before producing any verdict.
   if (report?.metricsStatus === 'error') return 'errored';
 
-  // Agent execution completed and metrics ready — check judgment result
+  // Agent execution completed and metrics ready — check legacy judgment fields
   if (report?.passFailStatus === 'passed') return 'passed';
   if (report?.passFailStatus === 'failed') return 'failed';
   if (report?.status === 'failed') return 'failed';
