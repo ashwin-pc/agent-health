@@ -115,6 +115,32 @@ describe('recoverOrphanEvaluationRuns', () => {
     expect(list.mock.invocationCallOrder[1]).toBeLessThan(update.mock.invocationCallOrder[0]);
   });
 
+  it('falls back to safe pagination defaults for invalid environment values', async () => {
+    process.env.EVALUATION_RUN_RECOVERY_PAGE_SIZE = '0';
+    process.env.EVALUATION_RUN_RECOVERY_MAX_PAGES = 'not-a-number';
+    const { storage, list } = mockStorage([evaluationRun('orphan')]);
+
+    await recoverOrphanEvaluationRuns(storage);
+
+    expect(list).toHaveBeenCalledWith(expect.objectContaining({ from: 0, size: 100 }));
+  });
+
+  it('defensively ignores terminal documents returned by an over-broad adapter', async () => {
+    const terminal = evaluationRun('already-complete', { status: 'completed' });
+    const update = jest.fn();
+    const storage = {
+      evaluationRuns: {
+        list: jest.fn().mockResolvedValue({ items: [terminal], total: 1 }),
+        update,
+      },
+    } as unknown as IStorageModule;
+
+    const stat = await recoverOrphanEvaluationRuns(storage);
+
+    expect(stat).toMatchObject({ scannedRuns: 1, orphanedRuns: 0, runsMarkedFailed: 0 });
+    expect(update).not.toHaveBeenCalled();
+  });
+
   it('is idempotent when invoked again', async () => {
     const { storage, update } = mockStorage([evaluationRun('orphan')]);
 
@@ -155,12 +181,25 @@ describe('recoverOrphanEvaluationRuns', () => {
 });
 
 describe('recoverOrphanEvaluationRunsSafely', () => {
-  it('never rejects even for an incomplete storage adapter', async () => {
+  it('logs a recovery summary and never rejects for an incomplete storage adapter', async () => {
     const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
     const log = jest.spyOn(console, 'log').mockImplementation(() => {});
     await expect(recoverOrphanEvaluationRunsSafely({} as IStorageModule)).resolves.toBeUndefined();
     expect(log).toHaveBeenCalledWith(expect.stringContaining('[evaluationRunRecovery]'));
     warn.mockRestore();
     log.mockRestore();
+  });
+
+  it('contains an unexpected top-level recovery failure', async () => {
+    const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
+    const now = jest.spyOn(Date, 'now').mockImplementationOnce(() => {
+      throw new Error('clock unavailable');
+    });
+
+    await expect(recoverOrphanEvaluationRunsSafely({} as IStorageModule)).resolves.toBeUndefined();
+
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('Unhandled failure: clock unavailable'));
+    now.mockRestore();
+    warn.mockRestore();
   });
 });
