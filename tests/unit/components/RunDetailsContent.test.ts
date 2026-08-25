@@ -390,6 +390,85 @@ describe('RunDetailsContent', () => {
       expect(screen.getByTestId('overview-score').textContent).toBe('100%');
       expect(screen.getByTestId('overview-outcome-1').textContent).toContain('Achieved');
       expect(screen.getByTestId('overview-outcome-2').textContent).toContain('Achieved');
+
+      fireEvent.click(screen.getByText('View test case output'));
+      expect(screen.getByRole('tab', { name: /Test Case Output/ }).getAttribute('data-state')).toBe('active');
+    });
+
+    it('renders a failed verdict, direct per-outcome results, timing, and tokens', async () => {
+      const report = createReport({
+        passFailStatus: undefined,
+        traceStatus: 'available',
+        spans: mockSpans as any,
+        trajectory: [{ type: 'action', content: 'lookup', toolName: 'search' } as any],
+        performanceMetrics: { durationMs: 2500, agentDurationMs: 2000 },
+        llmJudgeResponse: {
+          modelId: 'judge-model',
+          timestamp: '2024-01-01T00:00:00Z',
+          promptTokens: 120,
+          completionTokens: 30,
+          latencyMs: 500,
+          rawResponse: '{}',
+        },
+        matcherResults: [
+          { description: 'outcome one', method: 'llm-judge', pass: true, score: 1 },
+          { description: 'outcome two', method: 'llm-judge', pass: false, score: 0 },
+        ],
+      });
+      mockGetReportById.mockResolvedValue(report);
+      mockGetTestCaseById.mockResolvedValue({
+        id: 'tc-1',
+        name: 'Mixed outcome case',
+        expectedOutcomes: ['First expected outcome', 'Second expected outcome'],
+      } as any);
+
+      await renderAndWait(report);
+
+      expect(screen.getByTestId('overview-verdict').textContent).toContain('FAIL');
+      expect(screen.getByTestId('overview-score').textContent).toBe('50%');
+      expect(screen.getByTestId('overview-outcome-1').textContent).toContain('Achieved');
+      expect(screen.getByTestId('overview-outcome-2').textContent).toContain('Not achieved');
+      expect(screen.getAllByText('2500ms').length).toBeGreaterThan(0);
+      expect(screen.getAllByText('150').length).toBeGreaterThan(0);
+      expect(screen.getAllByText('1').length).toBeGreaterThan(0);
+
+      fireEvent.click(screen.getByText('View traces'));
+      expect(screen.getByRole('tab', { name: /Traces/ }).getAttribute('data-state')).toBe('active');
+    });
+
+    it('derives failed, partial, passed, and unknown outcome states from judge reasoning', async () => {
+      const report = createReport({
+        passFailStatus: 'failed',
+        matcherResults: [{
+          description: 'combined judge',
+          method: 'llm-judge',
+          pass: false,
+          reasoning: [
+            '**Outcome 1:** NOT ACHIEVED (0/1.0).',
+            '**Outcome 2:** Partially met.',
+            '**Outcome 3:** Fully achieved (1.0/1.0).',
+            '**Outcome 4:** Evidence was inconclusive.',
+          ].join('\n\n'),
+        }],
+      });
+      mockGetReportById.mockResolvedValue(report);
+      mockGetTestCaseById.mockResolvedValue({
+        id: 'tc-1',
+        name: 'Reasoning case',
+        expectedOutcomes: ['One', 'Two', 'Three', 'Four'],
+      } as any);
+
+      await renderAndWait(report);
+
+      expect(screen.getByTestId('overview-outcome-1').textContent).toContain('Not achieved');
+      expect(screen.getByTestId('overview-outcome-2').textContent).toContain('Partially achieved');
+      expect(screen.getByTestId('overview-outcome-3').textContent).toContain('Achieved');
+      expect(screen.getByTestId('overview-outcome-4').textContent).toContain('See judge reasoning');
+
+      const expand = screen.getByRole('button', { name: 'Show all' });
+      expect(expand.getAttribute('aria-expanded')).toBe('false');
+      fireEvent.click(expand);
+      expect(screen.getByRole('button', { name: 'Show less' }).getAttribute('aria-expanded')).toBe('true');
     });
   });
 

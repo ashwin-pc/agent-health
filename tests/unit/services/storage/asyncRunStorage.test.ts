@@ -133,6 +133,40 @@ describe('AsyncRunStorage', () => {
         expect.objectContaining({ sessionId: 'sess-roundtrip' })
       );
     });
+
+    it('persists verdict, timing, identity, and trace metadata on create', async () => {
+      mockOsRuns.create.mockResolvedValue(createMockStorageRun('run-rich'));
+      const report = {
+        ...createMockReport(),
+        agentName: 'Friendly agent',
+        agentEndpoint: 'http://agent.example',
+        judgeModelId: 'judge-model',
+        evaluatorId: 'custom-evaluator',
+        traceStatus: 'not_configured' as const,
+        performanceMetrics: { durationMs: 42, agentDurationMs: 30 },
+        llmJudgeResponse: {
+          modelId: 'judge-model',
+          timestamp: '2024-01-01T00:00:00Z',
+          promptTokens: 10,
+          completionTokens: 5,
+          latencyMs: 12,
+          rawResponse: '{}',
+        },
+      };
+
+      await asyncRunStorage.saveReport(report);
+
+      expect(mockOsRuns.create).toHaveBeenCalledWith(expect.objectContaining({
+        agentName: 'Friendly agent',
+        agentId: 'test-agent',
+        agentEndpoint: 'http://agent.example',
+        judgeModelId: 'judge-model',
+        evaluatorId: 'custom-evaluator',
+        traceStatus: 'not_configured',
+        performanceMetrics: report.performanceMetrics,
+        llmJudgeResponse: report.llmJudgeResponse,
+      }));
+    });
   });
 
   describe('getReportsByTestCase', () => {
@@ -528,26 +562,40 @@ describe('AsyncRunStorage', () => {
       }));
     });
 
-    it('maps metrics correctly', async () => {
+    it('preserves dynamic metrics and report-page fields on update', async () => {
       const mockUpdated = createMockStorageRun('run-1');
       mockOsRuns.partialUpdate.mockResolvedValue(mockUpdated);
+      const matcherResults = [{ description: 'judge', method: 'llm-judge', pass: true }];
+      const llmJudgeResponse = {
+        modelId: 'judge-model',
+        timestamp: '2024-01-01T00:00:00Z',
+        promptTokens: 10,
+        completionTokens: 5,
+        latencyMs: 12,
+        rawResponse: '{}',
+      };
+      const performanceMetrics = { durationMs: 42, judgeDurationMs: 12 };
 
       await asyncRunStorage.updateReport('run-1', {
         metrics: {
           accuracy: 0.98,
-          faithfulness: 0.95,
-          latency_score: 0.90,
-          trajectory_alignment_score: 0.92,
+          custom_rubric_score: 73,
         },
-      });
+        matcherResults,
+        llmJudgeResponse,
+        performanceMetrics,
+        traceStatus: 'unavailable',
+      } as any);
 
       expect(mockOsRuns.partialUpdate).toHaveBeenCalledWith('run-1', expect.objectContaining({
         metrics: {
           accuracy: 0.98,
-          faithfulness: 0.95,
-          latency_score: 0.90,
-          trajectory_alignment_score: 0.92,
+          custom_rubric_score: 73,
         },
+        matcherResults,
+        llmJudgeResponse,
+        performanceMetrics,
+        traceStatus: 'unavailable',
       }));
     });
   });

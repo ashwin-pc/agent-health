@@ -8,6 +8,7 @@ import {
   executeRun,
   runBenchmark,
   runSingleUseCase,
+  startTracePollingForReportWithModule,
 } from '@/services/benchmarkRunner';
 import { Benchmark, BenchmarkRun, TestCase, BenchmarkProgress } from '@/types';
 
@@ -1332,6 +1333,25 @@ describe('Experiment Runner', () => {
   });
 
   describe('trace polling callbacks', () => {
+    it('finalizes a pending judged report without polling when the report agent has useTraces=false', async () => {
+      const report = {
+        id: 'no-trace-report',
+        agentKey: 'other-agent',
+        metricsStatus: 'pending',
+        passFailStatus: 'passed',
+        matcherResults: [{ description: 'judge: expected', method: 'llm-judge', pass: true }],
+      } as any;
+      mockRunsUpdate.mockResolvedValue({ ...report, metricsStatus: 'ready', traceStatus: 'not_configured' });
+
+      await startTracePollingForReportWithModule(report, createTestCase('tc-1'), mockStorageModule);
+
+      expect(mockStartPollingAsync).not.toHaveBeenCalled();
+      expect(mockRunsUpdate).toHaveBeenCalledWith('no-trace-report', {
+        traceStatus: 'not_configured',
+        metricsStatus: 'ready',
+      });
+    });
+
     it('skips polling and records a neutral marker when useTraces is false', async () => {
       const testCase = createTestCase('tc-1');
       const experiment = createExperiment(['tc-1']);
