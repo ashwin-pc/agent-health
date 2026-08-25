@@ -33,6 +33,9 @@ import {
   Shield,
   Brain,
   ListChecks,
+  LayoutDashboard,
+  ChevronDown,
+  ChevronUp,
 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -42,6 +45,7 @@ import { TrajectoryView } from './TrajectoryView';
 import { RawEventsPanel } from './RawEventsPanel';
 import { MatcherResultsPanel } from './MatcherResultsPanel';
 import { getJudgeReasoningText, getJudgeMatcherResults } from '@/lib/matchers/judgeAccessor';
+import { getJudgeVerdict, getTraceNotice } from '@/lib/reportVerdict';
 import TraceVisualization from './traces/TraceVisualization';
 import SimpleSpanAttributesTable from './traces/SimpleSpanAttributesTable';
 import ViewToggle, { ViewMode } from './traces/ViewToggle';
@@ -88,6 +92,31 @@ const getEvaluatorIcon = (evaluatorId: string) => {
   return Icon ? Icon : FlaskConical;
 };
 
+type OutcomeState = 'passed' | 'failed' | 'partial' | 'unknown';
+
+function outcomeStateFromReasoning(reasoning: string, outcomeNumber: number): OutcomeState {
+  const marker = new RegExp(`(?:\\*\\*)?Outcome\\s+${outcomeNumber}\\b`, 'i');
+  const start = reasoning.search(marker);
+  if (start < 0) return 'unknown';
+  const remainder = reasoning.slice(start);
+  // Search after this marker's number. Starting at character 1 can match the
+  // same Markdown marker again ("**Outcome" also contains "Outcome"), which
+  // incorrectly reduced every section to just "**".
+  const currentMarker = remainder.match(marker);
+  const afterCurrentMarker = currentMarker?.[0].length ?? 0;
+  const next = remainder.slice(afterCurrentMarker).search(/(?:\*\*)?Outcome\s+\d+\b/i);
+  const section = next >= 0
+    ? remainder.slice(0, afterCurrentMarker + next)
+    : remainder;
+
+  // Score tokens need an explicit delimiter: a bare word boundary would
+  // misread the trailing `0/1.0` inside a passing `1.0/1.0` as a zero score.
+  if (/NOT\s+ACHIEVED|NOT\s+MET|MISSED|FAILED|(?:^|[\s(])0(?:\.0+)?\s*\/\s*1(?:\.0+)?\b/i.test(section)) return 'failed';
+  if (/PARTIAL(?:LY)?|SOMEWHAT/i.test(section)) return 'partial';
+  if (/\bACHIEVED\b|\bMET\b|FULLY|(?:^|[\s(])1(?:\.0+)?\s*\/\s*1(?:\.0+)?\b/i.test(section)) return 'passed';
+  return 'unknown';
+}
+
 export const RunDetailsContent: React.FC<RunDetailsContentProps> = ({
   report,
   className = '',
@@ -104,6 +133,7 @@ export const RunDetailsContent: React.FC<RunDetailsContentProps> = ({
   const [trajectoryViewMode, setTrajectoryViewMode] = useState<'processed' | 'raw'>('processed');
   const [traceMetrics, setTraceMetrics] = useState<TraceMetrics | null>(null);
   const [traceMetricsLoading, setTraceMetricsLoading] = useState(false);
+  const [reasoningExpanded, setReasoningExpanded] = useState(false);
 
   // Trace visualization state (for trace-mode agents)
   const [traceSpans, setTraceSpans] = useState<Span[]>([]);
@@ -122,13 +152,9 @@ export const RunDetailsContent: React.FC<RunDetailsContentProps> = ({
   // traffic on a shared OTel cluster) is a smaller cost than the user-visible
   // "empty" state we always ship by default. See AGENTS.md → Trace correlation.
   const [searchParams] = useSearchParams();
-  // Default to the Trajectory tab — the prior "summary" / Overview tab has
-  // been removed because everything it surfaced (agent, model, evaluator,
-  // timestamp, duration) is already visible in the compact run-card header
-  // above the tab strip on TestCaseInspectorPanel and on the legacy
-  // /runs/:runId page header. Keeping a near-empty Overview was extra
-  // navigation friction with no payoff.
-  const initialTab = searchParams.get('tab') || 'trajectory';
+  // Verdict-first by default. Deep links can still select a specific tab via
+  // ?tab=trajectory|judge|logs|annotations.
+  const initialTab = searchParams.get('tab') || 'overview';
   const [activeTab, setActiveTab] = useState(initialTab);
   // Default the Traces sub-view to the trace tree (was 'info'). This is the
   // view users want first — the per-span info card is one click away on the
@@ -199,7 +225,7 @@ export const RunDetailsContent: React.FC<RunDetailsContentProps> = ({
   // overwrites a server-produced verdict.
   useEffect(() => {
     // Only for pending trace-mode reports with a runId
-    if (liveReport.metricsStatus !== 'pending' || !liveReport.runId || !testCase) return;
+    if (liveReport.traceStatus === 'not_configured' || liveReport.metricsStatus !== 'pending' || !liveReport.runId || !testCase) return;
 
     console.info('[RunDetails] Ensuring recovery polling for pending report:', liveReport.id);
 
@@ -289,9 +315,15 @@ export const RunDetailsContent: React.FC<RunDetailsContentProps> = ({
     }
   }, [report.evaluatorId]);
 
-  // Fetch trace metrics when runId is available
+  // Fetch trace-derived metrics only when trace data can exist. File-backed
+  // no-trace reports still carry an agent runId, so runId alone previously
+  // caused a guaranteed 503 + console error on every report page (#407).
   useEffect(() => {
-    if (report.runId && isTraceMode) {
+    const tracesUnavailable = liveReport.traceStatus === 'not_configured' ||
+      liveReport.traceStatus === 'unavailable' ||
+      Boolean(liveReport.traceError && /kind=trace_(?:timeout|incomplete|fetch_failed)/.test(liveReport.traceError));
+
+    if (report.runId && isTraceMode && !tracesUnavailable) {
       setTraceMetricsLoading(true);
       fetchRunMetrics(report.runId)
         .then(setTraceMetrics)
@@ -302,8 +334,9 @@ export const RunDetailsContent: React.FC<RunDetailsContentProps> = ({
         .finally(() => setTraceMetricsLoading(false));
     } else {
       setTraceMetrics(null);
+      setTraceMetricsLoading(false);
     }
-  }, [report.runId, isTraceMode, liveReport.metricsStatus]);
+  }, [report.runId, isTraceMode, liveReport.metricsStatus, liveReport.traceStatus, liveReport.traceError]);
 
   // Reset trace state when report changes (switching test cases)
   // If already on Traces tab, auto-fetch new traces
@@ -459,12 +492,38 @@ export const RunDetailsContent: React.FC<RunDetailsContentProps> = ({
   };
 
   const totalLatencyMs = trajectory.reduce((acc, s) => acc + (s.latencyMs || 0), 0);
+  const judgeVerdict = getJudgeVerdict(liveReport);
+  const configuredAgent = report.agentKey
+    ? DEFAULT_CONFIG.agents.find(agent => agent.key === report.agentKey)
+    : undefined;
+  const traceNotice = getTraceNotice(liveReport, {
+    traceExpected: configuredAgent?.useTraces === true,
+  });
+  const judgeReasoning = getJudgeReasoningText(liveReport);
+  const effectivePerformance = performanceMetricsProp || liveReport.performanceMetrics || report.performanceMetrics;
+  const durationMs = traceMetrics?.durationMs ?? effectivePerformance?.durationMs ?? effectivePerformance?.agentDurationMs;
+  const toolCallCount = traceMetrics?.toolCalls ?? trajectory.filter(step => step.type === 'action' && step.toolName).length;
+  const inputTokens = traceMetrics?.inputTokens ?? liveReport.llmJudgeResponse?.promptTokens;
+  const outputTokens = traceMetrics?.outputTokens ?? liveReport.llmJudgeResponse?.completionTokens;
+  const totalTokens = traceMetrics?.totalTokens ??
+    (inputTokens != null || outputTokens != null ? (inputTokens || 0) + (outputTokens || 0) : undefined);
+  const expectedOutcomes = Array.isArray(testCase?.expectedOutcomes)
+    ? testCase.expectedOutcomes.filter((outcome): outcome is string => typeof outcome === 'string' && Boolean(outcome.trim()))
+    : [];
+  const judgeEntries = getJudgeMatcherResults(liveReport).filter(entry => entry.role !== 'observe' && !entry.errored);
+  const perOutcomeJudgeEntries = judgeEntries.length === expectedOutcomes.length ? judgeEntries : null;
+  const outcomeBreakdown = expectedOutcomes.map((outcome, index) => ({
+    outcome,
+    state: perOutcomeJudgeEntries
+      ? (perOutcomeJudgeEntries[index].pass ? 'passed' : 'failed') as OutcomeState
+      : outcomeStateFromReasoning(judgeReasoning, index + 1),
+  }));
 
   return (
     <div className={`flex flex-col h-full ${className}`}>
       {/* Header — hidden entirely when used inside TestCaseInspectorPanel */}
       {!hideMetrics && (
-      <div className="bg-card border-b p-4">
+      <div className="hidden sm:block bg-card border-b p-4">
         {!hideMetrics && (
         <div className="flex items-start justify-between mb-3">
           <h2 className="text-xl font-semibold">{testCase?.name || 'Unknown Test Case'}</h2>
@@ -475,7 +534,7 @@ export const RunDetailsContent: React.FC<RunDetailsContentProps> = ({
         )}
 
         {/* Trace Mode: Waiting for traces / running judge banner */}
-        {!hideMetrics && !reportLoading && liveReport.metricsStatus === 'pending' && (
+        {!hideMetrics && !reportLoading && liveReport.metricsStatus === 'pending' && !judgeVerdict && (
           <Card className="bg-yellow-50 dark:bg-yellow-500/10 border-yellow-300 dark:border-yellow-500/30 mt-4">
             <CardContent className="p-3 flex items-center gap-3">
               <Loader2 className="animate-spin text-yellow-700 dark:text-yellow-400" size={18} />
@@ -505,17 +564,33 @@ export const RunDetailsContent: React.FC<RunDetailsContentProps> = ({
           </Card>
         )}
 
-        {/* Trace Mode: Error state */}
-        {!hideMetrics && liveReport.metricsStatus === 'error' && (
+        {/* Trace availability is secondary diagnostic metadata. A timeout
+            may be warning/info, but it never replaces an existing verdict. */}
+        {!hideMetrics && traceNotice && activeTab !== 'overview' && (
+          <Card className={`mt-4 ${traceNotice.tone === 'warning'
+            ? 'bg-amber-50 dark:bg-amber-500/10 border-amber-300 dark:border-amber-500/30'
+            : 'bg-muted/40 border-border'}`}>
+            <CardContent className="p-3 flex items-center gap-3">
+              {traceNotice.tone === 'warning'
+                ? <AlertTriangle className="text-amber-700 dark:text-amber-400" size={18} />
+                : <Info className="text-muted-foreground" size={18} />}
+              <div>
+                <div className={`text-sm font-medium ${traceNotice.tone === 'warning' ? 'text-amber-700 dark:text-amber-400' : 'text-muted-foreground'}`}>
+                  {traceNotice.title}
+                </div>
+                <div className="text-xs text-muted-foreground">{traceNotice.description}</div>
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
+        {/* A genuine evaluator failure with no verdict remains an error. */}
+        {!hideMetrics && liveReport.metricsStatus === 'error' && !traceNotice && !judgeVerdict && (
           <Card className="bg-red-50 dark:bg-red-500/10 border-red-300 dark:border-red-500/30 mt-4">
             <CardContent className="p-3 flex items-center gap-3">
               <AlertCircle className="text-red-700 dark:text-red-400" size={18} />
               <div>
                 <div className="text-sm font-medium text-red-700 dark:text-red-400">
-                  {/* Derive the title from the error kind label (e.g. "Agent run
-                      did not complete", "Judge evaluation failed") instead of
-                      always saying "Failed to fetch traces" — which is wrong for
-                      agent timeouts / judge errors (#335). */}
                   {(liveReport.traceError || '').match(/^(.*?) \(kind=/)?.[1] || 'Evaluation error'}
                 </div>
                 <div className="text-xs text-muted-foreground">
@@ -558,7 +633,7 @@ export const RunDetailsContent: React.FC<RunDetailsContentProps> = ({
 
         {/* Metrics Row - Compact */}
         {!hideMetrics && (<>
-        <div className={`grid gap-2 ${isTraceMode ? 'grid-cols-10' : 'grid-cols-8'}`}>
+        <div className="grid grid-cols-2 sm:grid-cols-4 xl:grid-cols-10 gap-2">
           <Card className="bg-muted/50 col-span-2">
             <CardContent className="p-2">
               <div className="text-[10px] text-muted-foreground mb-0.5">Status</div>
@@ -582,41 +657,24 @@ export const RunDetailsContent: React.FC<RunDetailsContentProps> = ({
             </CardContent>
           </Card>
 
-          {/* Dynamic Metrics from Evaluator */}
-          {evaluator ? (
-            evaluator.scoringConfig.metrics.map((metric, idx) => {
-              const metricValue = (liveReport.metrics as any)[metric.name];
-              const displayValue = metricValue != null ? `${metricValue}%` : '—';
-              return (
-                <Card key={metric.name} className="bg-muted/50 col-span-2">
-                  <CardContent className="p-2">
-                    <div className="text-[10px] text-muted-foreground mb-0.5 capitalize">
-                      {metric.name.replace(/_/g, ' ')}
-                    </div>
-                    <div className="text-xs font-semibold text-blue-700 dark:text-blue-400">
-                      {displayValue}
-                    </div>
-                  </CardContent>
-                </Card>
-              );
-            })
-          ) : (
-            /* Fallback for legacy runs without evaluator */
-            <Card className="bg-muted/50 col-span-2">
-              <CardContent className="p-2">
-                <div className="text-[10px] text-muted-foreground mb-0.5">Score</div>
-                {/* Renders the run's overall score (mean of every metric the
-                    evaluator emitted) with a tooltip listing each contributing
-                    metric, instead of hardcoding `accuracy` — which only the
-                    RCA Default evaluator emits. */}
+          {/* Judge-authoritative headline score. matcherResults wins over
+              zeroed metrics left behind by an unrelated trace timeout. */}
+          <Card className="bg-muted/50 col-span-2">
+            <CardContent className="p-2">
+              <div className="text-[10px] text-muted-foreground mb-0.5">Score</div>
+              {judgeVerdict?.score != null ? (
+                <div data-testid="judge-score" className="text-xs font-semibold text-blue-700 dark:text-blue-400">
+                  {Math.round(judgeVerdict.score)}%
+                </div>
+              ) : (
                 <RunScore
                   metrics={liveReport.metrics as Record<string, number | undefined>}
                   showLabel={false}
                   className="text-xs font-semibold text-blue-700 dark:text-blue-400"
                 />
-              </CardContent>
-            </Card>
-          )}
+              )}
+            </CardContent>
+          </Card>
 
           {/* Non-trace-mode: show Latency and Steps */}
           {!isTraceMode && (
@@ -646,10 +704,10 @@ export const RunDetailsContent: React.FC<RunDetailsContentProps> = ({
                     <Loader2 className="animate-spin text-muted-foreground" size={12} />
                   ) : (
                     <div className="text-xs font-semibold text-purple-700 dark:text-purple-400">
-                      {traceMetrics ? formatDuration(traceMetrics.durationMs) : '—'}
-                      {(performanceMetricsProp || report.performanceMetrics)?.agentDurationMs != null && (
+                      {durationMs != null ? formatDuration(durationMs) : '—'}
+                      {effectivePerformance?.agentDurationMs != null && effectivePerformance.agentDurationMs !== durationMs && (
                         <span className="text-[10px] font-normal text-muted-foreground ml-1">
-                          (agent {formatDuration((performanceMetricsProp || report.performanceMetrics)!.agentDurationMs)})
+                          (agent {formatDuration(effectivePerformance.agentDurationMs)})
                         </span>
                       )}
                     </div>
@@ -677,7 +735,7 @@ export const RunDetailsContent: React.FC<RunDetailsContentProps> = ({
                     <Loader2 className="animate-spin text-muted-foreground" size={12} />
                   ) : (
                     <div className="text-xs font-semibold text-blue-700 dark:text-blue-400">
-                      {traceMetrics ? traceMetrics.toolCalls : '—'}
+                      {toolCallCount}
                     </div>
                   )}
                 </CardContent>
@@ -688,7 +746,7 @@ export const RunDetailsContent: React.FC<RunDetailsContentProps> = ({
 
         {/* Trace Metrics Row 2 (for trace-mode agents) - Compact */}
         {isTraceMode && (
-          <div className="grid grid-cols-10 gap-2 mt-2">
+          <div className="grid grid-cols-2 sm:grid-cols-4 xl:grid-cols-10 gap-2 mt-2">
             <Card className="bg-muted/50 col-span-2">
               <CardContent className="p-2">
                 <div className="text-[10px] text-muted-foreground mb-0.5">Input Tokens</div>
@@ -696,7 +754,7 @@ export const RunDetailsContent: React.FC<RunDetailsContentProps> = ({
                   <Loader2 className="animate-spin text-muted-foreground" size={12} />
                 ) : (
                   <div className="text-xs font-semibold text-cyan-700 dark:text-cyan-400">
-                    {traceMetrics ? formatTokens(traceMetrics.inputTokens) : '—'}
+                    {inputTokens != null ? formatTokens(inputTokens) : '—'}
                   </div>
                 )}
               </CardContent>
@@ -709,7 +767,7 @@ export const RunDetailsContent: React.FC<RunDetailsContentProps> = ({
                   <Loader2 className="animate-spin text-muted-foreground" size={12} />
                 ) : (
                   <div className="text-xs font-semibold text-cyan-700 dark:text-cyan-400">
-                    {traceMetrics ? formatTokens(traceMetrics.outputTokens) : '—'}
+                    {outputTokens != null ? formatTokens(outputTokens) : '—'}
                   </div>
                 )}
               </CardContent>
@@ -722,7 +780,7 @@ export const RunDetailsContent: React.FC<RunDetailsContentProps> = ({
                   <Loader2 className="animate-spin text-muted-foreground" size={12} />
                 ) : (
                   <div className="text-xs font-semibold text-cyan-700 dark:text-cyan-400">
-                    {traceMetrics ? formatTokens(traceMetrics.totalTokens) : '—'}
+                    {totalTokens != null ? formatTokens(totalTokens) : '—'}
                   </div>
                 )}
               </CardContent>
@@ -757,10 +815,10 @@ export const RunDetailsContent: React.FC<RunDetailsContentProps> = ({
         )}
 
         {/* Server Performance Metrics Row (per-test-case) */}
-        {(performanceMetricsProp || report.performanceMetrics) && (() => {
-          const perfMetrics = performanceMetricsProp || report.performanceMetrics!;
+        {effectivePerformance && (() => {
+          const perfMetrics = effectivePerformance;
           return (
-          <div className="grid grid-cols-8 gap-2 mt-2">
+          <div className="grid grid-cols-2 sm:grid-cols-4 xl:grid-cols-8 gap-2 mt-2">
             <Card className="bg-muted/50 col-span-2">
               <CardContent className="p-2">
                 <div className="text-[10px] text-muted-foreground mb-0.5 flex items-center gap-1">
@@ -810,14 +868,20 @@ export const RunDetailsContent: React.FC<RunDetailsContentProps> = ({
 
       {/* Tabs */}
       <Tabs value={activeTab} onValueChange={setActiveTab} className="flex-1 flex flex-col overflow-hidden">
-        <TabsList className="w-full justify-start rounded-none border-b bg-card h-auto p-0">
-          <TabsTrigger value="trajectory" className="rounded-none border-b-2 border-transparent data-[state=active]:border-opensearch-blue data-[state=active]:text-opensearch-blue">
+        <TabsList className="w-full justify-start rounded-none border-b bg-card h-auto p-0 overflow-x-auto flex-nowrap">
+          <TabsTrigger value="overview" className="shrink-0 rounded-none border-b-2 border-transparent data-[state=active]:border-opensearch-blue data-[state=active]:text-opensearch-blue">
+            <LayoutDashboard size={14} className="mr-2" /> Overview
+          </TabsTrigger>
+          <TabsTrigger value="trajectory" className="shrink-0 rounded-none border-b-2 border-transparent data-[state=active]:border-opensearch-blue data-[state=active]:text-opensearch-blue">
             <GitBranch size={14} className="mr-2" /> Test Case Output
             <Badge variant="secondary" className="ml-2">{trajectory.length}</Badge>
           </TabsTrigger>
+          <TabsTrigger value="judge" className="shrink-0 rounded-none border-b-2 border-transparent data-[state=active]:border-opensearch-blue data-[state=active]:text-opensearch-blue">
+            <Scale size={14} className="mr-2" /> Judge Evaluation
+          </TabsTrigger>
           <TabsTrigger
             value="logs"
-            className="rounded-none border-b-2 border-transparent data-[state=active]:border-opensearch-blue data-[state=active]:text-opensearch-blue"
+            className="shrink-0 rounded-none border-b-2 border-transparent data-[state=active]:border-opensearch-blue data-[state=active]:text-opensearch-blue"
             onClick={isTraceMode ? fetchTracesOnDemand : undefined}
           >
             {isTraceMode ? <Activity size={14} className="mr-2" /> : <Terminal size={14} className="mr-2" />}
@@ -827,10 +891,7 @@ export const RunDetailsContent: React.FC<RunDetailsContentProps> = ({
               : report.logs && <Badge variant="secondary" className="ml-2">{report.logs.length}</Badge>
             }
           </TabsTrigger>
-          <TabsTrigger value="judge" className="rounded-none border-b-2 border-transparent data-[state=active]:border-opensearch-blue data-[state=active]:text-opensearch-blue">
-            <Scale size={14} className="mr-2" /> Judge Evaluation
-          </TabsTrigger>
-          <TabsTrigger value="annotations" className="rounded-none border-b-2 border-transparent data-[state=active]:border-opensearch-blue data-[state=active]:text-opensearch-blue">
+          <TabsTrigger value="annotations" className="shrink-0 rounded-none border-b-2 border-transparent data-[state=active]:border-opensearch-blue data-[state=active]:text-opensearch-blue">
             <MessageSquare size={14} className="mr-2" /> Annotations
             {annotations.length > 0 && <Badge variant="secondary" className="ml-2">{annotations.length}</Badge>}
           </TabsTrigger>
@@ -845,7 +906,169 @@ export const RunDetailsContent: React.FC<RunDetailsContentProps> = ({
             documents, so they get their own `overflow-y-auto` per-TabsContent
             instead of relying on a shared scroll container. */}
         <div className="flex-1 flex flex-col overflow-hidden min-h-0">
-          <TabsContent value="trajectory" className="p-6 mt-0 overflow-y-auto">
+          <TabsContent value="overview" className="p-4 sm:p-6 mt-0 space-y-4 overflow-y-auto" data-testid="run-overview">
+            {/* Verdict + score are judge-authoritative. Trace availability is
+                intentionally rendered below as secondary metadata. */}
+            <Card
+              data-testid="overview-verdict"
+              className={judgeVerdict?.status === 'passed'
+                ? 'border-green-300 dark:border-green-500/30 bg-green-50/60 dark:bg-green-500/5'
+                : judgeVerdict?.status === 'failed'
+                  ? 'border-red-300 dark:border-red-500/30 bg-red-50/60 dark:bg-red-500/5'
+                  : 'border-border'}
+            >
+              <CardContent className="p-4 sm:p-5 flex items-center justify-between gap-4">
+                <div className="flex items-center gap-3 min-w-0">
+                  {judgeVerdict?.status === 'passed' ? (
+                    <CheckCircle2 className="text-green-600 shrink-0" size={28} />
+                  ) : judgeVerdict?.status === 'failed' ? (
+                    <XCircle className="text-red-600 shrink-0" size={28} />
+                  ) : (
+                    <Clock className="text-muted-foreground shrink-0" size={28} />
+                  )}
+                  <div className="min-w-0">
+                    <div className="text-xs uppercase tracking-wide text-muted-foreground">Judge verdict</div>
+                    <div className={`text-xl sm:text-2xl font-bold ${judgeVerdict?.status === 'passed'
+                      ? 'text-green-700 dark:text-green-400'
+                      : judgeVerdict?.status === 'failed'
+                        ? 'text-red-700 dark:text-red-400'
+                        : 'text-muted-foreground'}`}>
+                      {judgeVerdict?.status === 'passed' ? 'PASS' : judgeVerdict?.status === 'failed' ? 'FAIL' : 'PENDING'}
+                    </div>
+                  </div>
+                </div>
+                <div className="text-right shrink-0">
+                  <div className="text-xs uppercase tracking-wide text-muted-foreground">Score</div>
+                  <div className="text-2xl sm:text-3xl font-bold" data-testid="overview-score">
+                    {judgeVerdict?.score != null ? `${Math.round(judgeVerdict.score)}%` : '—'}
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+
+            {traceNotice && (
+              <Card className={traceNotice.tone === 'warning'
+                ? 'border-amber-300 dark:border-amber-500/30 bg-amber-50/60 dark:bg-amber-500/5'
+                : 'border-border bg-muted/30'}>
+                <CardContent className="p-3 flex items-start gap-3">
+                  {traceNotice.tone === 'warning'
+                    ? <AlertTriangle className="text-amber-600 shrink-0 mt-0.5" size={17} />
+                    : <Info className="text-muted-foreground shrink-0 mt-0.5" size={17} />}
+                  <div>
+                    <div className="text-sm font-medium">{traceNotice.title}</div>
+                    <div className="text-xs text-muted-foreground mt-0.5">{traceNotice.description}</div>
+                  </div>
+                </CardContent>
+              </Card>
+            )}
+
+            {outcomeBreakdown.length > 0 && (
+              <Card>
+                <CardContent className="p-4 sm:p-5">
+                  <h3 className="font-semibold flex items-center gap-2 mb-3">
+                    <ListChecks size={17} /> Expected outcomes
+                  </h3>
+                  <div className="divide-y rounded-md border">
+                    {outcomeBreakdown.map(({ outcome, state }, index) => (
+                      <div key={`${index}-${outcome}`} className="p-3 flex items-start gap-3" data-testid={`overview-outcome-${index + 1}`}>
+                        {state === 'passed' ? (
+                          <CheckCircle2 className="text-green-600 shrink-0 mt-0.5" size={17} />
+                        ) : state === 'failed' ? (
+                          <XCircle className="text-red-600 shrink-0 mt-0.5" size={17} />
+                        ) : state === 'partial' ? (
+                          <AlertTriangle className="text-amber-600 shrink-0 mt-0.5" size={17} />
+                        ) : (
+                          <Clock className="text-muted-foreground shrink-0 mt-0.5" size={17} />
+                        )}
+                        <div className="min-w-0 flex-1">
+                          <div className="text-sm leading-relaxed break-words">{outcome}</div>
+                          <div className={`text-[11px] mt-1 ${state === 'passed'
+                            ? 'text-green-700 dark:text-green-400'
+                            : state === 'failed'
+                              ? 'text-red-700 dark:text-red-400'
+                              : state === 'partial'
+                                ? 'text-amber-700 dark:text-amber-400'
+                                : 'text-muted-foreground'}`}>
+                            {state === 'passed' ? 'Achieved' : state === 'failed' ? 'Not achieved' : state === 'partial' ? 'Partially achieved' : 'See judge reasoning'}
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </CardContent>
+              </Card>
+            )}
+
+            {judgeReasoning && (
+              <Card>
+                <CardContent className="p-4 sm:p-5">
+                  <div className="flex items-center justify-between gap-3 mb-2">
+                    <h3 className="font-semibold flex items-center gap-2"><Brain size={17} /> Judge reasoning</h3>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="h-8 shrink-0"
+                      aria-expanded={reasoningExpanded}
+                      onClick={() => setReasoningExpanded(expanded => !expanded)}
+                    >
+                      {reasoningExpanded ? <ChevronUp size={14} className="mr-1" /> : <ChevronDown size={14} className="mr-1" />}
+                      {reasoningExpanded ? 'Show less' : 'Show all'}
+                    </Button>
+                  </div>
+                  <div className={`relative text-sm text-muted-foreground ${reasoningExpanded ? '' : 'max-h-28 overflow-hidden'}`}>
+                    <ReactMarkdown remarkPlugins={[remarkGfm]}>{judgeReasoning}</ReactMarkdown>
+                    {!reasoningExpanded && <div className="absolute inset-x-0 bottom-0 h-10 bg-gradient-to-t from-card to-transparent" />}
+                  </div>
+                </CardContent>
+              </Card>
+            )}
+
+            <div>
+              <h3 className="font-semibold mb-3">Key stats</h3>
+              <div className="grid grid-cols-2 lg:grid-cols-4 gap-2 sm:gap-3">
+                {durationMs != null && (
+                  <Card><CardContent className="p-3">
+                    <Clock size={15} className="text-purple-600 mb-2" />
+                    <div className="text-[11px] text-muted-foreground">Duration</div>
+                    <div className="text-sm font-semibold">{formatDuration(durationMs)}</div>
+                  </CardContent></Card>
+                )}
+                <Card><CardContent className="p-3">
+                  <Wrench size={15} className="text-blue-600 mb-2" />
+                  <div className="text-[11px] text-muted-foreground">Tool calls</div>
+                  <div className="text-sm font-semibold">{toolCallCount}</div>
+                </CardContent></Card>
+                {totalTokens != null && (
+                  <Card><CardContent className="p-3">
+                    <Cpu size={15} className="text-cyan-600 mb-2" />
+                    <div className="text-[11px] text-muted-foreground">Tokens</div>
+                    <div className="text-sm font-semibold">{formatTokens(totalTokens)}</div>
+                  </CardContent></Card>
+                )}
+                {traceMetrics?.costUsd != null && (
+                  <Card><CardContent className="p-3">
+                    <Coins size={15} className="text-amber-600 mb-2" />
+                    <div className="text-[11px] text-muted-foreground">Cost</div>
+                    <div className="text-sm font-semibold">{formatCost(traceMetrics.costUsd)}</div>
+                  </CardContent></Card>
+                )}
+              </div>
+            </div>
+
+            <div className="flex flex-wrap gap-2 pt-1">
+              <Button variant="outline" size="sm" onClick={() => setActiveTab('trajectory')}>
+                View test case output
+              </Button>
+              {(traceSpans.length > 0 || Boolean(liveReport.spans?.length) || liveReport.traceStatus === 'available') && (
+                <Button variant="outline" size="sm" onClick={() => { setActiveTab('logs'); fetchTracesOnDemand(); }}>
+                  View traces
+                </Button>
+              )}
+            </div>
+          </TabsContent>
+
+          <TabsContent value="trajectory" className="p-4 sm:p-6 mt-0 overflow-y-auto">
             {/* Header with Toggle */}
             <div className="flex items-center justify-between mb-4">
               <h3 className="text-lg font-semibold">Test Case Output</h3>

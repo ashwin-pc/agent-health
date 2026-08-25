@@ -235,6 +235,61 @@ describe('AsyncRunStorage', () => {
       expect(result?.id).toBe('run-1');
     });
 
+    it('maps file-backed timestamp and report-page fields without dropping them (#407)', async () => {
+      const stored = {
+        ...createMockStorageRun('file-report'),
+        createdAt: undefined,
+        timestamp: '2026-08-24T22:42:33.122Z',
+        testCaseVersion: 2,
+        modelId: undefined,
+        modelName: 'file-model',
+        logs: undefined,
+        openSearchLogs: [{ timestamp: '2026-08-24T22:42:33.122Z', message: 'file log' }],
+        annotations: [{
+          id: 'ann-file',
+          text: 'file annotation',
+          timestamp: '2026-08-24T22:43:00.000Z',
+        }],
+        performanceMetrics: {
+          durationMs: 166254,
+          agentDurationMs: 97091,
+          judgeDurationMs: 69162,
+          judgeAttempts: 1,
+        },
+        llmJudgeResponse: {
+          modelId: 'judge-model',
+          timestamp: '2026-08-24T22:42:33.122Z',
+          promptTokens: 123,
+          completionTokens: 45,
+          latencyMs: 69162,
+          rawResponse: '{"pass_fail_status":"passed"}',
+          parsedMetrics: { accuracy: 100 },
+        },
+        matcherResults: [{
+          description: 'judge: expected outcomes',
+          method: 'llm-judge',
+          pass: true,
+          score: 1,
+        }],
+        traceStatus: 'not_configured',
+      } as any;
+      mockOsRuns.getById.mockResolvedValue(stored);
+
+      const result = await asyncRunStorage.getReportById('file-report');
+
+      expect(result?.timestamp).toBe('2026-08-24T22:42:33.122Z');
+      expect(Number.isNaN(Date.parse(result!.timestamp))).toBe(false);
+      expect(result?.testCaseVersion).toBe(2);
+      expect(result?.modelName).toBe('file-model');
+      expect(result?.modelId).toBe('file-model');
+      expect(result?.logs).toEqual(stored.openSearchLogs);
+      expect(result?.annotations?.[0].timestamp).toBe('2026-08-24T22:43:00.000Z');
+      expect(result?.performanceMetrics).toEqual(stored.performanceMetrics);
+      expect(result?.llmJudgeResponse).toEqual(stored.llmJudgeResponse);
+      expect(result?.matcherResults).toEqual(stored.matcherResults);
+      expect(result?.traceStatus).toBe('not_configured');
+    });
+
     it('reads back sessionId from storage for Strategy D (#313)', async () => {
       const mockRun = { ...createMockStorageRun('run-1'), sessionId: 'sess-read' } as any;
       mockOsRuns.getById.mockResolvedValue(mockRun);

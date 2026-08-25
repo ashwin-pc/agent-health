@@ -168,7 +168,7 @@ const mockStopPolling = tracePollingManager.stopPolling as jest.MockedFunction<t
 // ── Test data ─────────────────────────────────────────────────────────────────
 
 function createReport(overrides: Partial<EvaluationReport> = {}): EvaluationReport {
-  return {
+  const report = {
     id: 'report-1',
     timestamp: '2024-01-01T00:00:00Z',
     testCaseId: 'tc-1',
@@ -183,7 +183,14 @@ function createReport(overrides: Partial<EvaluationReport> = {}): EvaluationRepo
     llmJudgeReasoning: 'Good performance',
     runId: 'run-123',
     ...overrides,
-  };
+  } as EvaluationReport;
+  // A genuinely pending trace report has no verdict yet. Individual tests can
+  // still opt into a stale verdict explicitly when covering race recovery.
+  if ((overrides.metricsStatus === 'pending' || overrides.metricsStatus === 'error') &&
+      !Object.prototype.hasOwnProperty.call(overrides, 'passFailStatus')) {
+    report.passFailStatus = undefined;
+  }
+  return report;
 }
 
 const mockSpans = [
@@ -290,7 +297,8 @@ describe('RunDetailsContent', () => {
       await renderAndWait(report);
 
       await waitFor(() => {
-        expect(screen.getByText('PENDING')).toBeTruthy();
+        // Header + default Overview both surface the pending verdict.
+        expect(screen.getAllByText('PENDING').length).toBeGreaterThan(0);
       });
     });
 
@@ -344,6 +352,47 @@ describe('RunDetailsContent', () => {
     });
   });
 
+  describe('overview tab', () => {
+    it('is first and default-selected with the judge verdict, score, and outcome breakdown', async () => {
+      const report = createReport({
+        metrics: { accuracy: 0 },
+        metricsStatus: 'error',
+        passFailStatus: undefined,
+        traceStatus: 'not_configured',
+        matcherResults: [{
+          description: 'judge: 2 expected outcomes',
+          method: 'llm-judge',
+          pass: true,
+          score: 1,
+          reasoning: '**Outcome 1 - First (1.0/1.0):** Fully achieved.\n\n**Outcome 2 - Second (1.0/1.0):** Achieved.',
+        }],
+      });
+      mockGetReportById.mockResolvedValue(report);
+      mockGetTestCaseById.mockResolvedValue({
+        id: 'tc-1',
+        name: 'Overview case',
+        expectedOutcomes: ['First expected outcome', 'Second expected outcome'],
+      } as any);
+
+      await renderAndWait(report);
+
+      const tabs = screen.getAllByRole('tab');
+      expect(tabs.map(tab => tab.textContent?.replace(/\d+$/, '').trim())).toEqual([
+        'Overview',
+        'Test Case Output',
+        'Judge Evaluation',
+        'Traces',
+        'Annotations',
+      ]);
+      expect(tabs[0].getAttribute('data-state')).toBe('active');
+      expect(screen.getByTestId('run-overview')).toBeTruthy();
+      expect(screen.getByTestId('overview-verdict').textContent).toContain('PASS');
+      expect(screen.getByTestId('overview-score').textContent).toBe('100%');
+      expect(screen.getByTestId('overview-outcome-1').textContent).toContain('Achieved');
+      expect(screen.getByTestId('overview-outcome-2').textContent).toContain('Achieved');
+    });
+  });
+
   describe('traces tab banners', () => {
     it('should not show red error banner when metricsStatus is pending', async () => {
       // The red "Failed to load traces" banner in the Traces tab has condition:
@@ -362,22 +411,25 @@ describe('RunDetailsContent', () => {
       expect(screen.queryByText(/Failed to fetch traces/i)).toBeNull();
     });
 
-    it('should show error banner in header when metricsStatus is error', async () => {
-      // When polling exhausted all attempts, metricsStatus is set to 'error'
-      // and the header shows a red error banner. Post-#335 the title is derived
-      // from the error-kind label (NOT a blanket "Failed to fetch traces"), with
-      // the raw traceError shown beneath.
+    it('shows a muted trace notice without overriding a judge PASS', async () => {
       const report = createReport({
         metricsStatus: 'error',
         traceError: 'Traces never arrived (kind=trace_timeout): polling exhausted after 30 attempts',
+        matcherResults: [{
+          description: 'judge: expected outcomes',
+          method: 'llm-judge',
+          pass: true,
+          score: 1,
+        }],
       });
       mockGetReportById.mockResolvedValue(report);
 
       await renderAndWait(report);
 
       await waitFor(() => {
-        expect(screen.getByText('Traces never arrived')).toBeTruthy();
-        expect(screen.getByText(/polling exhausted after 30 attempts/)).toBeTruthy();
+        expect(screen.getAllByText('No trace data for this run').length).toBeGreaterThan(0);
+        expect(screen.getByText('PASSED')).toBeTruthy();
+        expect(screen.queryByText('Traces never arrived')).toBeNull();
       });
     });
 
@@ -413,6 +465,18 @@ describe('RunDetailsContent', () => {
       await renderAndWait(report);
 
       expect(mockFetchRunMetrics).toHaveBeenCalledWith('run-abc');
+    });
+
+    it('does not request trace metrics for a no-trace report', async () => {
+      const report = createReport({
+        runId: 'run-no-traces',
+        traceStatus: 'not_configured',
+      });
+      mockGetReportById.mockResolvedValue(report);
+
+      await renderAndWait(report);
+
+      expect(mockFetchRunMetrics).not.toHaveBeenCalled();
     });
   });
 
@@ -463,7 +527,7 @@ describe('RunDetailsContent', () => {
       await renderAndWait(report);
 
       expect(screen.getByText('Eval Duration')).toBeTruthy();
-      expect(screen.getByText('12500ms')).toBeTruthy();
+      expect(screen.getAllByText('12500ms').length).toBeGreaterThan(0);
       // Agent time shown in parentheses next to Duration
       expect(screen.getByText(/agent 8000ms/)).toBeTruthy();
     });
@@ -556,7 +620,7 @@ describe('RunDetailsContent', () => {
       });
 
       expect(screen.getByText('Eval Duration')).toBeTruthy();
-      expect(screen.getByText('49556ms')).toBeTruthy();
+      expect(screen.getAllByText('49556ms').length).toBeGreaterThan(0);
       // Agent time shown in parentheses next to Duration
       expect(screen.getByText(/agent 49154ms/)).toBeTruthy();
     });
