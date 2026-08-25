@@ -95,10 +95,51 @@ describe('report verdict derivation (#407)', () => {
     }))?.score).toBe(1);
   });
 
+  it('uses only finite scores from gating judge entries and ignores observe/error entries', () => {
+    const input = report({
+      matcherResults: [
+        { description: 'scored', method: 'llm-judge', pass: true, score: 0.8 },
+        { description: 'metric fallback', method: 'llm-judge', pass: true, judgeMetrics: { accuracy: 60 } },
+        { description: 'no score', method: 'llm-judge', pass: true },
+        { description: 'observe only', method: 'llm-judge', role: 'observe', pass: false, score: 0 },
+        { description: 'errored', method: 'llm-judge', pass: false, errored: true, score: 0 },
+      ],
+    });
+
+    expect(getJudgeVerdict(input)).toEqual({
+      status: 'passed',
+      score: 70,
+      source: 'matcherResults',
+    });
+  });
+
+  it('clamps legacy metrics and excludes non-finite values before averaging', () => {
+    expect(getJudgeVerdict(report({
+      passFailStatus: 'passed',
+      metrics: { tooHigh: 120, tooLow: -10, exact: 50, invalid: Number.NaN },
+    }))?.score).toBe(50);
+    expect(getJudgeVerdict(report({
+      passFailStatus: 'passed',
+      metrics: undefined as any,
+    }))?.score).toBeNull();
+  });
+
   it('does not synthesize a verdict from evaluator-error reasoning', () => {
     expect(getJudgeVerdict(report({
       metricsStatus: 'error',
       llmJudgeReasoning: '**Evaluator could not run.**',
     }))).toBeNull();
+    expect(getJudgeVerdict(null)).toBeNull();
+  });
+
+  it('recognizes legacy trace diagnostics and ignores reports without a trace problem', () => {
+    expect(getTraceNotice(null)).toBeNull();
+    expect(getTraceNotice(report())).toBeNull();
+    expect(getTraceNotice(report({
+      traceError: 'Traces never arrived (kind=trace_fetch_failed): backend down',
+    }))).toEqual(expect.objectContaining({
+      tone: 'info',
+      title: 'No trace data for this run',
+    }));
   });
 });
