@@ -18,6 +18,16 @@ export interface TraceNotice {
   description: string;
 }
 
+/**
+ * Minimal report shape needed to derive a verdict. Keeping this narrower than
+ * EvaluationReport lets server migrations and comparison summaries use the
+ * exact same derivation logic without manufacturing unrelated run fields.
+ */
+export type VerdictReport = Pick<
+  EvaluationReport,
+  'matcherResults' | 'passFailStatus' | 'metrics' | 'metricsStatus' | 'traceStatus' | 'traceError'
+> & Partial<Pick<EvaluationReport, 'llmJudgeReasoning'>>;
+
 function matcherScoreToPercent(value: number): number {
   // MatcherResult.score is defined on [0, 1]. Be tolerant of older callers
   // that persisted an already-scaled percentage without changing the metric
@@ -36,6 +46,12 @@ function mean(values: number[]): number | null {
 
 function scoreFromMetrics(metrics: Record<string, number | undefined> | undefined): number | null {
   if (!metrics) return null;
+  // Legacy RCA reports define accuracy as their canonical overall score. For
+  // pluggable evaluators that do not emit accuracy, fall back to the mean of
+  // their finite metric values.
+  if (typeof metrics.accuracy === 'number' && Number.isFinite(metrics.accuracy)) {
+    return clampPercent(metrics.accuracy);
+  }
   const values = Object.values(metrics).filter(
     (value): value is number => typeof value === 'number' && Number.isFinite(value),
   );
@@ -50,7 +66,7 @@ function scoreFromMetrics(metrics: Record<string, number | undefined> | undefine
  * `passFailStatus` and reset `metrics`. Observe-only matcher entries do not
  * gate the verdict. Legacy reports fall back to `passFailStatus` + `metrics`.
  */
-export function getJudgeVerdict(report: EvaluationReport | null | undefined): JudgeVerdict | null {
+export function getJudgeVerdict(report: VerdictReport | null | undefined): JudgeVerdict | null {
   if (!report) return null;
 
   // Use persisted matcher entries directly. The general judge accessor also
@@ -98,7 +114,7 @@ export function getJudgeVerdict(report: EvaluationReport | null | undefined): Ju
  * (not instead of) the judge outcome.
  */
 export function getTraceNotice(
-  report: EvaluationReport | null | undefined,
+  report: VerdictReport | null | undefined,
   options: { traceExpected?: boolean } = {},
 ): TraceNotice | null {
   if (!report) return null;
@@ -114,6 +130,19 @@ export function getTraceNotice(
   const traceError = report.traceError?.trim();
   const traceUnavailable = report.traceStatus === 'unavailable' ||
     Boolean(traceError && /kind=trace_(?:timeout|incomplete|fetch_failed)/.test(traceError));
+
+  // Historical trace-timeout stamping set metricsStatus=error and zeroed the
+  // report even after matcherResults had recorded a real verdict. Until the
+  // cold-start migration heals such a document, expose that stale error only
+  // as an explained diagnostic — never as the run outcome.
+  if (!traceUnavailable && report.metricsStatus === 'error' && getJudgeVerdict(report)) {
+    return {
+      tone: 'warning',
+      title: 'Metrics diagnostics: trace collection failed',
+      description: 'Trace collection failed after judging completed. This does not affect the judge verdict.',
+    };
+  }
+
   if (!traceUnavailable) return null;
 
   if (options.traceExpected) {

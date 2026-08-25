@@ -62,7 +62,14 @@ export function StatusIcon({ status, size = 14 }: { status: ResultStatus; size?:
   switch (status) {
     case 'passed': return <CheckCircle2 size={size} className="text-green-500" />;
     case 'failed': return <XCircle size={size} className="text-red-500" />;
-    case 'errored': return <AlertTriangle size={size} className="text-amber-500" />;
+    case 'errored': return (
+      <span
+        title="Evaluator could not produce a judge verdict"
+        aria-label="Evaluator could not produce a judge verdict"
+      >
+        <AlertTriangle size={size} className="text-amber-500" />
+      </span>
+    );
     case 'running': return <Loader2 size={size} className="text-blue-500 animate-spin" />;
     case 'pending_traces': return <Loader2 size={size} className="text-amber-500 animate-spin" />;
     case 'pending_judgment': return <Loader2 size={size} className="text-purple-500 animate-spin" />;

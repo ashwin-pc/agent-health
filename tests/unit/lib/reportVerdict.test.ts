@@ -52,6 +52,31 @@ describe('report verdict derivation (#407)', () => {
     }));
   });
 
+  it('explains stale metrics diagnostics without changing PASS/100%', () => {
+    const input = report({
+      metricsStatus: 'error',
+      passFailStatus: undefined,
+      metrics: { accuracy: 0, faithfulness: 0 },
+      matcherResults: [{
+        description: 'judge: expected outcomes',
+        method: 'llm-judge',
+        pass: true,
+        score: 1,
+      }],
+    });
+
+    expect(getJudgeVerdict(input)).toEqual({
+      status: 'passed',
+      score: 100,
+      source: 'matcherResults',
+    });
+    expect(getTraceNotice(input)).toEqual({
+      tone: 'warning',
+      title: 'Metrics diagnostics: trace collection failed',
+      description: 'Trace collection failed after judging completed. This does not affect the judge verdict.',
+    });
+  });
+
   it('keeps a judge FAIL authoritative when traces are not configured', () => {
     const input = report({
       traceStatus: 'not_configured',
