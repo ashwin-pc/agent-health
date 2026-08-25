@@ -1352,6 +1352,44 @@ describe('Experiment Runner', () => {
       });
     });
 
+    it('recognizes a matcher-only verdict when finalizing a no-trace report', async () => {
+      const report = {
+        id: 'matcher-only-report',
+        agentKey: 'other-agent',
+        metricsStatus: 'pending',
+        matcherResults: [
+          { description: 'errored judge', method: 'llm-judge', pass: false, errored: true },
+          { description: 'authoritative judge', method: 'llm-judge', pass: true },
+        ],
+      } as any;
+      mockRunsUpdate.mockResolvedValue({ ...report, metricsStatus: 'ready', traceStatus: 'not_configured' });
+
+      await startTracePollingForReportWithModule(report, createTestCase('tc-1'), mockStorageModule);
+
+      expect(mockStartPollingAsync).not.toHaveBeenCalled();
+      expect(mockRunsUpdate).toHaveBeenCalledWith('matcher-only-report', {
+        traceStatus: 'not_configured',
+        metricsStatus: 'ready',
+      });
+    });
+
+    it('does not declare deferred metrics ready when a no-trace report has no verdict', async () => {
+      const report = {
+        id: 'unjudged-no-trace-report',
+        agentKey: 'other-agent',
+        metricsStatus: 'pending',
+        matcherResults: [{ description: 'errored judge', method: 'llm-judge', pass: false, errored: true }],
+      } as any;
+      mockRunsUpdate.mockResolvedValue({ ...report, traceStatus: 'not_configured' });
+
+      await startTracePollingForReportWithModule(report, createTestCase('tc-1'), mockStorageModule);
+
+      expect(mockStartPollingAsync).not.toHaveBeenCalled();
+      expect(mockRunsUpdate).toHaveBeenCalledWith('unjudged-no-trace-report', {
+        traceStatus: 'not_configured',
+      });
+    });
+
     it('skips polling and records a neutral marker when useTraces is false', async () => {
       const testCase = createTestCase('tc-1');
       const experiment = createExperiment(['tc-1']);
