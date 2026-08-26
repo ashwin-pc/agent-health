@@ -94,7 +94,14 @@ const getEvaluatorIcon = (evaluatorId: string) => {
 
 type OutcomeState = 'passed' | 'failed' | 'partial' | 'unknown';
 
-function outcomeStateFromReasoning(reasoning: string, outcomeNumber: number): OutcomeState {
+interface OutcomeAssessment {
+  state: OutcomeState;
+  explanation?: string;
+}
+
+const OUTCOME_EXPLANATION_PREVIEW_LENGTH = 360;
+
+function outcomeAssessmentFromReasoning(reasoning: string, outcomeNumber: number): OutcomeAssessment {
   const namedMarker = new RegExp(`(?:\\*\\*)?Outcome\\s+${outcomeNumber}\\b`, 'i');
   let start = reasoning.search(namedMarker);
   let markerLength = 0;
@@ -112,7 +119,7 @@ function outcomeStateFromReasoning(reasoning: string, outcomeNumber: number): Ou
     const assessment = assessmentHeading >= 0 ? reasoning.slice(assessmentHeading) : reasoning;
     const numberedMarker = new RegExp(`(?:^|\\n)\\s*${outcomeNumber}[.)]\\s+`, 'm');
     const relativeStart = assessment.search(numberedMarker);
-    if (relativeStart < 0) return 'unknown';
+    if (relativeStart < 0) return { state: 'unknown' };
     start = (assessmentHeading >= 0 ? assessmentHeading : 0) + relativeStart;
     markerLength = assessment.slice(relativeStart).match(numberedMarker)?.[0].length ?? 0;
     nextMarker = /(?:^|\n)\s*\d+[.)]\s+/m;
@@ -122,17 +129,105 @@ function outcomeStateFromReasoning(reasoning: string, outcomeNumber: number): Ou
   // Search after the current marker. Starting inside the marker can match it
   // again ("**Outcome" also contains "Outcome"), reducing the section to "**".
   const next = remainder.slice(markerLength).search(nextMarker);
-  const section = next >= 0
+  const section = (next >= 0
     ? remainder.slice(0, markerLength + next)
-    : remainder;
+    : remainder).trim();
 
   // Score tokens need an explicit delimiter: a bare word boundary would
   // misread the trailing `0/1.0` inside a passing `1.0/1.0` as a zero score.
-  if (/NOT\s+ACHIEVED|NOT\s+MET|MISSED|FAILED|(?:^|[\s(])0(?:\.0+)?\s*\/\s*1(?:\.0+)?\b/i.test(section)) return 'failed';
-  if (/PARTIAL(?:LY)?|SOMEWHAT/i.test(section)) return 'partial';
-  if (/\bACHIEVED\b|\bMET\b|FULLY|(?:^|[\s(])1(?:\.0+)?\s*\/\s*1(?:\.0+)?\b/i.test(section)) return 'passed';
-  return 'unknown';
+  const failedMarker = /NOT\s+ACHIEVED|NOT\s+MET|MISSED|FAILED|(?:^|[\s(])0(?:\.0+)?\s*\/\s*1(?:\.0+)?\b/i;
+  const partialMarker = /PARTIAL(?:LY)?(?:\s+ACHIEVED|\s+MET)?|SOMEWHAT/i;
+  const passedMarker = /\bACHIEVED\b|\bMET\b|FULLY|(?:^|[\s(])1(?:\.0+)?\s*\/\s*1(?:\.0+)?\b/i;
+  const state: OutcomeState = failedMarker.test(section)
+    ? 'failed'
+    : partialMarker.test(section)
+      ? 'partial'
+      : passedMarker.test(section)
+        ? 'passed'
+        : 'unknown';
+
+  const verdictMarker = state === 'failed'
+    ? failedMarker
+    : state === 'partial'
+      ? partialMarker
+      : state === 'passed'
+        ? passedMarker
+        : null;
+  const verdictMatch = verdictMarker?.exec(section);
+
+  // Everything after the verdict/score marker is the judge's outcome-specific
+  // evidence. Remove only formatting punctuation and an optional numeric score;
+  // preserve Markdown lists and step references because they explain what the
+  // agent actually did instead of merely repeating the expected outcome.
+  let explanation = verdictMatch
+    ? section.slice((verdictMatch.index ?? 0) + verdictMatch[0].length)
+    : section.slice(markerLength);
+  explanation = explanation
+    .replace(/^\s*(?:[-–—]\s*)?(?:\(\s*)?\d+(?:\.\d+)?(?:\s*\/\s*\d+(?:\.\d+)?)?\s*\)?\s*/, '')
+    .replace(/^\s*(?:\*\*)?\s*[:.;\-)]+\s*(?:\*\*)?\s*/, '')
+    .trim();
+
+  return { state, explanation: explanation || undefined };
 }
+
+function truncateOutcomeExplanation(explanation: string): string {
+  if (explanation.length <= OUTCOME_EXPLANATION_PREVIEW_LENGTH) return explanation;
+  const prefix = explanation.slice(0, OUTCOME_EXPLANATION_PREVIEW_LENGTH);
+  const lastWhitespace = prefix.lastIndexOf(' ');
+  return `${prefix.slice(0, lastWhitespace > 240 ? lastWhitespace : OUTCOME_EXPLANATION_PREVIEW_LENGTH).trimEnd()}…`;
+}
+
+const OutcomeExplanation: React.FC<{
+  explanation?: string;
+  state: OutcomeState;
+  outcomeNumber: number;
+}> = ({ explanation, state, outcomeNumber }) => {
+  const [visible, setVisible] = useState(state !== 'passed');
+  const [expanded, setExpanded] = useState(false);
+
+  if (!explanation) return null;
+
+  if (!visible) {
+    return (
+      <Button
+        type="button"
+        variant="ghost"
+        size="sm"
+        className="h-auto px-0 py-1 text-xs text-muted-foreground"
+        aria-label={`Show explanation for outcome ${outcomeNumber}`}
+        aria-expanded="false"
+        onClick={() => setVisible(true)}
+      >
+        <ChevronDown size={13} className="mr-1" /> Show explanation
+      </Button>
+    );
+  }
+
+  const isLong = explanation.length > OUTCOME_EXPLANATION_PREVIEW_LENGTH;
+  const displayedExplanation = isLong && !expanded
+    ? truncateOutcomeExplanation(explanation)
+    : explanation;
+
+  return (
+    <div className="mt-2 text-xs leading-relaxed text-muted-foreground" data-testid={`outcome-explanation-${outcomeNumber}`}>
+      <ReactMarkdown remarkPlugins={[remarkGfm]}>{displayedExplanation}</ReactMarkdown>
+      {isLong && (
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          className="h-auto px-0 py-1 mt-1 text-xs"
+          aria-label={`${expanded ? 'Show less' : 'Show more'} for outcome ${outcomeNumber}`}
+          aria-expanded={expanded}
+          onClick={() => setExpanded(value => !value)}
+        >
+          {expanded ? <ChevronUp size={13} className="mr-1" /> : <ChevronDown size={13} className="mr-1" />}
+          {expanded ? 'Show less' : 'Show more'}
+        </Button>
+      )}
+    </div>
+  );
+};
 
 export const RunDetailsContent: React.FC<RunDetailsContentProps> = ({
   report,
@@ -529,12 +624,18 @@ export const RunDetailsContent: React.FC<RunDetailsContentProps> = ({
     : [];
   const judgeEntries = getJudgeMatcherResults(liveReport).filter(entry => entry.role !== 'observe' && !entry.errored);
   const perOutcomeJudgeEntries = judgeEntries.length === expectedOutcomes.length ? judgeEntries : null;
-  const outcomeBreakdown = expectedOutcomes.map((outcome, index) => ({
-    outcome,
-    state: perOutcomeJudgeEntries
-      ? (perOutcomeJudgeEntries[index].pass ? 'passed' : 'failed') as OutcomeState
-      : outcomeStateFromReasoning(judgeReasoning, index + 1),
-  }));
+  const outcomeBreakdown = expectedOutcomes.map((outcome, index) => {
+    if (perOutcomeJudgeEntries) {
+      const entry = perOutcomeJudgeEntries[index];
+      return {
+        outcome,
+        state: (entry.pass ? 'passed' : 'failed') as OutcomeState,
+        explanation: entry.reasoning?.trim() || undefined,
+      };
+    }
+
+    return { outcome, ...outcomeAssessmentFromReasoning(judgeReasoning, index + 1) };
+  });
 
   return (
     <div className={`flex flex-col h-full ${className}`}>
@@ -986,8 +1087,8 @@ export const RunDetailsContent: React.FC<RunDetailsContentProps> = ({
                     <ListChecks size={17} /> Expected outcomes
                   </h3>
                   <div className="divide-y rounded-md border">
-                    {outcomeBreakdown.map(({ outcome, state }, index) => (
-                      <div key={`${index}-${outcome}`} className="p-3 flex items-start gap-3" data-testid={`overview-outcome-${index + 1}`}>
+                    {outcomeBreakdown.map(({ outcome, state, explanation }, index) => (
+                      <div key={`${liveReport.id}-${index}-${outcome}`} className="p-3 flex items-start gap-3" data-testid={`overview-outcome-${index + 1}`}>
                         {state === 'passed' ? (
                           <CheckCircle2 className="text-green-600 shrink-0 mt-0.5" size={17} />
                         ) : state === 'failed' ? (
@@ -1008,6 +1109,11 @@ export const RunDetailsContent: React.FC<RunDetailsContentProps> = ({
                                 : 'text-muted-foreground'}`}>
                             {state === 'passed' ? 'Achieved' : state === 'failed' ? 'Not achieved' : state === 'partial' ? 'Partially achieved' : 'See judge reasoning'}
                           </div>
+                          <OutcomeExplanation
+                            explanation={explanation}
+                            state={state}
+                            outcomeNumber={index + 1}
+                          />
                         </div>
                       </div>
                     ))}

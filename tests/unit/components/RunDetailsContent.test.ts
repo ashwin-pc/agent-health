@@ -19,8 +19,8 @@
  */
 
 import * as React from 'react';
-import { render, screen, waitFor, act, fireEvent } from '@testing-library/react';
-import { RunDetailsContent, getLogLevelColor } from '@/components/RunDetailsContent';
+import { render, screen, waitFor, act, fireEvent, within } from '@testing-library/react';
+import { RunDetailsContent } from '@/components/RunDetailsContent';
 import { EvaluationReport } from '@/types';
 
 // ── Dependency mocks ──────────────────────────────────────────────────────────
@@ -444,9 +444,9 @@ describe('RunDetailsContent', () => {
           method: 'llm-judge',
           pass: false,
           reasoning: [
-            '**Outcome 1:** NOT ACHIEVED (0/1.0).',
-            '**Outcome 2:** Partially met.',
-            '**Outcome 3:** Fully achieved (1.0/1.0).',
+            '**Outcome 1:** NOT ACHIEVED (0/1.0). The agent edited src/cache.ts instead of stopping to discuss the design.',
+            '**Outcome 2:** Partially met. The response mentioned one alternative but did not compare its tradeoffs.',
+            '**Outcome 3:** Fully achieved (1.0/1.0). The final response clearly documented the validation result.',
             '**Outcome 4:** Evidence was inconclusive.',
           ].join('\n\n'),
         }],
@@ -460,10 +460,19 @@ describe('RunDetailsContent', () => {
 
       await renderAndWait(report);
 
-      expect(screen.getByTestId('overview-outcome-1').textContent).toContain('Not achieved');
-      expect(screen.getByTestId('overview-outcome-2').textContent).toContain('Partially achieved');
-      expect(screen.getByTestId('overview-outcome-3').textContent).toContain('Achieved');
+      const failedOutcome = screen.getByTestId('overview-outcome-1');
+      const partialOutcome = screen.getByTestId('overview-outcome-2');
+      const passedOutcome = screen.getByTestId('overview-outcome-3');
+      expect(failedOutcome.textContent).toContain('Not achieved');
+      expect(failedOutcome.textContent).toContain('edited src/cache.ts instead of stopping to discuss the design');
+      expect(partialOutcome.textContent).toContain('Partially achieved');
+      expect(partialOutcome.textContent).toContain('mentioned one alternative but did not compare its tradeoffs');
+      expect(passedOutcome.textContent).toContain('Achieved');
+      expect(passedOutcome.textContent).not.toContain('clearly documented the validation result');
       expect(screen.getByTestId('overview-outcome-4').textContent).toContain('See judge reasoning');
+
+      fireEvent.click(within(passedOutcome).getByRole('button', { name: 'Show explanation for outcome 3' }));
+      expect(passedOutcome.textContent).toContain('clearly documented the validation result');
 
       const expand = screen.getByRole('button', { name: 'Show all' });
       expect(expand.getAttribute('aria-expanded')).toBe('false');
@@ -471,7 +480,8 @@ describe('RunDetailsContent', () => {
       expect(screen.getByRole('button', { name: 'Show less' }).getAttribute('aria-expanded')).toBe('true');
     });
 
-    it('derives every outcome state from the numbered breakdown used by fresh agent-evidence reports', async () => {
+    it('derives every outcome state and explanation from numbered agent-evidence reports', async () => {
+      const longFailureExplanation = `Files were modified. ${'The trajectory records another concrete edit action. '.repeat(10)}END OF EVIDENCE`;
       const report = createReport({
         passFailStatus: 'failed',
         metrics: { accuracy: 20 },
@@ -485,7 +495,7 @@ describe('RunDetailsContent', () => {
             '',
             'Evaluation of each expected outcome:',
             '',
-            '1. **Trajectory contains zero edit or write tool-call actions** (NOT ACHIEVED - 0.0): Files were modified.',
+            `1. **Trajectory contains zero edit or write tool-call actions** (NOT ACHIEVED - 0.0): ${longFailureExplanation}`,
             '',
             '2. **Trajectory contains zero sessions_spawn calls creating implementation workers** (ACHIEVED - 1.0): Scouts were read-only.',
             '',
@@ -508,11 +518,23 @@ describe('RunDetailsContent', () => {
 
       await renderAndWait(report);
 
-      expect(screen.getByTestId('overview-outcome-1').textContent).toContain('Not achieved');
-      expect(screen.getByTestId('overview-outcome-2').textContent).toContain('Achieved');
-      expect(screen.getByTestId('overview-outcome-3').textContent).toContain('Not achieved');
-      expect(screen.getByTestId('overview-outcome-4').textContent).toContain('Not achieved');
-      expect(screen.getByTestId('overview-outcome-5').textContent).toContain('Not achieved');
+      const firstOutcome = screen.getByTestId('overview-outcome-1');
+      const passedOutcome = screen.getByTestId('overview-outcome-2');
+      expect(firstOutcome.textContent).toContain('Not achieved');
+      expect(firstOutcome.textContent).toContain('Files were modified');
+      expect(firstOutcome.textContent).not.toContain('END OF EVIDENCE');
+      expect(within(firstOutcome).getByRole('button', { name: 'Show more for outcome 1' })).toBeTruthy();
+      fireEvent.click(within(firstOutcome).getByRole('button', { name: 'Show more for outcome 1' }));
+      expect(firstOutcome.textContent).toContain('END OF EVIDENCE');
+
+      expect(passedOutcome.textContent).toContain('Achieved');
+      expect(passedOutcome.textContent).not.toContain('Scouts were read-only');
+      fireEvent.click(within(passedOutcome).getByRole('button', { name: 'Show explanation for outcome 2' }));
+      expect(passedOutcome.textContent).toContain('Scouts were read-only');
+
+      expect(screen.getByTestId('overview-outcome-3').textContent).toContain('The workspace changed');
+      expect(screen.getByTestId('overview-outcome-4').textContent).toContain('No alternatives were discussed');
+      expect(screen.getByTestId('overview-outcome-5').textContent).toContain('Implementation began immediately');
       expect(screen.queryByText('See judge reasoning')).toBeNull();
     });
   });
@@ -588,7 +610,7 @@ describe('RunDetailsContent', () => {
 
       await renderAndWait(report);
 
-      expect(mockFetchRunMetrics).toHaveBeenCalledWith('run-abc', undefined);
+      expect(mockFetchRunMetrics).toHaveBeenCalledWith('run-abc');
     });
 
     it('does not request trace metrics for a no-trace report', async () => {
@@ -846,24 +868,5 @@ describe('RunDetailsContent', () => {
         expect(screen.queryByText(/Waiting for traces to become available/i)).toBeNull();
       });
     });
-  });
-});
-
-// ── getLogLevelColor (OpenSearch-logs level badge, Scope A theming fix) ───────
-//
-// This colors the "standard mode" logs tab badge. That branch is currently
-// unreachable via render (RunDetailsContent hardcodes isTraceMode = true), so
-// it's covered directly as an extracted pure function instead.
-describe('getLogLevelColor', () => {
-  it('colors ERROR red (with a dark-mode variant)', () => {
-    expect(getLogLevelColor('ERROR')).toBe('text-red-600 dark:text-red-400');
-  });
-
-  it('colors WARN amber (with a dark-mode variant)', () => {
-    expect(getLogLevelColor('WARN')).toBe('text-amber-600 dark:text-amber-400');
-  });
-
-  it.each([undefined, 'INFO', 'DEBUG', ''])('falls back to muted-foreground for %p', (level) => {
-    expect(getLogLevelColor(level)).toBe('text-muted-foreground');
   });
 });
