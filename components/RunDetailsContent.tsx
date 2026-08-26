@@ -95,18 +95,35 @@ const getEvaluatorIcon = (evaluatorId: string) => {
 type OutcomeState = 'passed' | 'failed' | 'partial' | 'unknown';
 
 function outcomeStateFromReasoning(reasoning: string, outcomeNumber: number): OutcomeState {
-  const marker = new RegExp(`(?:\\*\\*)?Outcome\\s+${outcomeNumber}\\b`, 'i');
-  const start = reasoning.search(marker);
-  if (start < 0) return 'unknown';
+  const namedMarker = new RegExp(`(?:\\*\\*)?Outcome\\s+${outcomeNumber}\\b`, 'i');
+  let start = reasoning.search(namedMarker);
+  let markerLength = 0;
+  let nextMarker = /(?:\*\*)?Outcome\s+\d+\b/i;
+
+  if (start >= 0) {
+    markerLength = reasoning.slice(start).match(namedMarker)?.[0].length ?? 0;
+  } else {
+    // Agentic judges are not guaranteed to repeat the literal "Outcome N"
+    // label. Fresh reports commonly use a Markdown numbered breakdown such
+    // as `1. **Trajectory ...** (NOT ACHIEVED - 0.0)`. Scope this fallback to
+    // the per-outcome assessment when that heading is present so unrelated
+    // numbered lists in the judge narrative are not mistaken for verdicts.
+    const assessmentHeading = reasoning.search(/(?:evaluation|assessment)\s+of\s+each\s+expected\s+outcome/i);
+    const assessment = assessmentHeading >= 0 ? reasoning.slice(assessmentHeading) : reasoning;
+    const numberedMarker = new RegExp(`(?:^|\\n)\\s*${outcomeNumber}[.)]\\s+`, 'm');
+    const relativeStart = assessment.search(numberedMarker);
+    if (relativeStart < 0) return 'unknown';
+    start = (assessmentHeading >= 0 ? assessmentHeading : 0) + relativeStart;
+    markerLength = assessment.slice(relativeStart).match(numberedMarker)?.[0].length ?? 0;
+    nextMarker = /(?:^|\n)\s*\d+[.)]\s+/m;
+  }
+
   const remainder = reasoning.slice(start);
-  // Search after this marker's number. Starting at character 1 can match the
-  // same Markdown marker again ("**Outcome" also contains "Outcome"), which
-  // incorrectly reduced every section to just "**".
-  const currentMarker = remainder.match(marker);
-  const afterCurrentMarker = currentMarker?.[0].length ?? 0;
-  const next = remainder.slice(afterCurrentMarker).search(/(?:\*\*)?Outcome\s+\d+\b/i);
+  // Search after the current marker. Starting inside the marker can match it
+  // again ("**Outcome" also contains "Outcome"), reducing the section to "**".
+  const next = remainder.slice(markerLength).search(nextMarker);
   const section = next >= 0
-    ? remainder.slice(0, afterCurrentMarker + next)
+    ? remainder.slice(0, markerLength + next)
     : remainder;
 
   // Score tokens need an explicit delimiter: a bare word boundary would

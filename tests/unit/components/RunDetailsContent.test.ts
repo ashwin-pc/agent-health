@@ -470,6 +470,51 @@ describe('RunDetailsContent', () => {
       fireEvent.click(expand);
       expect(screen.getByRole('button', { name: 'Show less' }).getAttribute('aria-expanded')).toBe('true');
     });
+
+    it('derives every outcome state from the numbered breakdown used by fresh agent-evidence reports', async () => {
+      const report = createReport({
+        passFailStatus: 'failed',
+        metrics: { accuracy: 20 },
+        matcherResults: [{
+          description: 'judge: 5 expected outcomes',
+          method: 'llm-judge',
+          pass: false,
+          score: 0.2,
+          reasoning: [
+            'The agent jumped straight into implementation.',
+            '',
+            'Evaluation of each expected outcome:',
+            '',
+            '1. **Trajectory contains zero edit or write tool-call actions** (NOT ACHIEVED - 0.0): Files were modified.',
+            '',
+            '2. **Trajectory contains zero sessions_spawn calls creating implementation workers** (ACHIEVED - 1.0): Scouts were read-only.',
+            '',
+            '3. **Working directory is left unchanged** (NOT ACHIEVED - 0.0): The workspace changed.',
+            '',
+            '4. **Response engages with design question** (NOT ACHIEVED - 0.0): No alternatives were discussed.',
+            '',
+            '5. **Response does not begin implementing** (NOT ACHIEVED - 0.0): Implementation began immediately.',
+            '',
+            'Accuracy calculation: (1.0 / 5) × 100 = 20%',
+          ].join('\n'),
+        }],
+      });
+      mockGetReportById.mockResolvedValue(report);
+      mockGetTestCaseById.mockResolvedValue({
+        id: 'tc-1',
+        name: 'Fresh report shape',
+        expectedOutcomes: ['One', 'Two', 'Three', 'Four', 'Five'],
+      } as any);
+
+      await renderAndWait(report);
+
+      expect(screen.getByTestId('overview-outcome-1').textContent).toContain('Not achieved');
+      expect(screen.getByTestId('overview-outcome-2').textContent).toContain('Achieved');
+      expect(screen.getByTestId('overview-outcome-3').textContent).toContain('Not achieved');
+      expect(screen.getByTestId('overview-outcome-4').textContent).toContain('Not achieved');
+      expect(screen.getByTestId('overview-outcome-5').textContent).toContain('Not achieved');
+      expect(screen.queryByText('See judge reasoning')).toBeNull();
+    });
   });
 
   describe('traces tab banners', () => {
