@@ -149,6 +149,30 @@ describe('OpenSearchStorageModule', () => {
         error: 'Connection refused',
       });
     });
+
+    it('appends the HTTP status code (e.g. 403 for expired/rotated SigV4 credentials) so it is distinguishable from a cluster 5xx', async () => {
+      const authError: any = new Error('Response Error');
+      authError.meta = { statusCode: 403, body: {} };
+      mockClient.cluster.health.mockRejectedValue(authError);
+
+      const result = await mod.health();
+
+      expect(result).toEqual({
+        status: 'error',
+        error: 'Response Error (HTTP 403)',
+      });
+    });
+
+    it('falls back to "Unknown error" instead of an empty string when the error has neither a message nor a status code', async () => {
+      mockClient.cluster.health.mockRejectedValue({});
+
+      const result = await mod.health();
+
+      expect(result).toEqual({
+        status: 'error',
+        error: 'Unknown error',
+      });
+    });
   });
 
   // ==========================================================================
