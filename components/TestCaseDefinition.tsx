@@ -13,7 +13,7 @@
  */
 
 import React from 'react';
-import { CheckCircle2 } from 'lucide-react';
+import { CheckCircle2, FileCode2 } from 'lucide-react';
 import { TestCase } from '@/types';
 import { Badge } from '@/components/ui/badge';
 import { Markdown, hasRealMarkdown } from '@/components/ui/markdown';
@@ -49,6 +49,25 @@ export const TestCaseDefinition: React.FC<TestCaseDefinitionProps> = ({
   compact = false,
   className = '',
 }) => {
+  // SDK / code-authored tests (.eval.ts/.eval.js) carry their definition as a
+  // runtime evaluate() closure, not declarative fields — rendering the
+  // declarative layout would show an empty rubric. Every consumer of this
+  // component is safe by construction: show the source-file pointer instead.
+  if (testCase.sourceFile) {
+    return (
+      <div className={`space-y-2 ${className}`}>
+        <div className="text-[9px] font-semibold text-muted-foreground uppercase tracking-wider">Source File</div>
+        <div className="flex items-center gap-2 bg-card rounded border border-border px-3 py-2">
+          <FileCode2 size={12} className="text-muted-foreground shrink-0" />
+          <code className="text-[11px] font-mono break-all flex-1">{testCase.sourceFile}</code>
+        </div>
+        <div className="text-[10px] text-muted-foreground italic">
+          Code-authored test: the <code className="font-mono">evaluate()</code> body lives in the source file and isn't serializable from runtime state.
+        </div>
+      </div>
+    );
+  }
+
   const category = labelValue(testCase, 'category:') || testCase.category;
   const difficulty = labelValue(testCase, 'difficulty:') || testCase.difficulty;
   const extraLabels = (testCase.labels || []).filter(label => {

@@ -69,3 +69,28 @@ describe('CollapsibleTestCaseDefinition', () => {
     expect(screen.getByRole('button', { name: 'Hide raw JSON' }).getAttribute('aria-expanded')).toBe('true');
   });
 });
+
+describe('TestCaseDefinition — SDK / code-authored cases', () => {
+  const { TestCaseDefinition } = require('@/components/TestCaseDefinition');
+  const sdkCase: TestCase = {
+    ...testCase,
+    id: 'tc-sdk',
+    name: 'sdk registered test',
+    initialPrompt: '',
+    expectedOutcomes: [],
+    sourceFile: 'examples/eval-files/demo.eval.ts',
+  } as TestCase;
+
+  it('renders the source-file pointer instead of an empty declarative rubric', () => {
+    render(React.createElement(TestCaseDefinition, { testCase: sdkCase }));
+    expect(screen.getByText('examples/eval-files/demo.eval.ts')).toBeTruthy();
+    expect(screen.getByText(/isn't serializable from runtime state/)).toBeTruthy();
+    expect(screen.queryByText(/expected outcomes/i)).toBeNull();
+  });
+
+  it('still renders the declarative rubric for JSON cases', () => {
+    render(React.createElement(TestCaseDefinition, { testCase }));
+    expect(screen.getByText('Why are checkout requests failing?')).toBeTruthy();
+    expect(screen.getByText('Identify the payment-service timeout')).toBeTruthy();
+  });
+});
