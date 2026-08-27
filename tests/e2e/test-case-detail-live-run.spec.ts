@@ -208,58 +208,42 @@ test.describe('Test Case Detail — inline live-run UX (PR #228)', () => {
     }
   });
 
-  test('Definition section is always rendered above the runs list (no toggle)', async ({ page, request }) => {
+  test('Definition hero stays visible above the secondary run-history disclosure', async ({ page, request }) => {
     const tc = await createTestCase(request, `e2e-definition-open-${Date.now()}`);
     try {
-      // Pre-seed a run so the page renders the split-pane layout (the
-      // Definition was always-open in the empty-state full-width layout
-      // already; the regression we care about is the split-pane left
-      // column, where the toggle used to live).
+      // Pre-seed a run so opening history exercises the split-pane layout,
+      // while first paint still proves that the complete rubric is primary.
       await runEvaluation(request, tc.id, `E2E-Seed-${Date.now()}`);
 
       await page.goto(`/evaluations/test-cases/${tc.id}`);
       await expect(page.getByRole('heading', { level: 2 })).toContainText('e2e-definition-open-');
 
-      // The runs list header confirms we're in the split-pane layout.
-      await expect(page.getByText(/^Test Case Runs/i).first()).toBeVisible();
+      const hero = page.getByTestId('test-case-definition-hero');
+      await expect(hero.getByRole('heading', { name: 'Test case definition' })).toBeVisible();
+      await expect(hero.getByText(tc.initialPrompt)).toBeVisible();
+      await expect(hero.getByText(tc.expectedOutcome)).toBeVisible();
 
-      // The Definition heading must be present without any click. CSS
-      // applies `uppercase`, so the visual is `DEFINITION` but the DOM
-      // text is `Definition`. Match case-insensitively.
-      const definitionHeading = page.getByText(/^Definition$/i).first();
-      await expect(definitionHeading).toBeVisible();
+      // Run history is intentionally secondary and closed on first paint.
+      // Opening it must preserve the visible definition and reveal the same
+      // split-pane list/inspector capabilities exercised by the run tests.
+      const runHistory = page.getByRole('button', { name: /Run history/i });
+      await expect(runHistory).toHaveAttribute('aria-expanded', 'false');
+      await expect(page.getByText(/^Test Case Runs/i)).toHaveCount(0);
 
-      // Regression: it must NOT be inside a `<button>` (the chevron
-      // toggle was removed; clicking the heading no longer collapses
-      // anything).
-      const isInsideButton = await definitionHeading.evaluate(
-        (el) => !!el.closest('button'),
-      );
-      expect(isInsideButton, 'Definition heading should not be inside a <button>').toBe(false);
+      await runHistory.click();
+      await expect(runHistory).toHaveAttribute('aria-expanded', 'true');
+      const runsHeading = page.getByText(/^Test Case Runs/i).first();
+      await expect(runsHeading).toBeVisible();
+      await expect(hero).toBeVisible();
 
-      // The Input prompt + Expected outcome are visible without clicking.
-      // Both were seeded with unique markers above. Use `.first()` because
-      // the right-side inspector — mounted because we pre-seeded a run —
-      // also renders these strings in its Overview tab.
-      await expect(page.getByText(tc.initialPrompt).first()).toBeVisible();
-      await expect(page.getByText(tc.expectedOutcome).first()).toBeVisible();
-
-      // Sanity: the Definition heading appears *above* the runs list.
-      const order = await page.evaluate(() => {
-        const all = Array.from(document.querySelectorAll('body *')) as HTMLElement[];
-        const def = all.find(
-          (el) => el.children.length === 0 && /^Definition$/i.test((el.textContent || '').trim()),
-        );
-        const runs = all.find(
-          (el) => el.children.length === 0 && /^Test Case Runs/i.test((el.textContent || '').trim()),
-        );
-        if (!def || !runs) return 'missing';
+      // The DOM order is the product hierarchy: definition first, history
+      // second. This catches accidental visual regressions without relying on
+      // CSS coordinates or viewport-specific pixel values.
+      const heroBeforeRuns = await hero.evaluate((element, runs) => {
         // eslint-disable-next-line no-bitwise
-        return def.compareDocumentPosition(runs) & Node.DOCUMENT_POSITION_FOLLOWING
-          ? 'def-before-runs'
-          : 'runs-before-def';
-      });
-      expect(order).toBe('def-before-runs');
+        return Boolean(element.compareDocumentPosition(runs as Node) & Node.DOCUMENT_POSITION_FOLLOWING);
+      }, await runsHeading.elementHandle());
+      expect(heroBeforeRuns).toBe(true);
     } finally {
       await tc.cleanup();
     }
