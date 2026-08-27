@@ -76,6 +76,11 @@ module.exports = {
     'lib/**/*.ts',
     'cli/**/*.ts',
     'types/**/*.ts',
+    // Component coverage is currently opt-in while the global baseline is
+    // expanded incrementally. Keep reader-oriented test-case definitions in
+    // the unit report so their focused DOM tests count toward patch coverage.
+    'components/TestCaseDefinition.tsx',
+    'components/evals3/CollapsibleTestCaseDefinition.tsx',
     '!**/__tests__/**',
     '!**/*.test.ts',
     '!**/dist/**',

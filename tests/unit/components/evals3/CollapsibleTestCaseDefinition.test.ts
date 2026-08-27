@@ -8,7 +8,7 @@
  */
 
 import * as React from 'react';
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { CollapsibleTestCaseDefinition } from '@/components/evals3/CollapsibleTestCaseDefinition';
 import { TestCase } from '@/types';
 
@@ -46,14 +46,23 @@ const testCase: TestCase = {
 };
 
 describe('CollapsibleTestCaseDefinition', () => {
-  it('leads with readable fields and mounts raw JSON only after disclosure', () => {
-    render(
-      React.createElement(CollapsibleTestCaseDefinition, {
-        testCase,
-        defaultOpen: true,
-      }),
+  it('returns no card when the run has no test-case definition', () => {
+    const { container } = render(
+      React.createElement(CollapsibleTestCaseDefinition, { testCase: null }),
     );
+    expect(container.firstChild).toBeNull();
+  });
 
+  it('toggles the readable definition and mounts raw JSON only after disclosure', () => {
+    render(React.createElement(CollapsibleTestCaseDefinition, { testCase }));
+
+    const definitionToggle = screen.getByRole('button', { name: /Test Case Definition/i });
+    expect(definitionToggle.getAttribute('aria-expanded')).toBe('false');
+    expect(screen.queryByText('Why are checkout requests failing?')).toBeNull();
+
+    fireEvent.click(definitionToggle);
+
+    expect(definitionToggle.getAttribute('aria-expanded')).toBe('true');
     expect(screen.getByText('Why are checkout requests failing?')).toBeTruthy();
     expect(screen.getByText('Identify the payment-service timeout')).toBeTruthy();
     expect(screen.getByText('Recommend a safe mitigation')).toBeTruthy();
@@ -67,6 +76,36 @@ describe('CollapsibleTestCaseDefinition', () => {
     const raw = screen.getByTestId('raw-test-case-json');
     expect(raw.textContent).toContain('"initialPrompt": "Why are checkout requests failing?"');
     expect(screen.getByRole('button', { name: 'Hide raw JSON' }).getAttribute('aria-expanded')).toBe('true');
+
+    fireEvent.click(definitionToggle);
+    expect(definitionToggle.getAttribute('aria-expanded')).toBe('false');
+    expect(screen.queryByTestId('raw-test-case-json')).toBeNull();
+  });
+
+  it('shows SDK provenance and copies the source path', async () => {
+    const writeText = jest.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText },
+    });
+    const sdkCase = {
+      ...testCase,
+      sourceFile: 'examples/eval-files/demo.eval.ts',
+      sourceHash: '1234567890abcdefextra',
+    } as TestCase;
+
+    render(React.createElement(CollapsibleTestCaseDefinition, {
+      testCase: sdkCase,
+      defaultOpen: true,
+      className: 'sdk-definition',
+    }));
+
+    expect(screen.getByText('SDK')).toBeTruthy();
+    expect(screen.getByText('examples/eval-files/demo.eval.ts')).toBeTruthy();
+    expect(screen.getByText('sha256: 1234567890abcdef…')).toBeTruthy();
+
+    fireEvent.click(screen.getByTitle('Copy path'));
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith('examples/eval-files/demo.eval.ts'));
   });
 });
 
