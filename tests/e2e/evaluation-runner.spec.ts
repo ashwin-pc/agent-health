@@ -215,8 +215,9 @@ test.describe('Evaluation Runner - Run Detail Page', () => {
       await page.goto(`/evaluations/runs/${runId}`);
       await page.waitForTimeout(3000);
 
-      // Should show the run detail view
-      await expect(page.locator('text=EVALUATION RUN')).toBeVisible({ timeout: 10000 });
+      // Match the exact run-type badge. The responsive sidebar also contains
+      // "Evaluation Runs", so the old substring selector became ambiguous.
+      await expect(page.getByText('EVALUATION RUN', { exact: true })).toBeVisible({ timeout: 10000 });
     }
   });
 
