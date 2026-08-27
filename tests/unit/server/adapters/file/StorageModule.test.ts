@@ -107,6 +107,8 @@ describe('FileStorageModule', () => {
 
       expect(result).not.toBeNull();
       expect(result!.id).toBe(bm.id);
+    });
+
     it('excludes co-located evaluation-run documents from getAll', async () => {
       await mod.benchmarks.create({ id: 'bench-1', name: 'Suite', testCaseIds: [], runs: [] });
       await mod.evaluationRuns.create({
