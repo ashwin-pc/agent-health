@@ -29,7 +29,7 @@
  * test case via the storage API and cleans up after itself.
  */
 
-import { test, expect, type APIRequestContext } from '@playwright/test';
+import { test, expect, type APIRequestContext, type Page } from '@playwright/test';
 
 const TEST_TIMEOUT = 90_000; // demo agent + demo judge → ~5–8s per run
 
@@ -101,6 +101,15 @@ async function runEvaluation(
   const parsed = JSON.parse(completedLine!.slice('data: '.length));
   expect(parsed.reportId).toBeTruthy();
   return parsed.reportId;
+}
+
+async function openRunHistory(page: Page): Promise<void> {
+  const disclosure = page.getByRole('button', { name: /Run history/i });
+  await expect(disclosure).toBeVisible();
+  if (await disclosure.getAttribute('aria-expanded') === 'false') {
+    await disclosure.click();
+  }
+  await expect(disclosure).toHaveAttribute('aria-expanded', 'true');
 }
 
 test.describe('Test Case Detail — runs list rendering (PR #206)', () => {
@@ -178,6 +187,7 @@ test.describe('Test Case Detail — runs list rendering (PR #206)', () => {
       await runEvaluation(request, tc.id, runName);
 
       await page.goto(`/evaluations/test-cases/${tc.id}`);
+      await openRunHistory(page);
       const row = page.locator('[class*="cursor-pointer"]').filter({ hasText: runName }).first();
       await expect(row).toBeVisible({ timeout: TEST_TIMEOUT });
 
@@ -217,6 +227,7 @@ test.describe('Test Case Detail — runs list rendering (PR #206)', () => {
       const reportId = await runEvaluation(request, tc.id, runName);
 
       await page.goto(`/evaluations/test-cases/${tc.id}`);
+      await openRunHistory(page);
       const row = page.locator('[class*="cursor-pointer"]').filter({ hasText: runName }).first();
       await expect(row).toBeVisible({ timeout: TEST_TIMEOUT });
 
@@ -254,6 +265,7 @@ test.describe('Test Case Detail — runs list rendering (PR #206)', () => {
       const expectedLabel = `Run ${reportId.slice(-6)}`;
 
       await page.goto(`/evaluations/test-cases/${tc.id}`);
+      await openRunHistory(page);
       const row = page.locator('[class*="cursor-pointer"]').filter({ hasText: expectedLabel }).first();
       await expect(row).toBeVisible({ timeout: TEST_TIMEOUT });
 

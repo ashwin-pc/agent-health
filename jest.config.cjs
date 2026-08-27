@@ -81,6 +81,7 @@ module.exports = {
     // the unit report so their focused DOM tests count toward patch coverage.
     'components/TestCaseDefinition.tsx',
     'components/evals3/CollapsibleTestCaseDefinition.tsx',
+    'components/evals3/TestCaseDetailPage.tsx',
     '!**/__tests__/**',
     '!**/*.test.ts',
     '!**/dist/**',
