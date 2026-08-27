@@ -460,7 +460,7 @@ class TracePollingManager {
           // Write error status so the report doesn't stay stuck in 'pending'.
           console.error(`[TracePoller] onTracesFound callback failed for report ${reportId}:`, callbackErr);
           try {
-            await this.persistTraceFailure(reportId, 'trace_callback_failed', callbackErr);
+            await this.persistTraceFailure(reportId, 'trace_callback_failed', callbackErr, report);
           } catch (updateErr) {
             console.error(`[TracePoller] CRITICAL: Failed to update report ${reportId} error status after callback failure.`, updateErr);
           }
@@ -526,14 +526,20 @@ class TracePollingManager {
     reportId: string,
     kind: 'trace_timeout' | 'trace_incomplete' | 'trace_callback_failed' | 'trace_fetch_failed',
     error: unknown,
+    knownReport?: EvaluationReport,
   ): Promise<void> {
     const errorPatch = buildEvaluatorErrorPatch(kind, error);
-    let current: EvaluationReport | null = null;
-    try {
-      current = await asyncRunStorage.getReportById(reportId);
-    } catch {
-      // Failure persistence must still work when the storage read is
-      // unavailable; in that case there is no known verdict to protect.
+    let current: EvaluationReport | null = knownReport ?? null;
+    // Re-read whenever the caller does not already hold an authoritative
+    // verdict. Timeout/fetch failures can race another poller or judge that
+    // settles the report between the top-of-poll read and this write.
+    if (!getJudgeVerdict(current)) {
+      try {
+        current = (await asyncRunStorage.getReportById(reportId)) ?? current;
+      } catch {
+        // Failure persistence must still work when the storage read is
+        // unavailable; in that case there is no known verdict to protect.
+      }
     }
     const verdict = getJudgeVerdict(current);
 
@@ -545,6 +551,11 @@ class TracePollingManager {
       });
       return;
     }
+
+    // Another path already recorded a terminal evaluator error (or a ready
+    // state without a parseable legacy verdict). Do not replace that more
+    // specific result with a generic trace diagnostic.
+    if (current?.metricsStatus === 'ready' || current?.metricsStatus === 'error') return;
 
     await asyncRunStorage.updateReport(reportId, {
       ...errorPatch,

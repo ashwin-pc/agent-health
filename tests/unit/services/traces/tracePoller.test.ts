@@ -398,7 +398,7 @@ describe('TracePollingManager', () => {
         }],
       } as EvaluationReport;
 
-      mockFetchTracesByRunIds.mockResolvedValue({ spans: [], total: 0 });
+      mockFetchTracesForRun.mockResolvedValue({ spans: [], total: 0 });
       mockGetReportById.mockResolvedValue(judgedReport);
       mockUpdateReport.mockResolvedValue(undefined);
 
