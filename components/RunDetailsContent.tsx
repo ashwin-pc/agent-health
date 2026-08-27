@@ -68,6 +68,8 @@ import { Badge } from '@/components/ui/badge';
 import { Progress } from '@/components/ui/progress';
 import { Textarea } from '@/components/ui/textarea';
 import { ScrollArea } from '@/components/ui/scroll-area';
+import { CitationLink } from '@/components/CitationLink';
+import { linkifyStepCitations, sanitizeCitationUrl } from '@/lib/citations';
 
 interface RunDetailsContentProps {
   report: EvaluationReport;
@@ -181,7 +183,19 @@ const OutcomeExplanation: React.FC<{
   explanation?: string;
   state: OutcomeState;
   outcomeNumber: number;
-}> = ({ explanation, state, outcomeNumber }) => {
+  trajectoryStepCount: number;
+  onStepCitation: (stepNumber: number) => void;
+  onSpanCitation: (runId: string, spanId: string) => void;
+  canOpenSpan: (runId: string, spanId: string) => boolean;
+}> = ({
+  explanation,
+  state,
+  outcomeNumber,
+  trajectoryStepCount,
+  onStepCitation,
+  onSpanCitation,
+  canOpenSpan,
+}) => {
   const [visible, setVisible] = useState(state !== 'passed');
   const [expanded, setExpanded] = useState(false);
 
@@ -208,9 +222,28 @@ const OutcomeExplanation: React.FC<{
     ? truncateOutcomeExplanation(explanation)
     : explanation;
 
+  const citationMarkdown = linkifyStepCitations(displayedExplanation, trajectoryStepCount);
+  const CitationAnchor = ({ href, children }: { href?: string; children?: React.ReactNode }) => (
+    <CitationLink
+      href={href}
+      onStepClick={onStepCitation}
+      canOpenStep={(stepNumber) => stepNumber >= 1 && stepNumber <= trajectoryStepCount}
+      onSpanClick={onSpanCitation}
+      canOpenSpan={canOpenSpan}
+    >
+      {children}
+    </CitationLink>
+  );
+
   return (
     <div className="mt-2 text-xs leading-relaxed text-muted-foreground" data-testid={`outcome-explanation-${outcomeNumber}`}>
-      <ReactMarkdown remarkPlugins={[remarkGfm]}>{displayedExplanation}</ReactMarkdown>
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm]}
+        urlTransform={sanitizeCitationUrl}
+        components={{ a: CitationAnchor }}
+      >
+        {citationMarkdown}
+      </ReactMarkdown>
       {isLong && (
         <Button
           type="button"
@@ -268,6 +301,7 @@ export const RunDetailsContent: React.FC<RunDetailsContentProps> = ({
   // ?tab=trajectory|judge|logs|annotations.
   const initialTab = searchParams.get('tab') || 'overview';
   const [activeTab, setActiveTab] = useState(initialTab);
+  const [highlightedStepNumber, setHighlightedStepNumber] = useState<number | null>(null);
   // Default the Traces sub-view to the trace tree (was 'info'). This is the
   // view users want first — the per-span info card is one click away on the
   // tree itself, but landing on it bypasses the tree entirely and obscures
@@ -400,6 +434,26 @@ export const RunDetailsContent: React.FC<RunDetailsContentProps> = ({
     return report.trajectory;
   }, [report.rawEvents, report.trajectory, report.connectorProtocol]);
 
+  const handleStepCitation = (stepNumber: number) => {
+    if (stepNumber < 1 || stepNumber > trajectory.length) return;
+    setTrajectoryViewMode('processed');
+    setHighlightedStepNumber(stepNumber);
+    setActiveTab('trajectory');
+  };
+
+  // Radix mounts the trajectory panel after the controlled tab changes. Wait
+  // one frame, then center the cited step inside that panel's scroll area.
+  useEffect(() => {
+    if (activeTab !== 'trajectory' || highlightedStepNumber == null) return;
+    const timer = window.setTimeout(() => {
+      document.getElementById(`trajectory-step-${highlightedStepNumber}`)?.scrollIntoView({
+        behavior: 'smooth',
+        block: 'center',
+      });
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [activeTab, highlightedStepNumber]);
+
   const modelDisplayName = DEFAULT_CONFIG.models[report.modelName]?.display_name || report.modelName;
 
   // Always use trace-based UI layout for consistency
@@ -472,7 +526,7 @@ export const RunDetailsContent: React.FC<RunDetailsContentProps> = ({
   }, [report.id, report.runId]);
 
   // Core trace fetching logic
-  const fetchTracesForReport = async () => {
+  const fetchTracesForReport = async (focusSpanId?: string) => {
     if (!report.runId) return;
 
     setTracesLoading(true);
@@ -540,6 +594,9 @@ export const RunDetailsContent: React.FC<RunDetailsContentProps> = ({
 
       if (result.spans && result.spans.length > 0) {
         setTraceSpans(result.spans);
+        if (focusSpanId) {
+          setSelectedSpan(result.spans.find(span => span.spanId === focusSpanId) || null);
+        }
         setTracesError(null);
         const tree = processSpansIntoTree(result.spans);
         setSpanTree(tree);
@@ -568,6 +625,26 @@ export const RunDetailsContent: React.FC<RunDetailsContentProps> = ({
   const fetchTracesOnDemand = async () => {
     if (tracesFetched || tracesLoading) return;
     await fetchTracesForReport();
+  };
+
+  const knownCitationSpans = [...traceSpans, ...((liveReport.spans || []) as Span[])];
+  const canOpenSpanCitation = (runId: string, spanId: string) => {
+    if (!report.runId || runId !== report.runId) return false;
+    if (knownCitationSpans.length > 0) {
+      return knownCitationSpans.some(span => span.spanId === spanId);
+    }
+    return liveReport.traceStatus === 'available';
+  };
+
+  const handleSpanCitation = async (runId: string, spanId: string) => {
+    if (!canOpenSpanCitation(runId, spanId)) return;
+    setActiveTab('logs');
+    const loadedSpan = traceSpans.find(span => span.spanId === spanId);
+    if (loadedSpan) {
+      setSelectedSpan(loadedSpan);
+      return;
+    }
+    await fetchTracesForReport(spanId);
   };
 
   const handleToggleExpand = (spanId: string) => {
@@ -1113,6 +1190,10 @@ export const RunDetailsContent: React.FC<RunDetailsContentProps> = ({
                             explanation={explanation}
                             state={state}
                             outcomeNumber={index + 1}
+                            trajectoryStepCount={trajectory.length}
+                            onStepCitation={handleStepCitation}
+                            onSpanCitation={handleSpanCitation}
+                            canOpenSpan={canOpenSpanCitation}
                           />
                         </div>
                       </div>
@@ -1221,7 +1302,11 @@ export const RunDetailsContent: React.FC<RunDetailsContentProps> = ({
 
             {/* Conditional View */}
             {trajectoryViewMode === 'processed' ? (
-              <TrajectoryView steps={trajectory} loading={false} />
+              <TrajectoryView
+                steps={trajectory}
+                loading={false}
+                highlightedStepNumber={highlightedStepNumber}
+              />
             ) : (
               report.rawEvents && report.rawEvents.length > 0 ? (
                 <RawEventsPanel events={report.rawEvents} />

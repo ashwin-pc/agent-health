@@ -98,8 +98,19 @@ jest.mock('@/lib/utils', () => ({
 }));
 
 jest.mock('react-markdown', () => {
-  return function MockReactMarkdown({ children }: { children: string }) {
-    return React.createElement('div', { 'data-testid': 'markdown' }, children);
+  return function MockReactMarkdown({ children, components }: { children: string; components?: Record<string, React.ComponentType<any>> }) {
+    const match = /\[([^\]]+)\]\(([^)]+)\)/.exec(children);
+    if (!match || !components?.a) {
+      return React.createElement('div', { 'data-testid': 'markdown' }, children);
+    }
+    const Anchor = components.a;
+    return React.createElement(
+      'div',
+      { 'data-testid': 'markdown' },
+      children.slice(0, match.index),
+      React.createElement(Anchor, { href: match[2] }, match[1]),
+      children.slice((match.index || 0) + match[0].length),
+    );
   };
 });
 
@@ -121,7 +132,10 @@ jest.mock('react-router-dom', () => ({
 }));
 
 jest.mock('@/components/TrajectoryView', () => ({
-  TrajectoryView: () => React.createElement('div', { 'data-testid': 'trajectory-view' }),
+  TrajectoryView: ({ highlightedStepNumber }: { highlightedStepNumber?: number }) => React.createElement(
+    'div',
+    { 'data-testid': 'trajectory-view', 'data-highlighted-step': highlightedStepNumber },
+  ),
 }));
 
 jest.mock('@/components/RawEventsPanel', () => ({
@@ -434,6 +448,38 @@ describe('RunDetailsContent', () => {
 
       fireEvent.click(screen.getByText('View traces'));
       expect(screen.getByRole('tab', { name: /Traces/ }).getAttribute('data-state')).toBe('active');
+    });
+
+    it('opens a cited trajectory step in Test Case Output', async () => {
+      const report = createReport({
+        passFailStatus: 'failed',
+        trajectory: [
+          { id: 'step-1', type: 'thinking', content: 'Inspect' },
+          { id: 'step-2', type: 'action', content: 'Edit', toolName: 'edit' },
+        ] as any,
+        matcherResults: [{
+          description: 'outcome one',
+          method: 'llm-judge',
+          pass: false,
+          score: 0,
+          reasoning: 'Step 2 edited src/cache-config.ts before discussing the design.',
+        }],
+      });
+      mockGetReportById.mockResolvedValue(report);
+      mockGetTestCaseById.mockResolvedValue({
+        id: 'tc-1',
+        name: 'Citation case',
+        expectedOutcomes: ['Discuss the design before editing'],
+      } as any);
+
+      await renderAndWait(report);
+
+      const citation = screen.getByRole('button', { name: 'Step 2' });
+      expect(citation.getAttribute('title')).toBe('Open Step 2 in Test Case Output');
+      fireEvent.click(citation);
+
+      expect(screen.getByRole('tab', { name: /Test Case Output/ }).getAttribute('data-state')).toBe('active');
+      expect(screen.getByTestId('trajectory-view').getAttribute('data-highlighted-step')).toBe('2');
     });
 
     it('derives failed, partial, passed, and unknown outcome states from judge reasoning', async () => {
