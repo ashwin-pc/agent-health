@@ -17,6 +17,8 @@ module.exports = {
     // expanded incrementally. Keep reader-oriented test-case definitions in
     // the unit report so their focused DOM tests count toward patch coverage.
     'components/TestCaseDefinition.tsx',
+    'components/ContextDispositionGroups.tsx',
+    'components/TestCaseDetailPanel.tsx',
     'components/evals3/CollapsibleTestCaseDefinition.tsx',
     // hooks/** and components/** are intentionally NOT globbed in wholesale —
     // most are React UI that this (node-environment) jest config can't
