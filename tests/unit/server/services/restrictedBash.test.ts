@@ -191,6 +191,32 @@ describe('confinement and failure semantics', () => {
     expect((await run('echo c > scratch/three')).stderr).toMatch(/quota exceeded/);
   });
 
+  it('rejects pathological regexes before matching while allowing normal patterns', async () => {
+    const normal = await bash.execute("grep 'app.*' evidence/words.txt");
+    expect(normal.exitCode).toBe(0);
+
+    const pathological = await bash.execute("grep '(a+)+' evidence/words.txt");
+    expect(pathological.exitCode).toBe(2);
+    expect(pathological.stderr).toMatch(/nested quantifiers.*-F/);
+  });
+
+  it('rejects oversized files before reading them into memory', async () => {
+    await fs.writeFile(path.join(root, 'large.txt'), 'x'.repeat(33));
+    const limited = await RestrictedBash.create({ rootDir: root, maxFileBytes: 32, maxInputBytes: 64 });
+    const result = await limited.execute('cat large.txt');
+    expect(result.exitCode).toBe(2);
+    expect(result.stderr).toMatch(/per-file limit 32.*narrow or split/);
+  });
+
+  it('rejects an oversized aggregate input set', async () => {
+    await fs.writeFile(path.join(root, 'one.txt'), '1'.repeat(24));
+    await fs.writeFile(path.join(root, 'two.txt'), '2'.repeat(24));
+    const limited = await RestrictedBash.create({ rootDir: root, maxFileBytes: 32, maxInputBytes: 40 });
+    const result = await limited.execute('cat one.txt two.txt');
+    expect(result.exitCode).toBe(2);
+    expect(result.stderr).toMatch(/inputs exceed 40 bytes.*find\/head/);
+  });
+
   it('enforces the configured per-command timeout', async () => {
     const immediate = await RestrictedBash.create({ rootDir: root, timeoutMs: 0 });
     expect((await immediate.execute('cat evidence/words.txt')).stderr).toMatch(/timed out after 0ms/);

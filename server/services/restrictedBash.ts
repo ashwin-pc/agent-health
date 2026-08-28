@@ -25,6 +25,9 @@ const DEFAULT_OUTPUT_CAP = 50 * 1024;
 const DEFAULT_TIMEOUT_MS = 10_000;
 const DEFAULT_QUOTA_BYTES = 100 * 1024 * 1024;
 const DEFAULT_QUOTA_FILES = 500;
+const DEFAULT_MAX_FILE_BYTES = 10 * 1024 * 1024;
+const DEFAULT_MAX_INPUT_BYTES = 25 * 1024 * 1024;
+const MAX_REGEX_LENGTH = 512;
 
 export interface RestrictedBashMount {
   /** Virtual, root-relative read path (for example evidence/spans.ndjson). */
@@ -40,6 +43,8 @@ export interface RestrictedBashOptions {
   outputCapBytes?: number;
   quotaBytes?: number;
   quotaFiles?: number;
+  maxFileBytes?: number;
+  maxInputBytes?: number;
   onCommand?: (command: string) => void;
 }
 
@@ -179,6 +184,16 @@ function splitLines(text: string): string[] {
 }
 function withFinalNewline(lines: string[]): string { return lines.length ? `${lines.join('\n')}\n` : ''; }
 function regexEscape(value: string): string { return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
+function validateRegex(pattern: string): void {
+  if (pattern.length > MAX_REGEX_LENGTH) {
+    throw new Error(`restricted bash: regex exceeds ${MAX_REGEX_LENGTH} characters; use a shorter expression or -F`);
+  }
+  // Reject the common catastrophic-backtracking shape: a quantified group
+  // containing another unbounded quantifier, e.g. (a+)+ or (.*)*.
+  if (/\((?:[^()\\]|\\.)*[*+](?:[^()\\]|\\.)*\)(?:[*+]|\{\d*,?\d*\})/.test(pattern)) {
+    throw new Error('restricted bash: regex has nested quantifiers; use -F or a bounded expression');
+  }
+}
 function shellUnescapeSet(value: string): string {
   return value.replace(/\\n/g, '\n').replace(/\\t/g, '\t').replace(/\\r/g, '\r').replace(/\\(.)/g, '$1');
 }
@@ -190,6 +205,8 @@ export class RestrictedBash {
   private readonly outputCapBytes: number;
   private readonly quotaBytes: number;
   private readonly quotaFiles: number;
+  private readonly maxFileBytes: number;
+  private readonly maxInputBytes: number;
   private readonly onCommand?: (command: string) => void;
   private readonly mounts: ReadonlyMap<string, { virtualPath: string; sourcePaths: readonly string[] }>;
 
@@ -204,6 +221,8 @@ export class RestrictedBash {
     this.outputCapBytes = options.outputCapBytes ?? DEFAULT_OUTPUT_CAP;
     this.quotaBytes = options.quotaBytes ?? DEFAULT_QUOTA_BYTES;
     this.quotaFiles = options.quotaFiles ?? DEFAULT_QUOTA_FILES;
+    this.maxFileBytes = options.maxFileBytes ?? DEFAULT_MAX_FILE_BYTES;
+    this.maxInputBytes = options.maxInputBytes ?? DEFAULT_MAX_INPUT_BYTES;
     this.onCommand = options.onCommand;
     this.mounts = mounts;
   }
@@ -291,13 +310,20 @@ export class RestrictedBash {
 
   private async readText(input: string): Promise<string> {
     const mount = this.mountFor(input);
-    if (mount) {
-      return (await Promise.all(mount.sourcePaths.map(async (source) => {
-        await this.validateMountSource(source);
-        return fs.readFile(source, 'utf8');
-      }))).join('');
+    const paths = mount ? [...mount.sourcePaths] : [await this.readPath(input)];
+    let total = 0;
+    for (const source of paths) {
+      if (mount) await this.validateMountSource(source);
+      const size = (await fs.stat(source)).size;
+      if (size > this.maxFileBytes) {
+        throw new Error(`restricted bash: input ${input} is ${size} bytes (per-file limit ${this.maxFileBytes}); narrow or split the evidence`);
+      }
+      total += size;
+      if (total > this.maxInputBytes) {
+        throw new Error(`restricted bash: inputs exceed ${this.maxInputBytes} bytes; narrow the file set with find/head`);
+      }
     }
-    return fs.readFile(await this.readPath(input), 'utf8');
+    return (await Promise.all(paths.map((source) => fs.readFile(source, 'utf8')))).join('');
   }
 
   private async readPath(input: string): Promise<string> {
@@ -447,6 +473,12 @@ export class RestrictedBash {
   private async fileInputs(args: string[], stdin: string, recursive = false): Promise<Array<{ name?: string; text: string }>> {
     if (!args.length) return [{ text: stdin }];
     const files: Array<{ name?: string; text: string }> = [];
+    let totalBytes = Buffer.byteLength(stdin);
+    const account = (size: number, name: string) => {
+      if (size > this.maxFileBytes) throw new Error(`restricted bash: input ${name} is ${size} bytes (per-file limit ${this.maxFileBytes}); narrow or split the evidence`);
+      totalBytes += size;
+      if (totalBytes > this.maxInputBytes) throw new Error(`restricted bash: inputs exceed ${this.maxInputBytes} bytes; narrow the file set with find/head`);
+    };
     const visit = async (input: string): Promise<void> => {
       if (input === '-') { files.push({ text: stdin }); return; }
       const mount = this.mountFor(input);
@@ -466,7 +498,10 @@ export class RestrictedBash {
         for (const child of this.mountsInDirectory(abs)) {
           if (!physical.some((entry) => entry.name === child.name)) await visit(path.join(input, child.name));
         }
-      } else if (stat.isFile()) files.push({ name: input, text: await fs.readFile(abs, 'utf8') });
+      } else if (stat.isFile()) {
+        account(stat.size, input);
+        files.push({ name: input, text: await fs.readFile(abs, 'utf8') });
+      }
     };
     for (const arg of args) await visit(arg);
     return files;
@@ -631,6 +666,7 @@ export class RestrictedBash {
     }
     const patternText = positional.shift();
     if (patternText === undefined) throw new Error(`${rgMode ? 'rg' : 'grep'}: missing pattern`);
+    if (!opt.fixed) validateRegex(patternText);
     const pattern = new RegExp(opt.fixed ? regexEscape(patternText) : patternText, opt.insensitive ? 'i' : '');
     const files = await this.fileInputs(positional, stdin, opt.recursive);
     const multiple = files.filter((f) => f.name).length > 1 || opt.recursive;
@@ -776,6 +812,7 @@ export class RestrictedBash {
     }
     parts.push(current);
     if (parts.length !== 3 || /[^gi]/.test(parts[2])) throw new Error('sed: only s/pattern/replacement/[gi] is supported');
+    validateRegex(parts[0]);
     const regex = new RegExp(parts[0], `${parts[2].includes('g') ? 'g' : ''}${parts[2].includes('i') ? 'i' : ''}`);
     const files = await this.fileInputs(args, stdin);
     return ok(files.map((f) => f.text.replace(regex, parts[1])).join(''));
