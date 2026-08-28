@@ -21,6 +21,7 @@ import {
   filterAndSortCaseRows,
   getCasePagerPosition,
   getCasePassRate,
+  resolveSwipeDirection,
   type CaseReviewFilter,
   type CaseVerdict,
 } from '@/lib/benchmarkCaseReview';
@@ -279,6 +280,7 @@ export const BenchmarkCasesTab: React.FC<BenchmarkCasesTabProps> = ({
   const [filter, setFilter] = useState<CaseReviewFilter>('all');
   const [lastSelectedCaseId, setLastSelectedCaseId] = useState<string | undefined>(selectedCaseId);
   const listRef = useRef<HTMLDivElement>(null);
+  const swipeStartRef = useRef<{ x: number; y: number } | null>(null);
 
   useEffect(() => {
     if (selectedCaseId) setLastSelectedCaseId(selectedCaseId);
@@ -329,6 +331,30 @@ export const BenchmarkCasesTab: React.FC<BenchmarkCasesTabProps> = ({
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [filteredRows, selectedCaseId, onSelectCase]);
+
+  const handleTouchStart = (event: React.TouchEvent<HTMLDivElement>) => {
+    swipeStartRef.current = null;
+    if (!window.matchMedia('(max-width: 767px)').matches || event.touches.length !== 1) return;
+    swipeStartRef.current = {
+      x: event.touches[0].clientX,
+      y: event.touches[0].clientY,
+    };
+  };
+
+  const handleTouchEnd = (event: React.TouchEvent<HTMLDivElement>) => {
+    const start = swipeStartRef.current;
+    swipeStartRef.current = null;
+    if (!start || event.changedTouches.length !== 1) return;
+
+    const touch = event.changedTouches[0];
+    const direction = resolveSwipeDirection(
+      touch.clientX - start.x,
+      touch.clientY - start.y,
+      event.changedTouches.length,
+    );
+    const targetId = direction === 'next' ? pager.nextId : direction === 'prev' ? pager.previousId : undefined;
+    if (targetId) onSelectCase(targetId);
+  };
 
   const filterButtons: Array<{ value: CaseReviewFilter; count: number }> = [
     { value: 'all', count: rows.length },
@@ -408,7 +434,14 @@ export const BenchmarkCasesTab: React.FC<BenchmarkCasesTabProps> = ({
 
       <section className={`flex-1 min-w-0 min-h-0 ${selectedRow ? '' : 'max-md:hidden'}`}>
         {selectedRow ? (
-          <div className="h-full flex flex-col min-h-0" data-testid="case-detail-pane">
+          <div
+            className="h-full flex flex-col min-h-0"
+            data-testid="case-detail-pane"
+            data-mobile-case-pager
+            onTouchStart={handleTouchStart}
+            onTouchEnd={handleTouchEnd}
+            onTouchCancel={() => { swipeStartRef.current = null; }}
+          >
             <div className="border-b p-3 shrink-0 space-y-3">
               <div className="flex items-center justify-between gap-3">
                 <div className="flex items-center gap-2 min-w-0">

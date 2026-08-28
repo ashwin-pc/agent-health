@@ -11,6 +11,7 @@ import {
   getCasePagerPosition,
   getCasePassRate,
   getRecentCompletedRuns,
+  resolveSwipeDirection,
   type CaseReviewRow,
   type ReviewableCase,
   type VerdictRun,
@@ -88,6 +89,23 @@ describe('benchmark case-review verdicts', () => {
       },
     );
     expect(rows[0].verdicts).toEqual(['failed', 'passed', 'errored', 'passed', 'failed']);
+  });
+});
+
+describe('benchmark case-review swipe navigation', () => {
+  it('accepts the distance and horizontal-ratio boundaries', () => {
+    expect(resolveSwipeDirection(-48, 32)).toBe('next');
+    expect(resolveSwipeDirection(48, -32)).toBe('prev');
+    expect(resolveSwipeDirection(47.99, 0)).toBeNull();
+  });
+
+  it('rejects vertical-dominant movement', () => {
+    expect(resolveSwipeDirection(-100, 67)).toBeNull();
+    expect(resolveSwipeDirection(80, 80)).toBeNull();
+  });
+
+  it('ignores multi-touch gestures', () => {
+    expect(resolveSwipeDirection(-200, 0, 2)).toBeNull();
   });
 });
 

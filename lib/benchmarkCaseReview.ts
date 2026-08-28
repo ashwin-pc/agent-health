@@ -15,6 +15,25 @@
 export type CaseVerdict = 'passed' | 'failed' | 'errored' | 'not-run';
 export type CaseReviewBucket = 'needs-attention' | 'flaky' | 'stable' | 'no-data';
 export type CaseReviewFilter = 'all' | Exclude<CaseReviewBucket, 'no-data'>;
+export type SwipeDirection = 'prev' | 'next';
+
+const MIN_SWIPE_DISTANCE = 48;
+const HORIZONTAL_SWIPE_RATIO = 1.5;
+
+/**
+ * Resolve a completed gesture without suppressing native touch movement. A
+ * negative x displacement is a left swipe (next); a positive one is previous.
+ */
+export function resolveSwipeDirection(
+  dx: number,
+  dy: number,
+  touchCount = 1,
+): SwipeDirection | null {
+  if (touchCount !== 1) return null;
+  if (Math.abs(dx) < MIN_SWIPE_DISTANCE) return null;
+  if (Math.abs(dx) < HORIZONTAL_SWIPE_RATIO * Math.abs(dy)) return null;
+  return dx < 0 ? 'next' : 'prev';
+}
 
 export interface VerdictReportSummary {
   status?: string;
