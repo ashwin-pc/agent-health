@@ -132,4 +132,17 @@ describe('TestCaseDefinition — SDK / code-authored cases', () => {
     expect(screen.getByText('Why are checkout requests failing?')).toBeTruthy();
     expect(screen.getByText('Identify the payment-service timeout')).toBeTruthy();
   });
+
+  it('uses canonical, case-sensitive label parsing for chips', () => {
+    render(React.createElement(TestCaseDefinition, { testCase: {
+      ...testCase,
+      category: undefined,
+      difficulty: undefined,
+      labels: ['category:RCA', 'difficulty:Hard', 'subcategory:network', 'Category:NotCanonical', 'difficulty:Impossible'],
+    } }));
+    for (const chip of ['RCA', 'Hard', 'network', 'Category:NotCanonical']) {
+      expect(screen.getByText(chip)).toBeTruthy();
+    }
+    expect(screen.queryByText('difficulty:Impossible')).toBeNull();
+  });
 });
