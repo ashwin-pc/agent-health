@@ -17,6 +17,7 @@ import { CheckCircle2, FileCode2 } from 'lucide-react';
 import { TestCase } from '@/types';
 import { Badge } from '@/components/ui/badge';
 import { Markdown, hasRealMarkdown } from '@/components/ui/markdown';
+import { parseLabels } from '@/lib/labels';
 
 interface TestCaseDefinitionProps {
   testCase: TestCase;
@@ -30,10 +31,6 @@ const difficultyClasses: Record<string, string> = {
   medium: 'border-amber-300 bg-amber-50 text-amber-700 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-400',
   hard: 'border-red-300 bg-red-50 text-red-700 dark:border-red-500/30 dark:bg-red-500/10 dark:text-red-400',
 };
-
-function labelValue(testCase: TestCase, prefix: 'category:' | 'difficulty:'): string | undefined {
-  return testCase.labels?.find(label => label.toLowerCase().startsWith(prefix))?.slice(prefix.length);
-}
 
 function formatContextValue(value: string): string {
   try {
@@ -68,12 +65,13 @@ export const TestCaseDefinition: React.FC<TestCaseDefinitionProps> = ({
     );
   }
 
-  const category = labelValue(testCase, 'category:') || testCase.category;
-  const difficulty = labelValue(testCase, 'difficulty:') || testCase.difficulty;
-  const extraLabels = (testCase.labels || []).filter(label => {
-    const normalized = label.toLowerCase();
-    return !normalized.startsWith('category:') && !normalized.startsWith('difficulty:');
-  });
+  const parsedLabels = parseLabels(testCase.labels || []);
+  const category = parsedLabels.category || testCase.category;
+  const difficulty = parsedLabels.difficulty || testCase.difficulty;
+  const extraLabels = [
+    ...(parsedLabels.subcategory ? [parsedLabels.subcategory] : []),
+    ...parsedLabels.generic,
+  ];
   const textClass = compact ? 'text-[10px]' : 'text-xs';
   const sectionLabelClass = 'text-[9px] font-semibold text-muted-foreground uppercase tracking-wider mb-1';
 
