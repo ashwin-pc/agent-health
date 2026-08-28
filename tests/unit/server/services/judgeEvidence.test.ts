@@ -106,15 +106,40 @@ describe('judge evidence bundle', () => {
     } finally { await removeJudgeEvidence(bundle); }
   });
 
-  it('copies a recorded workspace without dereferencing symlinks', async () => {
+  it('mounts a recorded workspace read-only without creating a copied inode', async () => {
     const workspace = await fs.mkdtemp(path.join(os.tmpdir(), 'judge-workspace-'));
-    await fs.writeFile(path.join(workspace, 'real.txt'), 'real');
+    await fs.mkdir(path.join(workspace, 'nested'));
+    await fs.writeFile(path.join(workspace, 'nested', 'real.txt'), 'real\n');
+    await fs.writeFile(path.join(workspace, 'large.bin'), '');
+    await fs.truncate(path.join(workspace, 'large.bin'), 32 * 1024 * 1024);
     await fs.symlink('/etc/passwd', path.join(workspace, 'link'));
     (global as any).fetch = jest.fn().mockResolvedValue({ ok: true, json: async () => ({ spans: [], logs: [] }) });
     const bundle = await buildJudgeEvidence({ ...request, evidenceContext: { ...request.evidenceContext, workspaceDir: workspace } }, 'http://localhost:4001');
     try {
-      expect(await fs.readFile(path.join(bundle.evidenceDir, 'workspace', 'real.txt'), 'utf8')).toBe('real');
-      await expect(fs.lstat(path.join(bundle.evidenceDir, 'workspace', 'link'))).rejects.toMatchObject({ code: 'ENOENT' });
+      expect(bundle.mounts).toContainEqual({
+        virtualPath: 'evidence/workspace',
+        sourcePaths: [await fs.realpath(workspace)],
+      });
+      expect(bundle.files).toContain('evidence/workspace/');
+      expect(bundle.files).not.toContain('evidence/workspace/nested/real.txt');
+      expect(bundle.trace.exists).toBe(false);
+
+      // No workspace directory or regular file exists in the judgment tmpdir;
+      // even a large source is represented only by the mount-table entry.
+      await expect(fs.lstat(path.join(bundle.evidenceDir, 'workspace'))).rejects.toMatchObject({ code: 'ENOENT' });
+      const physicalEntries = await fs.readdir(bundle.evidenceDir);
+      expect(physicalEntries.some((entry) => entry.startsWith('workspace'))).toBe(false);
+
+      const tools = new Map<string, any>();
+      createEvidenceJudgeExtension(bundle.rootDir, { mounts: bundle.mounts })(
+        { registerTool: (tool: any) => tools.set(tool.name, tool) } as any
+      );
+      expect((await tools.get('bash').execute('1', { command: 'cat evidence/workspace/nested/real.txt' })).content[0].text)
+        .toContain('real');
+      expect((await tools.get('bash').execute('2', { command: 'cat evidence/workspace/link' })).content[0].text)
+        .toMatch(/symlinks are not allowed/);
+      expect((await tools.get('bash').execute('3', { command: 'echo changed > evidence/workspace/nested/real.txt' })).content[0].text)
+        .toMatch(/writes are allowed only under scratch/);
     } finally {
       await removeJudgeEvidence(bundle);
       await fs.rm(workspace, { recursive: true, force: true });
