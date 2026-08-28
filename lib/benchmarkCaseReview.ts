@@ -19,6 +19,50 @@ export type SwipeDirection = 'prev' | 'next';
 
 const MIN_SWIPE_DISTANCE = 48;
 const HORIZONTAL_SWIPE_RATIO = 1.5;
+const PAGER_DRAG_SLOP = 10;
+const PAGER_EDGE_RESISTANCE = 0.35;
+
+export interface PagerDragInput {
+  dx: number;
+  dy: number;
+  latched: boolean;
+  atStart: boolean;
+  atEnd: boolean;
+}
+
+export interface PagerDragResult {
+  offset: number;
+  latched: boolean;
+}
+
+/**
+ * Latch a horizontal pager drag after a small slop, then preserve that latch
+ * for the rest of the gesture. Pulling beyond either end receives resistance
+ * so the pane communicates the boundary without changing cases.
+ *
+ * Reduced-motion behavior intentionally stays out of this geometry helper;
+ * callers suppress the returned offset while retaining gesture navigation.
+ */
+export function computePagerDrag({
+  dx,
+  dy,
+  latched,
+  atStart,
+  atEnd,
+}: PagerDragInput): PagerDragResult {
+  const nextLatched = latched || (
+    Math.abs(dx) > PAGER_DRAG_SLOP &&
+    Math.abs(dx) > Math.abs(dy)
+  );
+  if (!nextLatched) return { offset: 0, latched: false };
+
+  const beyondStart = atStart && dx > 0;
+  const beyondEnd = atEnd && dx < 0;
+  return {
+    offset: (beyondStart || beyondEnd) ? dx * PAGER_EDGE_RESISTANCE : dx,
+    latched: true,
+  };
+}
 
 /**
  * Resolve a completed gesture without suppressing native touch movement. A

@@ -17,6 +17,7 @@ import { Progress } from '@/components/ui/progress';
 import { BenchmarkCaseDefinition } from '@/components/evals3/BenchmarkCaseDefinition';
 import {
   buildCaseReviewRows,
+  computePagerDrag,
   deriveCaseVerdict,
   filterAndSortCaseRows,
   getCasePagerPosition,
@@ -280,7 +281,38 @@ export const BenchmarkCasesTab: React.FC<BenchmarkCasesTabProps> = ({
   const [filter, setFilter] = useState<CaseReviewFilter>('all');
   const [lastSelectedCaseId, setLastSelectedCaseId] = useState<string | undefined>(selectedCaseId);
   const listRef = useRef<HTMLDivElement>(null);
-  const swipeStartRef = useRef<{ x: number; y: number } | null>(null);
+  const pagerContainerRef = useRef<HTMLDivElement>(null);
+  const pagerPaneRef = useRef<HTMLDivElement>(null);
+  const swipeStartRef = useRef<{
+    x: number;
+    y: number;
+    latched: boolean;
+  } | null>(null);
+  const pagerNavigationRef = useRef<{
+    previousId?: string;
+    nextId?: string;
+    onSelectCase: (testCaseId: string) => void;
+  }>({ onSelectCase });
+  const prefersReducedMotionRef = useRef(false);
+  const animationTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const animationFrameRefs = useRef<number[]>([]);
+  const animationTokenRef = useRef(0);
+
+  const stopPagerAnimation = (resetVisual: boolean) => {
+    animationTokenRef.current += 1;
+    if (animationTimerRef.current !== null) {
+      clearTimeout(animationTimerRef.current);
+      animationTimerRef.current = null;
+    }
+    animationFrameRefs.current.forEach(frame => cancelAnimationFrame(frame));
+    animationFrameRefs.current = [];
+    if (resetVisual && pagerPaneRef.current) {
+      pagerPaneRef.current.style.transition = 'none';
+      pagerPaneRef.current.style.transform = '';
+      pagerPaneRef.current.style.opacity = '';
+      pagerPaneRef.current.style.willChange = '';
+    }
+  };
 
   useEffect(() => {
     if (selectedCaseId) setLastSelectedCaseId(selectedCaseId);
@@ -306,6 +338,11 @@ export const BenchmarkCasesTab: React.FC<BenchmarkCasesTabProps> = ({
   }), [rows]);
   const selectedRow = rows.find(row => row.testCase.id === selectedCaseId);
   const pager = getCasePagerPosition(filteredRows, selectedCaseId);
+  pagerNavigationRef.current = {
+    previousId: pager.previousId,
+    nextId: pager.nextId,
+    onSelectCase,
+  };
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -332,29 +369,188 @@ export const BenchmarkCasesTab: React.FC<BenchmarkCasesTabProps> = ({
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [filteredRows, selectedCaseId, onSelectCase]);
 
-  const handleTouchStart = (event: React.TouchEvent<HTMLDivElement>) => {
-    swipeStartRef.current = null;
-    if (!window.matchMedia('(max-width: 767px)').matches || event.touches.length !== 1) return;
-    swipeStartRef.current = {
-      x: event.touches[0].clientX,
-      y: event.touches[0].clientY,
+  useEffect(() => {
+    const mediaQuery = window.matchMedia('(prefers-reduced-motion: reduce)');
+    const updatePreference = () => {
+      prefersReducedMotionRef.current = mediaQuery.matches;
+      if (mediaQuery.matches) stopPagerAnimation(true);
     };
-  };
+    updatePreference();
+    mediaQuery.addEventListener?.('change', updatePreference);
+    return () => mediaQuery.removeEventListener?.('change', updatePreference);
+  }, []);
 
-  const handleTouchEnd = (event: React.TouchEvent<HTMLDivElement>) => {
-    const start = swipeStartRef.current;
-    swipeStartRef.current = null;
-    if (!start || event.changedTouches.length !== 1) return;
+  const hasSelectedRow = Boolean(selectedRow);
+  useEffect(() => {
+    const container = pagerContainerRef.current;
+    if (!container || !hasSelectedRow) return;
 
-    const touch = event.changedTouches[0];
-    const direction = resolveSwipeDirection(
-      touch.clientX - start.x,
-      touch.clientY - start.y,
-      event.changedTouches.length,
-    );
-    const targetId = direction === 'next' ? pager.nextId : direction === 'prev' ? pager.previousId : undefined;
-    if (targetId) onSelectCase(targetId);
-  };
+    const snapBack = () => {
+      const pane = pagerPaneRef.current;
+      if (!pane || prefersReducedMotionRef.current) {
+        stopPagerAnimation(true);
+        return;
+      }
+
+      stopPagerAnimation(false);
+      const token = animationTokenRef.current;
+      pane.style.transition = 'transform 150ms ease-out, opacity 150ms ease-out';
+      pane.style.willChange = 'transform, opacity';
+      void pane.offsetWidth;
+      pane.style.transform = 'translate3d(0px, 0, 0)';
+      pane.style.opacity = '1';
+      animationTimerRef.current = setTimeout(() => {
+        if (animationTokenRef.current !== token) return;
+        pane.style.transition = 'none';
+        pane.style.transform = '';
+        pane.style.opacity = '';
+        pane.style.willChange = '';
+        animationTimerRef.current = null;
+      }, 170);
+    };
+
+    const handleTouchStart = (event: TouchEvent) => {
+      swipeStartRef.current = null;
+      if (!window.matchMedia('(max-width: 767px)').matches || event.touches.length !== 1) return;
+      stopPagerAnimation(true);
+      swipeStartRef.current = {
+        x: event.touches[0].clientX,
+        y: event.touches[0].clientY,
+        latched: false,
+      };
+    };
+
+    const handleTouchMove = (event: TouchEvent) => {
+      const start = swipeStartRef.current;
+      if (!start) return;
+      if (event.touches.length !== 1) {
+        swipeStartRef.current = null;
+        snapBack();
+        return;
+      }
+
+      const navigation = pagerNavigationRef.current;
+      const drag = computePagerDrag({
+        dx: event.touches[0].clientX - start.x,
+        dy: event.touches[0].clientY - start.y,
+        latched: start.latched,
+        atStart: !navigation.previousId,
+        atEnd: !navigation.nextId,
+      });
+      start.latched = drag.latched;
+      if (!drag.latched || prefersReducedMotionRef.current) return;
+
+      const pane = pagerPaneRef.current;
+      if (!pane) return;
+      pane.style.transition = 'none';
+      pane.style.transform = `translate3d(${drag.offset}px, 0, 0)`;
+      pane.style.opacity = '1';
+      pane.style.willChange = 'transform, opacity';
+    };
+
+    const handleTouchEnd = (event: TouchEvent) => {
+      const start = swipeStartRef.current;
+      swipeStartRef.current = null;
+      if (!start || event.changedTouches.length !== 1) {
+        if (start) snapBack();
+        return;
+      }
+
+      const touch = event.changedTouches[0];
+      const direction = resolveSwipeDirection(
+        touch.clientX - start.x,
+        touch.clientY - start.y,
+        event.changedTouches.length,
+      );
+      const navigation = pagerNavigationRef.current;
+      const targetId = direction === 'next'
+        ? navigation.nextId
+        : direction === 'prev'
+          ? navigation.previousId
+          : undefined;
+      if (!direction || !targetId) {
+        snapBack();
+        return;
+      }
+
+      if (prefersReducedMotionRef.current) {
+        stopPagerAnimation(true);
+        navigation.onSelectCase(targetId);
+        return;
+      }
+
+      const pane = pagerPaneRef.current;
+      if (!pane) {
+        navigation.onSelectCase(targetId);
+        return;
+      }
+
+      stopPagerAnimation(false);
+      const token = animationTokenRef.current;
+      pane.style.transition = 'transform 200ms ease-out, opacity 200ms ease-out';
+      pane.style.willChange = 'transform, opacity';
+      void pane.offsetWidth;
+      pane.style.transform = direction === 'next'
+        ? 'translate3d(-100%, 0, 0)'
+        : 'translate3d(100%, 0, 0)';
+      pane.style.opacity = '0';
+
+      animationTimerRef.current = setTimeout(() => {
+        if (animationTokenRef.current !== token) return;
+        animationTimerRef.current = null;
+        const currentPane = pagerPaneRef.current;
+        if (!currentPane) {
+          navigation.onSelectCase(targetId);
+          return;
+        }
+
+        currentPane.style.transition = 'none';
+        currentPane.style.transform = direction === 'next'
+          ? 'translate3d(40px, 0, 0)'
+          : 'translate3d(-40px, 0, 0)';
+        currentPane.style.opacity = '0';
+        void currentPane.offsetWidth;
+        navigation.onSelectCase(targetId);
+
+        const frame = requestAnimationFrame(() => {
+          if (animationTokenRef.current !== token || !pagerPaneRef.current) return;
+          const enteringPane = pagerPaneRef.current;
+          void enteringPane.offsetWidth;
+          enteringPane.style.transition = 'transform 180ms ease-out, opacity 180ms ease-out';
+          enteringPane.style.transform = 'translate3d(0px, 0, 0)';
+          enteringPane.style.opacity = '1';
+          animationTimerRef.current = setTimeout(() => {
+            if (animationTokenRef.current !== token || !pagerPaneRef.current) return;
+            pagerPaneRef.current.style.transition = 'none';
+            pagerPaneRef.current.style.transform = '';
+            pagerPaneRef.current.style.opacity = '';
+            pagerPaneRef.current.style.willChange = '';
+            animationTimerRef.current = null;
+          }, 200);
+        });
+        animationFrameRefs.current.push(frame);
+      }, 200);
+    };
+
+    const handleTouchCancel = () => {
+      if (!swipeStartRef.current) return;
+      swipeStartRef.current = null;
+      snapBack();
+    };
+
+    container.addEventListener('touchstart', handleTouchStart, { passive: true });
+    container.addEventListener('touchmove', handleTouchMove, { passive: true });
+    container.addEventListener('touchend', handleTouchEnd, { passive: true });
+    container.addEventListener('touchcancel', handleTouchCancel, { passive: true });
+    return () => {
+      container.removeEventListener('touchstart', handleTouchStart);
+      container.removeEventListener('touchmove', handleTouchMove);
+      container.removeEventListener('touchend', handleTouchEnd);
+      container.removeEventListener('touchcancel', handleTouchCancel);
+      swipeStartRef.current = null;
+      stopPagerAnimation(true);
+    };
+  }, [hasSelectedRow]);
 
   const filterButtons: Array<{ value: CaseReviewFilter; count: number }> = [
     { value: 'all', count: rows.length },
@@ -435,14 +631,18 @@ export const BenchmarkCasesTab: React.FC<BenchmarkCasesTabProps> = ({
       <section className={`flex-1 min-w-0 min-h-0 ${selectedRow ? '' : 'max-md:hidden'}`}>
         {selectedRow ? (
           <div
-            className="h-full flex flex-col min-h-0"
-            data-testid="case-detail-pane"
+            ref={pagerContainerRef}
+            className="h-full min-h-0 overflow-hidden"
             data-mobile-case-pager
-            onTouchStart={handleTouchStart}
-            onTouchEnd={handleTouchEnd}
-            onTouchCancel={() => { swipeStartRef.current = null; }}
+            style={{ touchAction: 'pan-y' }}
           >
-            <div className="border-b p-3 shrink-0 space-y-3">
+            <div
+              ref={pagerPaneRef}
+              className="h-full flex flex-col min-h-0"
+              data-testid="case-detail-pane"
+              data-mobile-case-pane
+            >
+              <div className="border-b p-3 shrink-0 space-y-3">
               <div className="flex items-center justify-between gap-3">
                 <div className="flex items-center gap-2 min-w-0">
                   <Button variant="ghost" size="sm" className="md:hidden h-7 px-2" onClick={onClearCase}><ArrowLeft size={14} className="mr-1" />Cases</Button>
@@ -462,12 +662,13 @@ export const BenchmarkCasesTab: React.FC<BenchmarkCasesTabProps> = ({
                 <RecentVerdictChips benchmarkId={benchmarkId} testCase={selectedRow.testCase} recentRuns={recentRuns} reportsById={reportsById} />
               </div>
             </div>
-            <div className="flex-1 min-h-0 overflow-y-auto p-4 sm:p-6">
-              <div className="max-w-4xl mx-auto">
-                <BenchmarkCaseDefinition
-                  testCase={selectedRow.testCase}
-                  totalRuns={allRuns.filter(run => !!run.results?.[selectedRow.testCase.id]).length}
-                />
+              <div className="flex-1 min-h-0 overflow-y-auto p-4 sm:p-6">
+                <div className="max-w-4xl mx-auto">
+                  <BenchmarkCaseDefinition
+                    testCase={selectedRow.testCase}
+                    totalRuns={allRuns.filter(run => !!run.results?.[selectedRow.testCase.id]).length}
+                  />
+                </div>
               </div>
             </div>
           </div>

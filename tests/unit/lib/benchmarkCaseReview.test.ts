@@ -6,6 +6,7 @@
 import {
   buildCaseReviewRows,
   classifyCaseVerdicts,
+  computePagerDrag,
   deriveCaseVerdict,
   filterAndSortCaseRows,
   getCasePagerPosition,
@@ -93,6 +94,49 @@ describe('benchmark case-review verdicts', () => {
 });
 
 describe('benchmark case-review swipe navigation', () => {
+  it('latches pager drag only after crossing the horizontal slop boundary', () => {
+    expect(computePagerDrag({
+      dx: 10, dy: 0, latched: false, atStart: false, atEnd: false,
+    })).toEqual({ offset: 0, latched: false });
+    expect(computePagerDrag({
+      dx: 10.01, dy: 0, latched: false, atStart: false, atEnd: false,
+    })).toEqual({ offset: 10.01, latched: true });
+  });
+
+  it('requires horizontal dominance to latch and preserves an existing latch', () => {
+    expect(computePagerDrag({
+      dx: -24, dy: 24, latched: false, atStart: false, atEnd: false,
+    })).toEqual({ offset: 0, latched: false });
+    expect(computePagerDrag({
+      dx: -24, dy: 23.99, latched: false, atStart: false, atEnd: false,
+    })).toEqual({ offset: -24, latched: true });
+    expect(computePagerDrag({
+      dx: -8, dy: 40, latched: true, atStart: false, atEnd: false,
+    })).toEqual({ offset: -8, latched: true });
+  });
+
+  it('applies 0.35 resistance only while pulling beyond a pager edge', () => {
+    expect(computePagerDrag({
+      dx: 100, dy: 0, latched: false, atStart: true, atEnd: false,
+    }).offset).toBeCloseTo(35);
+    expect(computePagerDrag({
+      dx: -100, dy: 0, latched: false, atStart: false, atEnd: true,
+    }).offset).toBeCloseTo(-35);
+    expect(computePagerDrag({
+      dx: -100, dy: 0, latched: false, atStart: true, atEnd: false,
+    }).offset).toBe(-100);
+  });
+
+  it('keeps drag geometry independent of reduced-motion presentation', () => {
+    const drag = computePagerDrag({
+      dx: -80, dy: 2, latched: false, atStart: false, atEnd: false,
+    });
+    // The component renders zero offset for reduced motion; gesture geometry
+    // remains available so touchend can still resolve navigation.
+    expect(drag).toEqual({ offset: -80, latched: true });
+    expect({ ...drag, offset: 0 }).toEqual({ offset: 0, latched: true });
+  });
+
   it('accepts the distance and horizontal-ratio boundaries', () => {
     expect(resolveSwipeDirection(-48, 32)).toBe('next');
     expect(resolveSwipeDirection(48, -32)).toBe('prev');
