@@ -76,6 +76,11 @@ module.exports = {
     'lib/**/*.ts',
     'cli/**/*.ts',
     'types/**/*.ts',
+    // Explicitly collect the small Overview state surfaces exercised by their
+    // focused component/hook tests without pulling the legacy Dashboard's
+    // unrelated rendering branches into this coverage scope.
+    'hooks/useDataState.ts',
+    'components/dashboard/ReadyToRun.tsx',
     '!**/__tests__/**',
     '!**/*.test.ts',
     '!**/dist/**',

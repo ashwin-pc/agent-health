@@ -32,7 +32,11 @@ describe('useDataState', () => {
     const { result } = renderHook(() => useDataState());
     await waitFor(() => expect(result.current.isLoading).toBe(false));
 
-    expect(result.current.dataState).toEqual({ hasStorageConfigured: true, hasData: true });
+    expect(result.current.dataState).toEqual({
+      hasStorageConfigured: true,
+      hasData: true,
+      overviewState: 'dashboard',
+    });
     expect(mockFetch).not.toHaveBeenCalled();
   });
 
@@ -44,12 +48,38 @@ describe('useDataState', () => {
     });
     mockFetch
       .mockResolvedValueOnce({ ok: true, json: async () => ({ benchmarks: [{ runs: [{ id: 'run-1' }] }] }) })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ testCases: [], total: 0 }) })
       .mockResolvedValueOnce({ ok: true, json: async () => ({ evaluationRuns: [], total: 0 }) });
 
     const { result } = renderHook(() => useDataState());
     await waitFor(() => expect(result.current.isLoading).toBe(false));
 
-    expect(result.current.dataState).toEqual({ hasStorageConfigured: false, hasData: true });
+    expect(result.current.dataState).toEqual({
+      hasStorageConfigured: false,
+      hasData: true,
+      overviewState: 'dashboard',
+    });
+  });
+
+  it('shows ready-to-run when definitions exist but no run has completed', async () => {
+    mockGetConfigStatus.mockResolvedValue({
+      storage: { configured: false, source: 'none' },
+      observability: { configured: false, source: 'none' },
+      runtime: { storage: { backend: 'file', error: null, configuredEndpoint: null, drifted: false } },
+    });
+    mockFetch
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ benchmarks: [] }) })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ testCases: [{ id: 'tc-1' }], total: 1 }) })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ evaluationRuns: [], total: 0 }) });
+
+    const { result } = renderHook(() => useDataState());
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+
+    expect(result.current.dataState).toEqual({
+      hasStorageConfigured: false,
+      hasData: false,
+      overviewState: 'ready-to-run',
+    });
   });
 
   it('keeps onboarding for genuinely empty file storage', async () => {
@@ -60,11 +90,16 @@ describe('useDataState', () => {
     });
     mockFetch
       .mockResolvedValueOnce({ ok: true, json: async () => ({ benchmarks: [] }) })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ testCases: [], total: 0 }) })
       .mockResolvedValueOnce({ ok: true, json: async () => ({ evaluationRuns: [], total: 0 }) });
 
     const { result } = renderHook(() => useDataState());
     await waitFor(() => expect(result.current.isLoading).toBe(false));
 
-    expect(result.current.dataState.hasData).toBe(false);
+    expect(result.current.dataState).toEqual({
+      hasStorageConfigured: false,
+      hasData: false,
+      overviewState: 'onboarding',
+    });
   });
 });
