@@ -163,14 +163,12 @@ function RecentVerdictChips({
 function SuiteHealth({
   rows,
   recentRuns,
-  allRuns,
   totalRuns,
   onSelectCase,
   onOpenRuns,
 }: {
   rows: ReturnType<typeof buildCaseReviewRows<TestCase & { prompt?: string }>>;
   recentRuns: BenchmarkRun[];
-  allRuns: BenchmarkRun[];
   totalRuns: number;
   onSelectCase: (testCaseId: string) => void;
   onOpenRuns: () => void;
@@ -235,7 +233,7 @@ function SuiteHealth({
               ) : attention.map(row => (
                 <button key={row.testCase.id} type="button" onClick={() => onSelectCase(row.testCase.id)} className="w-full flex items-center justify-between gap-3 rounded px-2 py-1.5 text-left hover:bg-muted">
                   <span className="text-sm truncate">{row.testCase.name}</span>
-                  <span className="text-xs text-muted-foreground shrink-0">{row.passRate === null ? 'Error' : `${Math.round(row.passRate * 100)}%`}</span>
+                  <span className="text-xs text-muted-foreground shrink-0">{row.verdicts.includes('errored') ? 'Evaluator error' : row.passRate === null ? 'No score' : `${Math.round(row.passRate * 100)}%`}</span>
                 </button>
               ))}
             </CardContent>
@@ -441,13 +439,13 @@ export const BenchmarkCasesTab: React.FC<BenchmarkCasesTabProps> = ({
             </div>
           </div>
         ) : (
-          <SuiteHealth rows={rows} recentRuns={recentRuns} allRuns={allRuns} totalRuns={totalRuns} onSelectCase={onSelectCase} onOpenRuns={onOpenRuns} />
+          <SuiteHealth rows={rows} recentRuns={recentRuns} totalRuns={totalRuns} onSelectCase={onSelectCase} onOpenRuns={onOpenRuns} />
         )}
       </section>
 
       {!selectedRow && (
         <div className="hidden max-md:block border-t mt-4">
-          <SuiteHealth rows={rows} recentRuns={recentRuns} allRuns={allRuns} totalRuns={totalRuns} onSelectCase={onSelectCase} onOpenRuns={onOpenRuns} />
+          <SuiteHealth rows={rows} recentRuns={recentRuns} totalRuns={totalRuns} onSelectCase={onSelectCase} onOpenRuns={onOpenRuns} />
         </div>
       )}
     </div>
