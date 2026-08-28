@@ -67,7 +67,7 @@ const ENTRY_DESCRIPTIONS: Record<string, string> = {
   'evidence/steps': 'one complete file per step',
   'evidence/spans.ndjson': 'canonical trace-store mount (read-only)',
   'evidence/logs.ndjson': 'canonical log-store mount (read-only)',
-  'evidence/workspace': 'symlink-free run-workspace snapshot',
+  'evidence/workspace': 'canonical run-workspace mount (read-only)',
   'scratch': 'writable temporary analysis files',
 };
 
@@ -151,7 +151,7 @@ Registered judgment tools: ${tools.map((tool) => `\`${tool}\``).join(', ')}.
 ${tree}
 \`\`\`
 
-\`evidence/\` is READ-ONLY. Writes/redirections are allowed only under \`scratch/\` (100 MB / 500-file quota). The working directory is fixed at the tree root; \`cd\` is not supported. Every physical path is realpath-confined to this tree and symlinks are rejected. Explicit virtual mounts resolve only to their declared canonical read-only files. Output is capped near 50 KB; narrow broad queries.
+\`evidence/\` is READ-ONLY. Writes/redirections are allowed only under \`scratch/\` (100 MB / 500-file quota). The working directory is fixed at the tree root; \`cd\` is not supported. Every physical path is realpath-confined to this tree and symlinks are rejected. Explicit virtual mounts resolve only to their declared canonical read-only files or workspace tree. Output is capped near 50 KB; narrow broad queries.
 
 Available restricted bash commands: ${RESTRICTED_COMMANDS.map((command) => `\`${command}\``).join(', ')}. Sequences (\`;\`, \`&&\`, \`||\`), pipelines, quoted arguments, \`<\`, and \`>/>> scratch/...\` are supported. Variables/expansion, command substitution, backticks, globs, subshells, and background \`&\` are rejected.
 

@@ -153,6 +153,48 @@ describe('confinement and failure semantics', () => {
     }
   });
 
+  it('mounts a workspace directory read-only without copying or escaping its root', async () => {
+    const workspaceParent = await fs.mkdtemp(path.join(os.tmpdir(), 'restricted-workspace-store-'));
+    const workspace = path.join(workspaceParent, 'run-workspace');
+    const sibling = path.join(workspaceParent, 'sibling-secret.txt');
+    await fs.mkdir(path.join(workspace, 'nested'), { recursive: true });
+    await fs.writeFile(path.join(workspace, 'nested', 'events.ndjson'), '{"kind":"tool","ok":true}\n');
+    await fs.writeFile(path.join(workspace, 'notes.txt'), 'alpha\nneedle\n');
+    await fs.writeFile(sibling, 'SECRET\n');
+    await fs.symlink(sibling, path.join(workspace, 'escape-link'));
+    // A sparse file proves mount creation does not copy or apply evidence-size
+    // limits; individual commands retain their normal bounded-input limits.
+    await fs.writeFile(path.join(workspace, 'large.bin'), '');
+    await fs.truncate(path.join(workspace, 'large.bin'), 32 * 1024 * 1024);
+    try {
+      const mounted = await RestrictedBash.create({
+        rootDir: root,
+        mounts: [{ virtualPath: 'evidence/workspace', sourcePaths: [workspace] }],
+        maxFileBytes: 32,
+      });
+      expect((await mounted.execute('ls evidence')).stdout).toContain('workspace/');
+      expect((await mounted.execute('ls evidence/workspace')).stdout).toContain('nested/');
+      expect((await mounted.execute('cat evidence/workspace/notes.txt')).stdout).toContain('needle');
+      expect((await mounted.execute('grep needle evidence/workspace/notes.txt')).stdout).toBe('needle\n');
+      expect((await mounted.execute('rg -r tool evidence/workspace/nested')).stdout).toContain('events.ndjson');
+      expect((await mounted.execute("jq -r '.kind' evidence/workspace/nested/events.ndjson")).stdout.trim()).toBe('tool');
+      expect((await mounted.execute("find evidence/workspace -type f -name '*.ndjson'")).stdout)
+        .toBe('evidence/workspace/nested/events.ndjson\n');
+      expect((await mounted.execute('find evidence -maxdepth 2 -type f')).stdout).toContain('evidence/workspace/notes.txt');
+      expect((await mounted.execute('ls -l evidence/workspace/large.bin')).exitCode).toBe(0);
+
+      expect((await mounted.execute('cat evidence/workspace/../sibling-secret.txt')).stderr).toMatch(/path escape rejected/);
+      expect((await mounted.execute('cat evidence/sibling-secret.txt')).stderr).toMatch(/no such file/);
+      expect((await mounted.execute(`cat ${sibling}`)).stderr).toMatch(/outside judgment directory/);
+      expect((await mounted.execute('cat evidence/workspace/escape-link')).stderr).toMatch(/symlinks are not allowed/);
+      expect((await mounted.execute('echo changed > evidence/workspace/notes.txt')).stderr)
+        .toMatch(/writes are allowed only under scratch/);
+      await expect(fs.lstat(path.join(root, 'evidence', 'workspace'))).rejects.toMatchObject({ code: 'ENOENT' });
+    } finally {
+      await fs.rm(workspaceParent, { recursive: true, force: true });
+    }
+  });
+
   it('a mounted canonical file cannot be pivoted to a sibling trace-store file', async () => {
     const traceDir = await fs.mkdtemp(path.join(os.tmpdir(), 'restricted-mount-escape-'));
     const allowed = path.join(traceDir, 'allowed.ndjson');

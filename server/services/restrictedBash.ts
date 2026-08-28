@@ -32,9 +32,27 @@ const MAX_REGEX_LENGTH = 512;
 export interface RestrictedBashMount {
   /** Virtual, root-relative read path (for example evidence/spans.ndjson). */
   virtualPath: string;
-  /** Exact canonical regular file(s) concatenated when the virtual file is read. */
+  /**
+   * Canonical source(s). Multiple regular files are concatenated into one
+   * virtual file; one directory exposes a virtual read-only directory tree.
+   */
   sourcePaths: readonly string[];
 }
+
+type FileMount = {
+  kind: 'file';
+  virtualPath: string;
+  virtualAbs: string;
+  sourcePaths: readonly string[];
+};
+type DirectoryMount = {
+  kind: 'directory';
+  virtualPath: string;
+  virtualAbs: string;
+  sourceRoot: string;
+};
+type ResolvedMount = FileMount | DirectoryMount;
+type MountedPath = FileMount | (DirectoryMount & { sourcePath: string });
 
 export interface RestrictedBashOptions {
   rootDir: string;
@@ -208,12 +226,12 @@ export class RestrictedBash {
   private readonly maxFileBytes: number;
   private readonly maxInputBytes: number;
   private readonly onCommand?: (command: string) => void;
-  private readonly mounts: ReadonlyMap<string, { virtualPath: string; sourcePaths: readonly string[] }>;
+  private readonly mounts: ReadonlyMap<string, ResolvedMount>;
 
   private constructor(
     options: RestrictedBashOptions,
     rootDir: string,
-    mounts: ReadonlyMap<string, { virtualPath: string; sourcePaths: readonly string[] }>
+    mounts: ReadonlyMap<string, ResolvedMount>
   ) {
     this.rootDir = rootDir;
     this.scratchDir = path.join(rootDir, 'scratch');
@@ -234,7 +252,7 @@ export class RestrictedBash {
     const scratchReal = await fs.realpath(scratch);
     if (!RestrictedBash.inside(rootDir, scratchReal)) throw new Error('restricted bash: scratch is outside the evidence root');
 
-    const mounts = new Map<string, { virtualPath: string; sourcePaths: readonly string[] }>();
+    const mounts = new Map<string, ResolvedMount>();
     for (const mount of options.mounts ?? []) {
       if (!mount.virtualPath || path.isAbsolute(mount.virtualPath) || mount.virtualPath.split(/[\\/]+/).includes('..')) {
         throw new Error(`restricted bash: invalid mount path: ${mount.virtualPath}`);
@@ -243,7 +261,9 @@ export class RestrictedBash {
       if (!RestrictedBash.inside(rootDir, virtualAbs) || RestrictedBash.inside(scratchReal, virtualAbs)) {
         throw new Error(`restricted bash: mount must be read-only and inside the judgment tree: ${mount.virtualPath}`);
       }
-      if (mounts.has(virtualAbs)) throw new Error(`restricted bash: duplicate mount: ${mount.virtualPath}`);
+      if ([...mounts.keys()].some((existing) => RestrictedBash.inside(existing, virtualAbs) || RestrictedBash.inside(virtualAbs, existing))) {
+        throw new Error(`restricted bash: overlapping mount: ${mount.virtualPath}`);
+      }
       if (await fs.lstat(virtualAbs).catch(() => undefined)) {
         throw new Error(`restricted bash: mount shadows a physical entry: ${mount.virtualPath}`);
       }
@@ -252,15 +272,29 @@ export class RestrictedBash {
         throw new Error(`restricted bash: mount parent is outside the judgment tree: ${mount.virtualPath}`);
       }
       if (!mount.sourcePaths.length) throw new Error(`restricted bash: mount has no sources: ${mount.virtualPath}`);
+
+      const sourceStats = await Promise.all(mount.sourcePaths.map(async (source) => ({
+        source,
+        stat: await fs.lstat(source).catch(() => undefined),
+      })));
+      if (sourceStats.length === 1 && sourceStats[0].stat?.isDirectory() && !sourceStats[0].stat?.isSymbolicLink()) {
+        const sourceRoot = await fs.realpath(sourceStats[0].source);
+        mounts.set(virtualAbs, {
+          kind: 'directory', virtualAbs, virtualPath: path.relative(rootDir, virtualAbs), sourceRoot,
+        });
+        continue;
+      }
+
       const sourcePaths: string[] = [];
-      for (const source of mount.sourcePaths) {
-        const stat = await fs.lstat(source).catch(() => undefined);
+      for (const { source, stat } of sourceStats) {
         if (!stat?.isFile() || stat.isSymbolicLink()) {
-          throw new Error(`restricted bash: mount source must be a regular non-symlink file: ${source}`);
+          throw new Error(`restricted bash: mount source must be regular non-symlink file(s), or one non-symlink directory: ${source}`);
         }
         sourcePaths.push(await fs.realpath(source));
       }
-      mounts.set(virtualAbs, { virtualPath: path.relative(rootDir, virtualAbs), sourcePaths });
+      mounts.set(virtualAbs, {
+        kind: 'file', virtualAbs, virtualPath: path.relative(rootDir, virtualAbs), sourcePaths,
+      });
     }
     return new RestrictedBash(options, rootDir, mounts);
   }
@@ -278,31 +312,54 @@ export class RestrictedBash {
     if (input.split(/[\\/]+/).includes('..')) throw new Error(`restricted bash: path escape rejected: ${input}`);
   }
 
-  /** Resolve only an exact declared virtual path; prefixes never inherit access. */
-  private mountFor(input: string): { virtualPath: string; sourcePaths: readonly string[] } | undefined {
+  /** Resolve exact file mounts or descendants of an explicitly mounted directory. */
+  private mountFor(input: string): MountedPath | undefined {
     this.rejectTraversal(input);
     const candidate = path.isAbsolute(input) ? path.resolve(input) : path.resolve(this.rootDir, input || '.');
-    return this.mounts.get(candidate);
+    if (!RestrictedBash.inside(this.rootDir, candidate)) return undefined;
+    const exact = this.mounts.get(candidate);
+    if (exact?.kind === 'file') return exact;
+    for (const mount of this.mounts.values()) {
+      if (mount.kind === 'directory' && RestrictedBash.inside(mount.virtualAbs, candidate)) {
+        return { ...mount, sourcePath: path.join(mount.sourceRoot, path.relative(mount.virtualAbs, candidate)) };
+      }
+    }
+    return undefined;
   }
 
-  private mountsInDirectory(absDir: string): Array<{ name: string; virtualPath: string; sourcePaths: readonly string[] }> {
+  private mountsInDirectory(absDir: string): Array<ResolvedMount & { name: string }> {
     return [...this.mounts.entries()]
       .filter(([virtualAbs]) => path.dirname(virtualAbs) === absDir)
       .map(([virtualAbs, mount]) => ({ name: path.basename(virtualAbs), ...mount }))
       .sort((a, b) => a.name.localeCompare(b.name));
   }
 
-  private async validateMountSource(source: string): Promise<void> {
+  private async validateFileMountSource(source: string): Promise<void> {
     const stat = await fs.lstat(source).catch(() => undefined);
     if (!stat?.isFile() || stat.isSymbolicLink() || await fs.realpath(source).catch(() => undefined) !== source) {
-      throw new Error(`restricted bash: mounted source is no longer the exact allowed canonical file`);
+      throw new Error('restricted bash: mounted source is no longer the exact allowed canonical file');
     }
   }
 
-  private async mountSize(mount: { sourcePaths: readonly string[] }): Promise<number> {
+  private async validateDirectoryMountPath(mount: DirectoryMount & { sourcePath: string }): Promise<string> {
+    const rootStat = await fs.lstat(mount.sourceRoot).catch(() => undefined);
+    if (!rootStat?.isDirectory() || rootStat.isSymbolicLink() || await fs.realpath(mount.sourceRoot).catch(() => undefined) !== mount.sourceRoot) {
+      throw new Error('restricted bash: mounted workspace root is no longer the exact allowed canonical directory');
+    }
+    const stat = await fs.lstat(mount.sourcePath).catch(() => undefined);
+    if (!stat) throw new Error(`restricted bash: no such file or directory: ${mount.virtualPath}`);
+    if (stat.isSymbolicLink()) throw new Error(`restricted bash: symlinks are not allowed in mounted workspace: ${mount.virtualPath}`);
+    const real = await fs.realpath(mount.sourcePath);
+    if (!RestrictedBash.inside(mount.sourceRoot, real) || real !== path.resolve(mount.sourcePath)) {
+      throw new Error(`restricted bash: mounted workspace path escapes its root: ${mount.virtualPath}`);
+    }
+    return real;
+  }
+
+  private async mountSize(mount: FileMount): Promise<number> {
     let size = 0;
     for (const source of mount.sourcePaths) {
-      await this.validateMountSource(source);
+      await this.validateFileMountSource(source);
       size += (await fs.stat(source)).size;
     }
     return size;
@@ -310,10 +367,12 @@ export class RestrictedBash {
 
   private async readText(input: string): Promise<string> {
     const mount = this.mountFor(input);
-    const paths = mount ? [...mount.sourcePaths] : [await this.readPath(input)];
+    const paths = mount?.kind === 'file'
+      ? [...mount.sourcePaths]
+      : [mount ? await this.validateDirectoryMountPath(mount) : await this.readPath(input)];
     let total = 0;
     for (const source of paths) {
-      if (mount) await this.validateMountSource(source);
+      if (mount?.kind === 'file') await this.validateFileMountSource(source);
       const size = (await fs.stat(source)).size;
       if (size > this.maxFileBytes) {
         throw new Error(`restricted bash: input ${input} is ${size} bytes (per-file limit ${this.maxFileBytes}); narrow or split the evidence`);
@@ -328,6 +387,11 @@ export class RestrictedBash {
 
   private async readPath(input: string): Promise<string> {
     this.rejectTraversal(input);
+    const mounted = this.mountFor(input);
+    if (mounted) {
+      if (mounted.kind === 'file') throw new Error(`restricted bash: ${input}: is a virtual file`);
+      return this.validateDirectoryMountPath(mounted);
+    }
     const candidate = path.isAbsolute(input) ? path.resolve(input) : path.resolve(this.rootDir, input || '.');
     if (!RestrictedBash.inside(this.rootDir, candidate)) throw new Error(`restricted bash: path outside judgment directory: ${input}`);
     const stat = await fs.lstat(candidate).catch(() => undefined);
@@ -482,7 +546,7 @@ export class RestrictedBash {
     const visit = async (input: string): Promise<void> => {
       if (input === '-') { files.push({ text: stdin }); return; }
       const mount = this.mountFor(input);
-      if (mount) {
+      if (mount?.kind === 'file') {
         files.push({ name: input, text: await this.readText(input) });
         return;
       }
@@ -553,7 +617,7 @@ export class RestrictedBash {
     const chunks: string[] = [];
     const list = async (input: string, heading: boolean): Promise<void> => {
       const directMount = this.mountFor(input);
-      if (directMount) {
+      if (directMount?.kind === 'file') {
         if (long) chunks.push(`-r--r--r-- ${String(await this.mountSize(directMount)).padStart(8)} ${path.basename(input)}`);
         else chunks.push(input);
         return;
@@ -564,17 +628,26 @@ export class RestrictedBash {
       if (heading) chunks.push(`${input}:`);
       const physical = (await fs.readdir(abs, { withFileTypes: true }))
         .filter((entry) => !entry.isSymbolicLink())
-        .map((entry) => ({ name: entry.name, directory: entry.isDirectory(), mount: undefined as undefined | { sourcePaths: readonly string[] } }));
+        .map((entry) => ({ name: entry.name, directory: entry.isDirectory(), mount: undefined as ResolvedMount | undefined }));
       const physicalNames = new Set(physical.map((entry) => entry.name));
-      const mounted = this.mountsInDirectory(abs)
-        .filter((mount) => !physicalNames.has(mount.name))
-        .map((mount) => ({ name: mount.name, directory: false, mount }));
+      // Root mounts are virtual children of physical judgment directories.
+      // Descendants of directory mounts come directly from their canonical
+      // source directory and therefore need no synthetic entries here.
+      const mounted = RestrictedBash.inside(this.rootDir, abs)
+        ? this.mountsInDirectory(abs)
+          .filter((mount) => !physicalNames.has(mount.name))
+          .map((mount) => ({ name: mount.name, directory: mount.kind === 'directory', mount }))
+        : [];
       const entries = [...physical, ...mounted]
         .filter((entry) => all || !entry.name.startsWith('.'))
         .sort((a, b) => a.name.localeCompare(b.name));
       for (const entry of entries) {
         if (long) {
-          const size = entry.mount ? await this.mountSize(entry.mount) : (await fs.stat(path.join(abs, entry.name))).size;
+          const size = entry.mount?.kind === 'file'
+            ? await this.mountSize(entry.mount)
+            : entry.mount?.kind === 'directory'
+              ? (await fs.stat(entry.mount.sourceRoot)).size
+              : (await fs.stat(path.join(abs, entry.name))).size;
           chunks.push(`${entry.directory ? 'd' : '-'}r--r--r-- ${String(size).padStart(8)} ${entry.name}${entry.directory ? '/' : ''}`);
         } else chunks.push(`${entry.name}${entry.directory ? '/' : ''}`);
       }
@@ -608,7 +681,7 @@ export class RestrictedBash {
     const pattern = namePattern ? new RegExp(`^${namePattern.split('*').map(regexEscape).join('.*')}$`) : undefined;
     const out: string[] = [];
     const directMount = this.mountFor(start);
-    if (directMount) {
+    if (directMount?.kind === 'file') {
       if ((!type || type === 'f') && (!pattern || pattern.test(path.basename(start)))) out.push(start);
       return ok(withFinalNewline(out));
     }
@@ -624,12 +697,23 @@ export class RestrictedBash {
       }
     };
     await walk(startAbs, start, 0);
-    for (const [virtualAbs] of this.mounts) {
-      if (!RestrictedBash.inside(startAbs, virtualAbs) || virtualAbs === startAbs) continue;
-      const relative = path.relative(startAbs, virtualAbs);
-      const depth = relative.split(path.sep).length;
-      if (depth > maxDepth || (type && type !== 'f') || (pattern && !pattern.test(path.basename(virtualAbs)))) continue;
-      out.push(path.join(start, relative));
+    // A directory mount reached directly is already walked above. When find
+    // starts at one of its physical ancestors, walk each virtual root too.
+    if (!directMount) {
+      const startVirtualAbs = path.isAbsolute(start) ? path.resolve(start) : path.resolve(this.rootDir, start);
+      for (const mount of this.mounts.values()) {
+        if (!RestrictedBash.inside(startVirtualAbs, mount.virtualAbs) || mount.virtualAbs === startVirtualAbs) continue;
+        const relative = path.relative(startVirtualAbs, mount.virtualAbs);
+        const depth = relative.split(path.sep).length;
+        const virtualStart = path.join(start, relative);
+        if (depth > maxDepth) continue;
+        if (mount.kind === 'directory') {
+          await this.validateDirectoryMountPath({ ...mount, sourcePath: mount.sourceRoot });
+          await walk(mount.sourceRoot, virtualStart, depth);
+        } else if ((!type || type === 'f') && (!pattern || pattern.test(path.basename(mount.virtualAbs)))) {
+          out.push(virtualStart);
+        }
+      }
     }
     return ok(withFinalNewline([...new Set(out)].sort()));
   }

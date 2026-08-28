@@ -47,29 +47,6 @@ function ndjson(values: unknown[]): string {
   return values.map((value) => JSON.stringify(value)).join('\n') + (values.length ? '\n' : '');
 }
 
-async function copyWorkspace(source: string, destination: string): Promise<void> {
-  const sourceReal = await fs.realpath(source);
-  const stat = await fs.stat(sourceReal);
-  if (!stat.isDirectory()) throw new Error(`workspace is not a directory: ${source}`);
-  await fs.mkdir(destination, { recursive: true });
-  const walk = async (from: string, to: string): Promise<void> => {
-    for (const entry of await fs.readdir(from, { withFileTypes: true })) {
-      const sourcePath = path.join(from, entry.name);
-      const destinationPath = path.join(to, entry.name);
-      // Never dereference links. The evidence workspace must itself be
-      // symlink-free, even when the source workspace contains links.
-      if (entry.isSymbolicLink()) continue;
-      if (entry.isDirectory()) {
-        await fs.mkdir(destinationPath);
-        await walk(sourcePath, destinationPath);
-      } else if (entry.isFile()) {
-        await fs.copyFile(sourcePath, destinationPath);
-      }
-    }
-  };
-  await walk(sourceReal, destination);
-}
-
 async function makeReadOnly(dir: string): Promise<void> {
   for (const entry of await fs.readdir(dir, { withFileTypes: true })) {
     const abs = path.join(dir, entry.name);
@@ -105,9 +82,11 @@ function traceMode(value: unknown): JudgeTraceMode {
 /**
  * Build evidence from the ORIGINAL request trajectory, before prompt
  * compaction/truncation. Trace endpoint failures are non-fatal. In file mode,
- * trace bytes remain in their canonical NDJSON store: this bundle contains an
- * explicit read-only mount table, not copied spans/logs or symlinks. Cluster
- * mode never materializes or mounts trace data.
+ * trace and workspace bytes remain in their canonical stores: this bundle
+ * contains an explicit read-only mount table, not copies or symlinks. Workspace
+ * mounting relies on the judge's post-quiescence contract: connector execution
+ * has completed and its run workspace is immutable before judgment begins.
+ * Cluster mode never materializes or mounts trace data.
  */
 export async function buildJudgeEvidence(
   request: JudgeRequest,
@@ -149,18 +128,22 @@ export async function buildJudgeEvidence(
       );
     }
 
-    // If the runner recorded a workspace, capture a symlink-free snapshot.
-    // Invalid/unavailable workspace metadata is recorded but does not prevent
-    // trajectory-only evaluation.
+    const mounts: RestrictedBashMount[] = [];
+
+    // Execution has quiesced before the judge runs, so the recorded workspace
+    // is immutable for the lifetime of this bundle. Expose that canonical tree
+    // directly rather than making an unbounded snapshot. RestrictedBash rejects
+    // links, traversal, sibling paths, and all writes through this mount.
     if (request.evidenceContext?.workspaceDir) {
       try {
-        await copyWorkspace(request.evidenceContext.workspaceDir, path.join(evidenceDir, 'workspace'));
+        const source = request.evidenceContext.workspaceDir;
+        const stat = await fs.lstat(source);
+        if (!stat.isDirectory() || stat.isSymbolicLink()) throw new Error(`workspace is not a non-symlink directory: ${source}`);
+        mounts.push({ virtualPath: 'evidence/workspace', sourcePaths: [await fs.realpath(source)] });
       } catch (err: any) {
         await fs.writeFile(path.join(evidenceDir, 'workspace-error.txt'), `${err?.message ?? String(err)}\n`);
       }
     }
-
-    const mounts: RestrictedBashMount[] = [];
     let mode: JudgeTraceMode = 'unknown';
     let spanCount = 0;
     let logCount = 0;
@@ -191,10 +174,13 @@ export async function buildJudgeEvidence(
 
     await makeReadOnly(evidenceDir);
     const physicalFiles = await listFiles(rootDir);
-    const files = [...new Set([...physicalFiles, ...mounts.map((mount) => mount.virtualPath)])].sort();
+    const files = [...new Set([
+      ...physicalFiles,
+      ...mounts.map((mount) => `${mount.virtualPath}${mount.virtualPath === 'evidence/workspace' ? '/' : ''}`),
+    ])].sort();
     const exists = mode === 'cluster'
       ? spanCount > 0 || logCount > 0
-      : mounts.length > 0;
+      : mode === 'file' && mounts.some((mount) => mount.virtualPath === 'evidence/spans.ndjson');
     return {
       rootDir,
       evidenceDir,
