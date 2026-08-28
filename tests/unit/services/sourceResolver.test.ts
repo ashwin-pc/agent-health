@@ -241,6 +241,23 @@ describe('resolveTestCaseSources', () => {
       expect(storage.testCases.create).not.toHaveBeenCalled();
     });
 
+    it('fails explicitly instead of creating duplicates when import matching is truncated', async () => {
+      const definition = { name: 'Possibly existing case', category: 'RCA' };
+      mockFs.existsSync.mockReturnValue(true);
+      mockFs.readFileSync.mockReturnValue(JSON.stringify([definition]));
+      mockValidate.mockReturnValue({ valid: true, data: [definition], errors: [] });
+      (storage.testCases.getAll as jest.Mock).mockResolvedValue({
+        items: Array.from({ length: 10_000 }, (_, index) => makeTestCase(`tc-${index}`)),
+        total: 10_001,
+      });
+
+      await expect(resolveTestCaseSources([
+        { type: 'file-import', filenames: ['/truncated.json'], testCaseIds: [] },
+      ], storage)).rejects.toThrow(/10,?001 existing cases exceed the 10000-case scan limit.*avoid duplicates/);
+      expect(storage.testCases.getAll).toHaveBeenCalledWith({ size: 10_000 });
+      expect(storage.testCases.create).not.toHaveBeenCalled();
+    });
+
     it('recomputes stale incoming hashes instead of reusing different content', async () => {
       const definition = { name: 'Changed case', category: 'RCA', initialPrompt: 'new prompt', sourceHash: 'stale' };
       const existing = { ...definition, id: 'old', initialPrompt: 'old prompt', sourceHash: 'stale' } as unknown as TestCase;

@@ -258,7 +258,14 @@ async function reuseOrCreateImportedTestCases(
   definitions: Partial<TestCase>[],
   storage: IStorageModule
 ): Promise<TestCase[]> {
-  const { items } = await storage.testCases.getAll({ size: 10000 });
+  const scanLimit = 10_000;
+  const { items, total } = await storage.testCases.getAll({ size: scanLimit });
+  if (total > items.length) {
+    throw new Error(
+      `Cannot safely match imported test cases: ${total} existing cases exceed the ${scanLimit}-case scan limit. ` +
+      'No cases were imported. Reduce the stored case count and retry; import matching needs a complete scan to avoid duplicates.'
+    );
+  }
   const candidates = [...items];
   const resolved: TestCase[] = [];
 
