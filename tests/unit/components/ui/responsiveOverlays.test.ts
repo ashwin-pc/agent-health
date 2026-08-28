@@ -26,6 +26,9 @@ describe('component-scoped responsive overlays', () => {
     'components/ui/alert-dialog.tsx',
     'components/ui/fullscreen-dialog.tsx',
     'components/ui/sheet.tsx',
+    'components/assistant-ui/AssistantModal.tsx',
+    'components/RunDetailsContent.tsx',
+    'components/traces/TraceFullScreenView.tsx',
   ])('keeps mobile viewport bounds on %s', relative => {
     const source = read(relative);
     expect(source).toContain('max-lg:!max-w-[calc(100vw-1rem)]');
