@@ -241,6 +241,26 @@ describe('resolveTestCaseSources', () => {
       expect(storage.testCases.create).not.toHaveBeenCalled();
     });
 
+    it('recomputes stale incoming hashes instead of reusing different content', async () => {
+      const definition = { name: 'Changed case', category: 'RCA', initialPrompt: 'new prompt', sourceHash: 'stale' };
+      const existing = { ...definition, id: 'old', initialPrompt: 'old prompt', sourceHash: 'stale' } as unknown as TestCase;
+      const created = { ...definition, id: 'new' } as unknown as TestCase;
+      mockFs.existsSync.mockReturnValue(true);
+      mockFs.readFileSync.mockReturnValue(JSON.stringify([definition]));
+      mockValidate.mockReturnValue({ valid: true, data: [definition], errors: [] });
+      (storage.testCases.getAll as jest.Mock).mockResolvedValue({ items: [existing], total: 1 });
+      (storage.testCases.create as jest.Mock).mockResolvedValue(created);
+
+      const result = await resolveTestCaseSources([
+        { type: 'file-import', filenames: ['/changed.json'], testCaseIds: [] },
+      ], storage);
+
+      expect(result.testCases).toEqual([created]);
+      expect(storage.testCases.create).toHaveBeenCalledWith(expect.objectContaining({
+        initialPrompt: 'new prompt', sourceHash: expect.not.stringMatching(/^stale$/),
+      }));
+    });
+
     it('throws when file does not exist', async () => {
       mockFs.existsSync.mockReturnValue(false);
 

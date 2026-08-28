@@ -263,7 +263,10 @@ async function reuseOrCreateImportedTestCases(
   const resolved: TestCase[] = [];
 
   for (const definition of definitions) {
-    const hash = definition.sourceHash || definitionHash(definition);
+    const hash = definitionHash(definition);
+    if (definition.sourceHash && definition.sourceHash !== hash) {
+      debug('SourceResolver', `Ignoring stale sourceHash for imported test case ${definition.name ?? '<unnamed>'}`);
+    }
     const canonical = JSON.stringify(canonicalDefinition(definition));
     const existing = candidates.find(candidate =>
       candidate.name === definition.name &&
