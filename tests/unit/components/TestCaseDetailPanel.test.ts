@@ -1,3 +1,8 @@
+/*
+ * Copyright OpenSearch Contributors
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
 /** @jest-environment jsdom */
 import React from 'react';
 import { render, screen } from '@testing-library/react';
