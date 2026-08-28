@@ -9,6 +9,7 @@ import {
   deriveCaseVerdict,
   filterAndSortCaseRows,
   getCasePagerPosition,
+  getCasePassRate,
   getRecentCompletedRuns,
   type CaseReviewRow,
   type ReviewableCase,
@@ -33,6 +34,8 @@ describe('benchmark case-review verdicts', () => {
     // An evaluator error needs operator attention but remains distinct from a
     // failed agent verdict and does not count toward pass rate.
     expect(classifyCaseVerdicts(['errored', 'passed'])).toBe('needs-attention');
+    expect(getCasePassRate(['errored', 'passed'])).toBe(1);
+    expect(getCasePassRate(['errored', 'not-run'])).toBeNull();
     expect(classifyCaseVerdicts(['not-run', 'not-run'])).toBe('no-data');
   });
 
