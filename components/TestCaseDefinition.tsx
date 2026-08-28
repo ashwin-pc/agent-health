@@ -17,6 +17,7 @@ import { CheckCircle2, FileCode2 } from 'lucide-react';
 import { TestCase } from '@/types';
 import { Badge } from '@/components/ui/badge';
 import { Markdown, hasRealMarkdown } from '@/components/ui/markdown';
+import { ContextDispositionGroups } from '@/components/ContextDispositionGroups';
 import { parseLabels } from '@/lib/labels';
 
 interface TestCaseDefinitionProps {
@@ -32,40 +33,44 @@ const difficultyClasses: Record<string, string> = {
   hard: 'border-red-300 bg-red-50 text-red-700 dark:border-red-500/30 dark:bg-red-500/10 dark:text-red-400',
 };
 
-function formatContextValue(value: string): string {
-  try {
-    const parsed = JSON.parse(value);
-    return typeof parsed === 'string' ? parsed : JSON.stringify(parsed, null, 2);
-  } catch {
-    return value;
-  }
-}
+const SourceFilePointer: React.FC<{ sourceFile: string }> = ({ sourceFile }) => (
+  <div className="space-y-2" data-testid="test-case-source-pointer">
+    <div className="text-[9px] font-semibold text-muted-foreground uppercase tracking-wider">Source File</div>
+    <div className="flex items-center gap-2 bg-card rounded border border-border px-3 py-2">
+      <FileCode2 size={12} className="text-muted-foreground shrink-0" />
+      <code className="text-[11px] font-mono break-all flex-1">{sourceFile}</code>
+    </div>
+    <div className="text-[10px] text-muted-foreground italic">
+      Code-authored test: the <code className="font-mono">evaluate()</code> body lives in the source file and isn't serializable from runtime state.
+    </div>
+  </div>
+);
 
 export const TestCaseDefinition: React.FC<TestCaseDefinitionProps> = ({
   testCase,
   compact = false,
   className = '',
 }) => {
-  // SDK / code-authored tests (.eval.ts/.eval.js) carry their definition as a
-  // runtime evaluate() closure, not declarative fields — rendering the
-  // declarative layout would show an empty rubric. Every consumer of this
-  // component is safe by construction: show the source-file pointer instead.
-  if (testCase.sourceFile) {
-    return (
-      <div className={`space-y-2 ${className}`}>
-        <div className="text-[9px] font-semibold text-muted-foreground uppercase tracking-wider">Source File</div>
-        <div className="flex items-center gap-2 bg-card rounded border border-border px-3 py-2">
-          <FileCode2 size={12} className="text-muted-foreground shrink-0" />
-          <code className="text-[11px] font-mono break-all flex-1">{testCase.sourceFile}</code>
-        </div>
-        <div className="text-[10px] text-muted-foreground italic">
-          Code-authored test: the <code className="font-mono">evaluate()</code> body lives in the source file and isn't serializable from runtime state.
-        </div>
-      </div>
-    );
+  const parsedLabels = parseLabels(testCase.labels || []);
+  const hasDeclarativeFields = Boolean(
+    testCase.description ||
+    testCase.initialPrompt ||
+    testCase.expectedOutcomes?.length ||
+    testCase.context?.length ||
+    testCase.labels?.length ||
+    parsedLabels.category ||
+    parsedLabels.difficulty ||
+    testCase.category ||
+    testCase.difficulty
+  );
+
+  // A code-authored case may also persist declarative prompt/rubric/context
+  // fields. In that mixed shape, provenance supplements the definition rather
+  // than replacing it. Only a truly source-only case uses pointer-only mode.
+  if (testCase.sourceFile && !hasDeclarativeFields) {
+    return <div className={className}><SourceFilePointer sourceFile={testCase.sourceFile} /></div>;
   }
 
-  const parsedLabels = parseLabels(testCase.labels || []);
   const category = parsedLabels.category || testCase.category;
   const difficulty = parsedLabels.difficulty || testCase.difficulty;
   const extraLabels = [
@@ -77,6 +82,8 @@ export const TestCaseDefinition: React.FC<TestCaseDefinitionProps> = ({
 
   return (
     <div className={`space-y-3 min-w-0 ${className}`} data-testid="readable-test-case-definition">
+      {testCase.sourceFile && <SourceFilePointer sourceFile={testCase.sourceFile} />}
+
       <div className="flex flex-wrap items-center gap-1.5">
         {category && (
           <Badge variant="secondary" className={`${textClass} px-2 py-0.5`}>
@@ -133,21 +140,7 @@ export const TestCaseDefinition: React.FC<TestCaseDefinitionProps> = ({
       )}
 
       {testCase.context && testCase.context.length > 0 && (
-        <div>
-          <div className={sectionLabelClass}>Context ({testCase.context.length})</div>
-          <div className="space-y-1.5">
-            {testCase.context.map((item, index) => (
-              <div key={index} className="bg-card rounded border border-border px-3 py-2 min-w-0">
-                <p className={`${textClass} font-medium text-foreground break-words mb-1`}>
-                  {item.description || `Context item ${index + 1}`}
-                </p>
-                <pre className={`${textClass} text-muted-foreground font-mono whitespace-pre-wrap break-words overflow-x-auto max-h-32 overflow-y-auto leading-relaxed`}>
-                  {formatContextValue(item.value)}
-                </pre>
-              </div>
-            ))}
-          </div>
-        </div>
+        <ContextDispositionGroups items={testCase.context} compact={compact} />
       )}
     </div>
   );

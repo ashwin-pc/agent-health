@@ -14,7 +14,13 @@ import { TestCase } from '@/types';
 
 jest.mock('react-markdown', () => {
   return function MockReactMarkdown({ children }: { children: string }) {
-    return React.createElement('div', null, children);
+    return React.createElement(
+      'div',
+      null,
+      children.startsWith('**Authored**')
+        ? React.createElement('strong', null, 'Authored')
+        : children,
+    );
   };
 });
 
@@ -111,26 +117,61 @@ describe('CollapsibleTestCaseDefinition', () => {
 
 describe('TestCaseDefinition — SDK / code-authored cases', () => {
   const { TestCaseDefinition } = require('@/components/TestCaseDefinition');
-  const sdkCase: TestCase = {
+  const sourceOnlyCase: TestCase = {
     ...testCase,
-    id: 'tc-sdk',
+    id: 'tc-sdk-source-only',
     name: 'sdk registered test',
+    description: '',
+    labels: [],
+    category: undefined as any,
+    difficulty: undefined as any,
     initialPrompt: '',
     expectedOutcomes: [],
+    context: [],
     sourceFile: 'examples/eval-files/demo.eval.ts',
-  } as TestCase;
+  };
 
-  it('renders the source-file pointer instead of an empty declarative rubric', () => {
-    render(React.createElement(TestCaseDefinition, { testCase: sdkCase }));
+  it('renders only the source pointer when no declarative fields exist', () => {
+    render(React.createElement(TestCaseDefinition, { testCase: sourceOnlyCase }));
     expect(screen.getByText('examples/eval-files/demo.eval.ts')).toBeTruthy();
     expect(screen.getByText(/isn't serializable from runtime state/)).toBeTruthy();
-    expect(screen.queryByText(/expected outcomes/i)).toBeNull();
+    expect(screen.queryByTestId('readable-test-case-definition')).toBeNull();
+    expect(screen.queryByText('Input')).toBeNull();
+  });
+
+  it('renders the source pointer and every populated declarative field for mixed SDK cases', () => {
+    render(React.createElement(TestCaseDefinition, { testCase: {
+      ...testCase,
+      sourceFile: 'examples/eval-files/mixed.eval.ts',
+    } }));
+    expect(screen.getByText('examples/eval-files/mixed.eval.ts')).toBeTruthy();
+    expect(screen.getByText(testCase.initialPrompt!)).toBeTruthy();
+    expect(screen.getByText('Identify the payment-service timeout')).toBeTruthy();
+    expect(screen.getByText('Cluster evidence')).toBeTruthy();
   });
 
   it('still renders the declarative rubric for JSON cases', () => {
     render(React.createElement(TestCaseDefinition, { testCase }));
     expect(screen.getByText('Why are checkout requests failing?')).toBeTruthy();
     expect(screen.getByText('Identify the payment-service timeout')).toBeTruthy();
+  });
+
+  it('groups context by delivery disposition and renders documentation as markdown', () => {
+    render(React.createElement(TestCaseDefinition, { testCase: {
+      ...testCase,
+      context: [
+        { description: 'legacy', value: 'plain' },
+        { description: 'fixture', value: '/tmp/workspace', disposition: 'connector' },
+        { description: 'guide', value: '**Authored** documentation', disposition: 'documentation' },
+      ],
+    } }));
+
+    expect(screen.getByTestId('context-delivery-summary').textContent)
+      .toContain('prompt + 1 context items · directives: 1 · documentation: 1');
+    expect(screen.getByText('Delivered to agent')).toBeTruthy();
+    expect(screen.getByText('Connector directive — not delivered')).toBeTruthy();
+    expect(screen.getByText('Documentation — not delivered')).toBeTruthy();
+    expect(screen.getByText('Authored').tagName).toBe('STRONG');
   });
 
   it('uses canonical, case-sensitive label parsing for chips', () => {

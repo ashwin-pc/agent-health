@@ -80,6 +80,8 @@ module.exports = {
     // expanded incrementally. Keep reader-oriented test-case definitions in
     // the unit report so their focused DOM tests count toward patch coverage.
     'components/TestCaseDefinition.tsx',
+    'components/ContextDispositionGroups.tsx',
+    'components/TestCaseDetailPanel.tsx',
     'components/evals3/CollapsibleTestCaseDefinition.tsx',
     '!**/__tests__/**',
     '!**/*.test.ts',
