@@ -13,9 +13,11 @@ import { getLabelColor, formatDate } from '@/lib/utils';
 interface TestCaseDetailPanelProps {
   testCase: TestCase;
   totalRuns?: number;
+  /** Show untruncated fixture/context values when used as a full definition. */
+  expanded?: boolean;
 }
 
-export const TestCaseDetailPanel: React.FC<TestCaseDetailPanelProps> = ({ testCase, totalRuns }) => {
+export const TestCaseDetailPanel: React.FC<TestCaseDetailPanelProps> = ({ testCase, totalRuns, expanded = false }) => {
   return (
     <div className="space-y-4">
       {/* Labels */}
@@ -88,7 +90,9 @@ export const TestCaseDetailPanel: React.FC<TestCaseDetailPanelProps> = ({ testCa
               <Card key={i} className="bg-muted/30">
                 <CardContent className="p-2">
                   <p className="text-xs font-medium text-muted-foreground mb-1">{ctx.description}</p>
-                  <pre className="text-xs overflow-x-auto max-h-20 overflow-y-auto">{ctx.value.slice(0, 200)}{ctx.value.length > 200 ? '...' : ''}</pre>
+                  <pre className={`text-xs overflow-x-auto whitespace-pre-wrap break-words ${expanded ? '' : 'max-h-20 overflow-y-auto'}`}>
+                    {expanded ? ctx.value : `${ctx.value.slice(0, 200)}${ctx.value.length > 200 ? '...' : ''}`}
+                  </pre>
                 </CardContent>
               </Card>
             ))}
