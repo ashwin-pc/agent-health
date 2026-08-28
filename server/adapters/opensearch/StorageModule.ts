@@ -448,8 +448,14 @@ class OpenSearchBenchmarkOperations implements IBenchmarkOperations {
               if (ctx._source.runs == null) {
                 ctx._source.runs = [];
               }
-              ctx._source.runs.add(params.run);
-              ctx._source.updatedAt = params.now;
+              boolean exists = false;
+              for (def existing : ctx._source.runs) {
+                if (existing.id == params.run.id) { exists = true; break; }
+              }
+              if (!exists) {
+                ctx._source.runs.add(params.run);
+                ctx._source.updatedAt = params.now;
+              }
             `,
             params: { run, now: new Date().toISOString() },
           },

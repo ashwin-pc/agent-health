@@ -221,43 +221,30 @@ router.post('/api/storage/evaluation-runs', async (req: Request, res: Response) 
         },
       });
 
-      // Update run with final status
       const finalStatus = cancellationToken.isCancelled ? 'cancelled' : 'completed';
       const completedAt = new Date().toISOString();
-      const updatedRun = await storage.evaluationRuns.update(runId, {
-        status: finalStatus,
-        stats: completedRun.stats,
-        completedAt,
-        results: completedRun.results,
-      });
 
-      // A benchmark-associated evaluation run must also appear in the
-      // benchmark's embedded run history: that remains the data model used by
-      // both benchmark list/detail UIs. The evaluation-run document is kept as
-      // the first-class history record; this is a linked projection with the
-      // same stable id and complete BenchmarkRun fields.
+      // Link the terminal projection before finalizing the first-class run.
+      // If finalization crashes, retrying is safe because addRun is idempotent;
+      // a terminal evaluation-run can therefore never be orphaned from its benchmark.
       if (benchmarkId) {
         const benchmarkRun: BenchmarkRun = {
-          id: updatedRun.id,
-          name: updatedRun.name,
-          createdAt: updatedRun.createdAt,
-          completedAt,
-          status: updatedRun.status,
-          agentKey: updatedRun.agentKey,
-          modelId: updatedRun.modelId,
-          judgeModelId: updatedRun.judgeModelId,
-          results: updatedRun.results,
-          stats: updatedRun.stats,
-          ...(updatedRun.description ? { description: updatedRun.description } : {}),
-          ...(updatedRun.evaluatorId ? { evaluatorId: updatedRun.evaluatorId } : {}),
-          ...(updatedRun.headers ? { headers: updatedRun.headers } : {}),
-          ...(updatedRun.concurrency ? { concurrency: updatedRun.concurrency } : {}),
-          testCaseSnapshots: updatedRun.testCaseSnapshots,
+          id: run.id, name: run.name, createdAt: run.createdAt, completedAt,
+          status: finalStatus, agentKey: run.agentKey, modelId: run.modelId,
+          judgeModelId: run.judgeModelId, results: completedRun.results, stats: completedRun.stats,
+          ...(run.description ? { description: run.description } : {}),
+          ...(run.evaluatorId ? { evaluatorId: run.evaluatorId } : {}),
+          ...(run.headers ? { headers: run.headers } : {}),
+          ...(run.concurrency ? { concurrency: run.concurrency } : {}),
+          testCaseSnapshots: run.testCaseSnapshots,
         };
         const linked = await storage.benchmarks.addRun(benchmarkId, benchmarkRun);
         if (!linked) throw new Error(`Benchmark not found while linking completed run: ${benchmarkId}`);
       }
 
+      const updatedRun = await storage.evaluationRuns.update(runId, {
+        status: finalStatus, stats: completedRun.stats, completedAt, results: completedRun.results,
+      });
       sendSSE(res, 'completed', updatedRun);
     } catch (error: any) {
       console.error(`[StorageAPI] Evaluation run failed: ${runId}`, error.message);

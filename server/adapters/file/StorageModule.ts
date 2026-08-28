@@ -357,6 +357,7 @@ class FileBenchmarkOperations implements IBenchmarkOperations {
     if (!benchmark) return false;
 
     benchmark.runs = benchmark.runs || [];
+    if (benchmark.runs.some(existing => existing.id === run.id)) return true;
     benchmark.runs.push(run);
     benchmark.updatedAt = new Date().toISOString();
 
