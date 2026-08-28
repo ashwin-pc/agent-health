@@ -465,6 +465,17 @@ router.post('/api/judge', async (req: Request, res: Response) => {
             'may only inspect the run that produced its trajectory',
         });
       }
+      let trustedAgentKey: string | undefined;
+      if (runId) {
+        const storage = getStorageModule();
+        const runRecord = await storage.evaluationRuns.getById(runId);
+        const reportRecord = runRecord ? null : await storage.runs.getById(runId);
+        trustedAgentKey = runRecord?.agentKey || reportRecord?.agentKey;
+        const requestedAgentKey = evidenceContext?.agentKey;
+        if (requestedAgentKey && trustedAgentKey && requestedAgentKey !== trustedAgentKey) {
+          return res.status(403).json({ error: 'agentKey does not match the stored run metadata' });
+        }
+      }
       debug('JudgeAPI', 'Agent evidence judge - evaluating with restricted bash (runId=' + (runId || 'none') + ')');
       // Pass the resolved evaluator so a saved `systemPrompt` replaces the
       // default base prompt (the runtime evidence/tool addendum is still
@@ -481,6 +492,7 @@ router.post('/api/judge', async (req: Request, res: Response) => {
           evidenceContext: evidenceContext && typeof evidenceContext === 'object'
             ? {
                 ...evidenceContext,
+                agentKey: trustedAgentKey,
                 // HTTP clients control evidenceContext metadata, so never
                 // accept a workspace path from it. Only the server-owned agent
                 // configuration may select files for an API-triggered judge.
@@ -489,7 +501,7 @@ router.post('/api/judge', async (req: Request, res: Response) => {
                 // untrusted request boundary.
                 workspaceDir: (() => {
                   const cwd = config.agents.find(
-                    (agent) => agent.key === evidenceContext.agentKey
+                    (agent) => agent.key === trustedAgentKey
                   )?.connectorConfig?.cwd;
                   return typeof cwd === 'string' && cwd.trim() ? cwd : undefined;
                 })(),
