@@ -96,80 +96,131 @@ const getEvaluatorIcon = (evaluatorId: string) => {
 
 type OutcomeState = 'passed' | 'failed' | 'partial' | 'unknown';
 
-interface OutcomeAssessment {
+export interface OutcomeAssessment {
   state: OutcomeState;
   explanation?: string;
 }
 
 const OUTCOME_EXPLANATION_PREVIEW_LENGTH = 360;
+const FAILED_OUTCOME_MARKER = /NOT\s+ACHIEVED|NOT\s+MET|MISSED|FAILED|(?:^|[\s(])0(?:\.0+)?\s*\/\s*1(?:\.0+)?\b/i;
+const PARTIAL_OUTCOME_MARKER = /PARTIAL(?:LY)?(?:\s+ACHIEVED|\s+MET)?|SOMEWHAT/i;
+const PASSED_OUTCOME_MARKER = /\bACHIEVED\b|\bMET\b|FULLY|(?:^|[\s(])1(?:\.0+)?\s*\/\s*1(?:\.0+)?\b/i;
 
-function outcomeAssessmentFromReasoning(reasoning: string, outcomeNumber: number): OutcomeAssessment {
-  const namedMarker = new RegExp(`(?:\\*\\*)?Outcome\\s+${outcomeNumber}\\b`, 'i');
-  let start = reasoning.search(namedMarker);
-  let markerLength = 0;
-  let nextMarker = /(?:\*\*)?Outcome\s+\d+\b/i;
-
-  if (start >= 0) {
-    markerLength = reasoning.slice(start).match(namedMarker)?.[0].length ?? 0;
-  } else {
-    // Agentic judges are not guaranteed to repeat the literal "Outcome N"
-    // label. Fresh reports commonly use a Markdown numbered breakdown such
-    // as `1. **Trajectory ...** (NOT ACHIEVED - 0.0)`. Scope this fallback to
-    // the per-outcome assessment when that heading is present so unrelated
-    // numbered lists in the judge narrative are not mistaken for verdicts.
-    const assessmentHeading = reasoning.search(/(?:evaluation|assessment)\s+of\s+each\s+expected\s+outcome/i);
-    const assessment = assessmentHeading >= 0 ? reasoning.slice(assessmentHeading) : reasoning;
-    const numberedMarker = new RegExp(`(?:^|\\n)\\s*${outcomeNumber}[.)]\\s+`, 'm');
-    const relativeStart = assessment.search(numberedMarker);
-    if (relativeStart < 0) return { state: 'unknown' };
-    start = (assessmentHeading >= 0 ? assessmentHeading : 0) + relativeStart;
-    markerLength = assessment.slice(relativeStart).match(numberedMarker)?.[0].length ?? 0;
-    nextMarker = /(?:^|\n)\s*\d+[.)]\s+/m;
-  }
-
-  const remainder = reasoning.slice(start);
-  // Search after the current marker. Starting inside the marker can match it
-  // again ("**Outcome" also contains "Outcome"), reducing the section to "**".
-  const next = remainder.slice(markerLength).search(nextMarker);
-  const section = (next >= 0
-    ? remainder.slice(0, markerLength + next)
-    : remainder).trim();
-
+function explicitAssessment(section: string): OutcomeAssessment | null {
   // Score tokens need an explicit delimiter: a bare word boundary would
   // misread the trailing `0/1.0` inside a passing `1.0/1.0` as a zero score.
-  const failedMarker = /NOT\s+ACHIEVED|NOT\s+MET|MISSED|FAILED|(?:^|[\s(])0(?:\.0+)?\s*\/\s*1(?:\.0+)?\b/i;
-  const partialMarker = /PARTIAL(?:LY)?(?:\s+ACHIEVED|\s+MET)?|SOMEWHAT/i;
-  const passedMarker = /\bACHIEVED\b|\bMET\b|FULLY|(?:^|[\s(])1(?:\.0+)?\s*\/\s*1(?:\.0+)?\b/i;
-  const state: OutcomeState = failedMarker.test(section)
+  const state: OutcomeState = FAILED_OUTCOME_MARKER.test(section)
     ? 'failed'
-    : partialMarker.test(section)
+    : PARTIAL_OUTCOME_MARKER.test(section)
       ? 'partial'
-      : passedMarker.test(section)
+      : PASSED_OUTCOME_MARKER.test(section)
         ? 'passed'
         : 'unknown';
+  if (state === 'unknown') return null;
 
   const verdictMarker = state === 'failed'
-    ? failedMarker
+    ? FAILED_OUTCOME_MARKER
     : state === 'partial'
-      ? partialMarker
-      : state === 'passed'
-        ? passedMarker
-        : null;
-  const verdictMatch = verdictMarker?.exec(section);
-
-  // Everything after the verdict/score marker is the judge's outcome-specific
-  // evidence. Remove only formatting punctuation and an optional numeric score;
-  // preserve Markdown lists and step references because they explain what the
-  // agent actually did instead of merely repeating the expected outcome.
+      ? PARTIAL_OUTCOME_MARKER
+      : PASSED_OUTCOME_MARKER;
+  const verdictMatch = verdictMarker.exec(section);
   let explanation = verdictMatch
     ? section.slice((verdictMatch.index ?? 0) + verdictMatch[0].length)
-    : section.slice(markerLength);
+    : '';
   explanation = explanation
     .replace(/^\s*(?:[-–—]\s*)?(?:\(\s*)?\d+(?:\.\d+)?(?:\s*\/\s*\d+(?:\.\d+)?)?\s*\)?\s*/, '')
     .replace(/^\s*(?:\*\*)?\s*[:.;\-)]+\s*(?:\*\*)?\s*/, '')
     .trim();
 
   return { state, explanation: explanation || undefined };
+}
+
+function completeAssessments(
+  assessments: Map<number, OutcomeAssessment>,
+  outcomeCount: number,
+): OutcomeAssessment[] | null {
+  if (assessments.size !== outcomeCount) return null;
+  const ordered: OutcomeAssessment[] = [];
+  for (let number = 1; number <= outcomeCount; number += 1) {
+    const assessment = assessments.get(number);
+    if (!assessment) return null;
+    ordered.push(assessment);
+  }
+  return ordered;
+}
+
+/**
+ * Parse only judge formats that explicitly bind a verdict to an outcome number.
+ * All outcomes must be accounted for or the caller falls back to the single
+ * reasoning block; partial/positional guesses would fabricate status marks.
+ */
+export function parseOutcomeAssessments(reasoning: string, outcomeCount: number): OutcomeAssessment[] | null {
+  if (!reasoning.trim() || outcomeCount <= 0) return null;
+
+  // "Outcome N" sections carry their own number and verdict. Slice from the
+  // exact regex match (not a marker that includes the preceding newline) so
+  // the first character of the evidence cannot be consumed.
+  const namedMatches = [...reasoning.matchAll(/(?:\*\*)?Outcome\s+(\d+)\b/gi)];
+  if (namedMatches.length > 0) {
+    const named = new Map<number, OutcomeAssessment>();
+    let valid = true;
+    namedMatches.forEach((match, index) => {
+      const number = Number(match[1]);
+      const start = match.index ?? 0;
+      const end = namedMatches[index + 1]?.index ?? reasoning.length;
+      const assessment = explicitAssessment(reasoning.slice(start, end));
+      if (number < 1 || number > outcomeCount || named.has(number) || !assessment) valid = false;
+      else named.set(number, assessment);
+    });
+    if (valid) return completeAssessments(named, outcomeCount);
+  }
+
+  // Grouped summaries bind status in a header ("Fully Achieved" / "Not
+  // Achieved") and identity in each item's own number. A separate explicit
+  // per-outcome assessment heading may instead put the verdict in each item.
+  const grouped = new Map<number, OutcomeAssessment>();
+  let groupState: OutcomeState | undefined;
+  let inExplicitAssessment = false;
+  let invalid = false;
+  const lines = reasoning.split(/\r?\n/);
+
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
+    const header = line.match(/^\s*(?:#{1,6}\s*)?(?:\*\*)?(Fully\s+Achieved|Not\s+Achieved|Partially\s+(?:Achieved|Met))(?:\s*\([^)]*\))?\s*:?\s*(?:\*\*)?\s*$/i);
+    if (header) {
+      groupState = /^not/i.test(header[1])
+        ? 'failed'
+        : /^partial/i.test(header[1])
+          ? 'partial'
+          : 'passed';
+      continue;
+    }
+
+    if (/(?:evaluation|assessment)\s+of\s+(?:each\s+)?expected\s+outcome/i.test(line)) {
+      inExplicitAssessment = true;
+      groupState = undefined;
+      continue;
+    }
+
+    const item = line.match(/^\s*(\d+)[.)]\s+(.+)$/);
+    if (!item || (!groupState && !inExplicitAssessment)) continue;
+
+    const number = Number(item[1]);
+    const itemLines = [item[2]];
+    while (index + 1 < lines.length && /^\s+\S/.test(lines[index + 1]) && !/^\s*\d+[.)]\s+/.test(lines[index + 1])) {
+      itemLines.push(lines[index + 1].trim());
+      index += 1;
+    }
+    const itemText = itemLines.join('\n').trim();
+    const assessment = groupState
+      ? { state: groupState, explanation: itemText }
+      : explicitAssessment(itemText);
+
+    if (number < 1 || number > outcomeCount || grouped.has(number) || !assessment) invalid = true;
+    else grouped.set(number, assessment);
+  }
+
+  return invalid ? null : completeAssessments(grouped, outcomeCount);
 }
 
 function truncateOutcomeExplanation(explanation: string): string {
@@ -701,18 +752,15 @@ export const RunDetailsContent: React.FC<RunDetailsContentProps> = ({
     : [];
   const judgeEntries = getJudgeMatcherResults(liveReport).filter(entry => entry.role !== 'observe' && !entry.errored);
   const perOutcomeJudgeEntries = judgeEntries.length === expectedOutcomes.length ? judgeEntries : null;
-  const outcomeBreakdown = expectedOutcomes.map((outcome, index) => {
-    if (perOutcomeJudgeEntries) {
-      const entry = perOutcomeJudgeEntries[index];
-      return {
-        outcome,
-        state: (entry.pass ? 'passed' : 'failed') as OutcomeState,
-        explanation: entry.reasoning?.trim() || undefined,
-      };
-    }
-
-    return { outcome, ...outcomeAssessmentFromReasoning(judgeReasoning, index + 1) };
-  });
+  const parsedOutcomeAssessments = perOutcomeJudgeEntries
+    ? perOutcomeJudgeEntries.map(entry => ({
+      state: (entry.pass ? 'passed' : 'failed') as OutcomeState,
+      explanation: entry.reasoning?.trim() || undefined,
+    }))
+    : parseOutcomeAssessments(judgeReasoning, expectedOutcomes.length);
+  const outcomeBreakdown = parsedOutcomeAssessments
+    ? expectedOutcomes.map((outcome, index) => ({ outcome, ...parsedOutcomeAssessments[index] }))
+    : null;
 
   return (
     <div className={`flex flex-col h-full ${className}`}>
@@ -1157,7 +1205,7 @@ export const RunDetailsContent: React.FC<RunDetailsContentProps> = ({
               </Card>
             )}
 
-            {outcomeBreakdown.length > 0 && (
+            {outcomeBreakdown && outcomeBreakdown.length > 0 && (
               <Card>
                 <CardContent className="p-4 sm:p-5">
                   <h3 className="font-semibold flex items-center gap-2 mb-3">
