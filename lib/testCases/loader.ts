@@ -29,6 +29,7 @@ export function computeTestCaseHash(tc: CodeTestCase): string {
     name: tc.name,
     prompt: tc.options.prompt,
     context: tc.options.context,
+    fixture: tc.options.fixture,
     labels: tc.options.labels,
     description: tc.options.description,
     // Include the new expected* fields so editing them invalidates the

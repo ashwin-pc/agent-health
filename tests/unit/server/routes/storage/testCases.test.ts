@@ -306,6 +306,30 @@ describe('Test Cases Storage Routes', () => {
       );
     });
 
+    it('rejects an invalid fixture before calling storage', async () => {
+      const { req, res } = createMocks({}, {
+        name: 'Invalid fixture case',
+        initialPrompt: 'Investigate',
+        fixture: {
+          type: 'filesystem-workspace',
+          ref: '',
+          integrity: 'sha256:not valid',
+        },
+      });
+      const handler = getRouteHandler(testCasesRoutes, 'post', '/api/storage/test-cases');
+
+      await handler(req, res);
+
+      expect(res.status).toHaveBeenCalledWith(400);
+      expect(res.json).toHaveBeenCalledWith(expect.objectContaining({
+        error: expect.stringContaining('fixture.ref: Fixture ref must be a non-empty string'),
+        errors: expect.arrayContaining([
+          expect.stringContaining('fixture.integrity: Fixture integrity must use algorithm:digest format'),
+        ]),
+      }));
+      expect(mockStorage.testCases.create).not.toHaveBeenCalled();
+    });
+
     it('should create new test case', async () => {
       mockStorage.testCases.create.mockResolvedValue({
         id: 'tc-generated-123',
@@ -445,6 +469,27 @@ describe('Test Cases Storage Routes', () => {
       expect(res.json).toHaveBeenCalledWith({
         error: 'testCases must be an array',
       });
+    });
+
+    it('rejects a bulk import when any fixture is invalid and identifies its array index', async () => {
+      const { req, res } = createMocks({}, {
+        testCases: [
+          { name: 'Legacy case' },
+          {
+            name: 'Invalid fixture',
+            fixture: { type: 'filesystem-workspace', ref: 'workspace', integrity: 'sha256:' },
+          },
+        ],
+      });
+      const handler = getRouteHandler(testCasesRoutes, 'post', '/api/storage/test-cases/bulk');
+
+      await handler(req, res);
+
+      expect(res.status).toHaveBeenCalledWith(400);
+      expect(res.json).toHaveBeenCalledWith(expect.objectContaining({
+        error: expect.stringContaining('testCases.1.fixture.integrity'),
+      }));
+      expect(mockStorage.testCases.bulkCreate).not.toHaveBeenCalled();
     });
 
     it('should reject test cases with demo prefix', async () => {
