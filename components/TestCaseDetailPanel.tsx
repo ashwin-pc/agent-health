@@ -4,7 +4,7 @@
  */
 
 import React from 'react';
-import { Calendar, Play } from 'lucide-react';
+import { Calendar, PackageOpen, Play } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { TestCase } from '@/types';
@@ -51,6 +51,32 @@ export const TestCaseDetailPanel: React.FC<TestCaseDetailPanelProps> = ({ testCa
         <div className="space-y-1">
           <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Description</h4>
           <p className="text-sm text-muted-foreground">{testCase.description}</p>
+        </div>
+      )}
+
+      {/* Fixture: setup state is part of the scenario, before delivered input. */}
+      {testCase.fixture && (
+        <div className="space-y-2" data-testid="workspace-fixture">
+          <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Workspace fixture</h4>
+          <div className="flex items-start gap-2 text-sm text-muted-foreground">
+            <PackageOpen size={15} className="mt-0.5 shrink-0" aria-hidden="true" />
+            <p className="min-w-0 break-words">
+              <span className="font-mono text-foreground">{testCase.fixture.ref}</span>
+              {' — integrity-pinned ('}
+              <span className="font-mono">{testCase.fixture.type}</span>
+              {'), not disclosed to the agent'}
+            </p>
+          </div>
+          {testCase.fixture.payload !== undefined && (
+            <details className="group rounded-md border bg-muted/20">
+              <summary className="cursor-pointer select-none px-3 py-2 text-xs font-medium text-muted-foreground hover:text-foreground">
+                Fixture payload
+              </summary>
+              <pre className="max-h-64 overflow-auto border-t px-3 py-2 text-xs whitespace-pre-wrap break-words">
+                {JSON.stringify(testCase.fixture.payload, null, 2)}
+              </pre>
+            </details>
+          )}
         </div>
       )}
 

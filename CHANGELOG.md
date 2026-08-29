@@ -9,6 +9,9 @@ Inspired by [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)
 
 ## [Unreleased]
 
+### Added
+- **Test-case fixture envelopes** ([#448](https://github.com/opensearch-project/agent-health/issues/448)): test cases can carry an optional, content-pinned `fixture` (`type`, `ref`, `integrity`, and connector-owned opaque `payload`). The envelope is validated on create/import, participates in version identity, round-trips through file/OpenSearch storage and JSON export, and is rendered as non-disclosed workspace setup on case details. Built-in connector delivery payloads continue to contain only prompt/context/tool input — fixture data is never disclosed to the agent. OpenSearch indexes the envelope identity fields as keywords while storing `payload` with `enabled: false` to prevent unbounded connector-owned keys from consuming the mapping field budget.
+
 ## [0.6.0] - 2026-08-27
 
 ### Added
