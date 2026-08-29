@@ -24,6 +24,15 @@
 
 import * as React from 'react';
 import { render, screen, fireEvent, act } from '@testing-library/react';
+
+// react-markdown (inside ui/markdown) is ESM-only and can't be parsed by this
+// node/ts-jest config — mock it like tests/unit/components/TestCaseDetailPanel.test.ts does.
+jest.mock('@/components/ui/markdown', () => ({
+  Markdown: ({ children }: { children: string }) =>
+    require('react').createElement('div', null, children),
+  hasRealMarkdown: () => false,
+}));
+
 import { CollapsibleTestCaseDefinition } from '@/components/evals3/CollapsibleTestCaseDefinition';
 import type { TestCase } from '@/types';
 
@@ -88,11 +97,15 @@ describe('CollapsibleTestCaseDefinition — JSON branch (unchanged)', () => {
     Object.defineProperty(navigator, 'clipboard', { value: originalClipboard, configurable: true });
   });
 
-  it('renders the full untruncated pretty-printed JSON for a non-SDK test case', () => {
+  it('renders the readable definition with raw JSON behind a toggle for a non-SDK test case', () => {
     const tc = baseTestCase(); // no sourceFile
     render(h(CollapsibleTestCaseDefinition, { testCase: tc, defaultOpen: true }));
-    expect(screen.getByText(/Full Definition \(JSON\)/i)).toBeTruthy();
-    // Whole object present, including nested fields.
+    // Readable definition (from TestCaseDefinition) leads — not a JSON dump.
+    expect(screen.getByText('What is 2+2?')).toBeTruthy();
+    expect(screen.queryByTestId('raw-test-case-json')).toBeNull();
+    // Raw JSON is still reachable, untruncated, behind the toggle.
+    fireEvent.click(screen.getByText(/view raw json/i));
+    expect(screen.getByTestId('raw-test-case-json')).toBeTruthy();
     expect(screen.getByText(/"initialPrompt": "What is 2\+2\?"/)).toBeTruthy();
     expect(screen.getByText(/"expectedOutcomes"/)).toBeTruthy();
     // No eval-source view for JSON test cases.
@@ -104,6 +117,7 @@ describe('CollapsibleTestCaseDefinition — JSON branch (unchanged)', () => {
     Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
     const tc = baseTestCase();
     render(h(CollapsibleTestCaseDefinition, { testCase: tc, defaultOpen: true }));
+    fireEvent.click(screen.getByText(/view raw json/i));
 
     await act(async () => {
       fireEvent.click(screen.getByTitle(/copy json/i));
@@ -116,14 +130,18 @@ describe('CollapsibleTestCaseDefinition — JSON branch (unchanged)', () => {
   it('section itself defaults closed and opens on header click', () => {
     const tc = baseTestCase();
     render(h(CollapsibleTestCaseDefinition, { testCase: tc }));
-    expect(screen.queryByText(/Full Definition \(JSON\)/i)).toBeNull();
+    expect(screen.queryByText('What is 2+2?')).toBeNull();
     openSection();
-    expect(screen.getByText(/Full Definition \(JSON\)/i)).toBeTruthy();
+    expect(screen.getByText('What is 2+2?')).toBeTruthy();
   });
 });
 
 describe('TestCaseDefinition — SDK / code-authored cases', () => {
   const { TestCaseDefinition } = require('@/components/TestCaseDefinition');
+  const testCase = baseTestCase({
+    initialPrompt: 'Why are checkout requests failing?',
+    expectedOutcomes: ['Identify the payment-service timeout'],
+  });
   const sdkCase: TestCase = {
     ...testCase,
     id: 'tc-sdk',
