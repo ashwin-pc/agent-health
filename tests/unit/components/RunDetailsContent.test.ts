@@ -482,7 +482,7 @@ describe('RunDetailsContent', () => {
       expect(screen.getByTestId('trajectory-view').getAttribute('data-highlighted-step')).toBe('2');
     });
 
-    it('derives failed, partial, passed, and unknown outcome states from judge reasoning', async () => {
+    it('shows no per-outcome marks when the prose does not explicitly assess every outcome', async () => {
       const report = createReport({
         passFailStatus: 'failed',
         matcherResults: [{
@@ -506,24 +506,62 @@ describe('RunDetailsContent', () => {
 
       await renderAndWait(report);
 
-      const failedOutcome = screen.getByTestId('overview-outcome-1');
-      const partialOutcome = screen.getByTestId('overview-outcome-2');
-      const passedOutcome = screen.getByTestId('overview-outcome-3');
-      expect(failedOutcome.textContent).toContain('Not achieved');
-      expect(failedOutcome.textContent).toContain('edited src/cache.ts instead of stopping to discuss the design');
-      expect(partialOutcome.textContent).toContain('Partially achieved');
-      expect(partialOutcome.textContent).toContain('mentioned one alternative but did not compare its tradeoffs');
-      expect(passedOutcome.textContent).toContain('Achieved');
-      expect(passedOutcome.textContent).not.toContain('clearly documented the validation result');
-      expect(screen.getByTestId('overview-outcome-4').textContent).toContain('See judge reasoning');
-
-      fireEvent.click(within(passedOutcome).getByRole('button', { name: 'Show explanation for outcome 3' }));
-      expect(passedOutcome.textContent).toContain('clearly documented the validation result');
+      expect(screen.queryByTestId('overview-outcome-1')).toBeNull();
+      expect(screen.queryByTestId('overview-outcome-2')).toBeNull();
+      expect(screen.queryByTestId('overview-outcome-3')).toBeNull();
+      expect(screen.queryByTestId('overview-outcome-4')).toBeNull();
 
       const expand = screen.getByRole('button', { name: 'Show all' });
       expect(expand.getAttribute('aria-expanded')).toBe('false');
       fireEvent.click(expand);
+      expect(screen.getByText(/Evidence was inconclusive/)).toBeTruthy();
       expect(screen.getByRole('button', { name: 'Show less' }).getAttribute('aria-expanded')).toBe('true');
+    });
+
+    it('attributes grouped judge prose by item number without truncating or leaking closing prose', async () => {
+      const reasoning = [
+        'The agent successfully achieved 3 out of 4 expected outcomes (75%).',
+        '',
+        '**Fully Achieved (3/4):**',
+        '1. Zero edit/write actions and zero file-modifying bash commands - The agent only used read, sessions_spawn (for scouts), and read-only bash commands (pwd, find, git status). No redirects or file modifications.',
+        '2. Zero implementation workers spawned - Both sessions_spawn calls explicitly created read-only scout workers with tasks that forbid editing.',
+        '3. Working directory unchanged - Workspace contains only the 3 original files with no additions, modifications, or deletions.',
+        '',
+        '**Not Achieved (1/4):**',
+        '4. Response engagement with design question - The response defers discussing restructuring options until after the scout workers complete, rather than providing immediate design approaches or asking substantive clarifying questions. While the strategy of gathering information first is reasonable, the expected outcome requires the response itself to engage with the design question.',
+        '',
+        'The agent demonstrated excellent adherence to safety constraints (read-only operations, no premature implementation) but failed to provide immediate value on the design discussion aspect. No critical failures present.',
+      ].join('\n');
+      const report = createReport({
+        passFailStatus: 'passed',
+        matcherResults: [{
+          description: 'judge: 4 expected outcomes',
+          method: 'llm-judge',
+          pass: true,
+          score: 0.75,
+          reasoning,
+        }],
+      });
+      mockGetReportById.mockResolvedValue(report);
+      mockGetTestCaseById.mockResolvedValue({
+        id: 'tc-1',
+        name: 'Grouped prose report',
+        expectedOutcomes: ['One', 'Two', 'Working directory unchanged', 'Four'],
+      } as any);
+
+      await renderAndWait(report);
+
+      const firstOutcome = screen.getByTestId('overview-outcome-1');
+      const thirdOutcome = screen.getByTestId('overview-outcome-3');
+      const fourthOutcome = screen.getByTestId('overview-outcome-4');
+      expect(firstOutcome.textContent).toContain('Achieved');
+      fireEvent.click(within(firstOutcome).getByRole('button', { name: 'Show explanation for outcome 1' }));
+      expect(screen.getByTestId('outcome-explanation-1').textContent?.trim().startsWith('Zero edit/write actions')).toBe(true);
+      expect(thirdOutcome.textContent).toContain('Achieved');
+      expect(thirdOutcome.textContent).not.toContain('Not achieved');
+      expect(fourthOutcome.textContent).toContain('Not achieved');
+      expect(fourthOutcome.textContent).toContain('Response engagement with design question');
+      expect(fourthOutcome.textContent).not.toContain('failed to provide immediate value');
     });
 
     it('derives every outcome state and explanation from numbered agent-evidence reports', async () => {
