@@ -138,6 +138,22 @@ describe('report verdict derivation (#407)', () => {
     });
   });
 
+  it('keeps the report-level overall score for structured outcome entries without per-row scores', () => {
+    const input = report({
+      metrics: { accuracy: 50 },
+      matcherResults: [
+        { description: 'Outcome A', method: 'llm-judge', pass: true, reasoning: 'Met.' },
+        { description: 'Outcome B', method: 'llm-judge', pass: false, reasoning: 'Missing.' },
+      ],
+    });
+
+    expect(getJudgeVerdict(input)).toEqual({
+      status: 'failed',
+      score: 50,
+      source: 'matcherResults',
+    });
+  });
+
   it('clamps legacy metrics and excludes non-finite values before averaging', () => {
     expect(getJudgeVerdict(report({
       passFailStatus: 'passed',

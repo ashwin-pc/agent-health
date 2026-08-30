@@ -402,6 +402,9 @@ describe('RunDetailsContent', () => {
       expect(screen.getByTestId('run-overview')).toBeTruthy();
       expect(screen.getByTestId('overview-verdict').textContent).toContain('PASS');
       expect(screen.getByTestId('overview-score').textContent).toBe('100%');
+      // Legacy aggregate reports keep their conservative prose-derived rows,
+      // but never claim a structured X/Y count.
+      expect(screen.queryByTestId('overview-outcomes-achieved')).toBeNull();
       expect(screen.getByTestId('overview-outcome-1').textContent).toContain('Achieved');
       expect(screen.getByTestId('overview-outcome-2').textContent).toContain('Achieved');
 
@@ -409,9 +412,10 @@ describe('RunDetailsContent', () => {
       expect(screen.getByRole('tab', { name: /Test Case Output/ }).getAttribute('data-state')).toBe('active');
     });
 
-    it('renders a failed verdict, direct per-outcome results, timing, and tokens', async () => {
+    it('renders JS matchers and per-outcome judge results in one list with an achieved summary', async () => {
       const report = createReport({
         passFailStatus: undefined,
+        metrics: { accuracy: 50 },
         traceStatus: 'available',
         spans: mockSpans as any,
         trajectory: [{ type: 'action', content: 'lookup', toolName: 'search' } as any],
@@ -425,8 +429,19 @@ describe('RunDetailsContent', () => {
           rawResponse: '{}',
         },
         matcherResults: [
-          { description: 'outcome one', method: 'llm-judge', pass: true, score: 1 },
-          { description: 'outcome two', method: 'llm-judge', pass: false, score: 0 },
+          { description: 'uses search before answering', method: 'code-assertion', pass: true },
+          {
+            description: 'First expected outcome',
+            method: 'llm-judge',
+            pass: true,
+            reasoning: 'The final answer identifies the cache failure.',
+          },
+          {
+            description: 'Second expected outcome',
+            method: 'llm-judge',
+            pass: false,
+            reasoning: 'The trajectory contains a write action.',
+          },
         ],
       });
       mockGetReportById.mockResolvedValue(report);
@@ -440,8 +455,17 @@ describe('RunDetailsContent', () => {
 
       expect(screen.getByTestId('overview-verdict').textContent).toContain('FAIL');
       expect(screen.getByTestId('overview-score').textContent).toBe('50%');
-      expect(screen.getByTestId('overview-outcome-1').textContent).toContain('Achieved');
-      expect(screen.getByTestId('overview-outcome-2').textContent).toContain('Not achieved');
+      expect(screen.getByTestId('overview-outcomes-achieved').textContent).toContain('1/2 outcomes achieved');
+      expect(screen.getByTestId('overview-matcher-results')).toBeTruthy();
+      expect(screen.getAllByTestId(/overview-matcher-\d+/)).toHaveLength(3);
+      expect(screen.getByTestId('overview-matcher-1').textContent).toContain('uses search before answering');
+      expect(screen.getByTestId('overview-matcher-1').textContent).toContain('JS matcher');
+      expect(screen.getByTestId('overview-matcher-2').textContent).toContain('First expected outcome');
+      expect(screen.getByTestId('overview-matcher-2').textContent).toContain('LLM judge');
+      expect(screen.getByTestId('overview-matcher-3').textContent).toContain('The trajectory contains a write action.');
+      expect(screen.queryByTestId('overview-outcome-1')).toBeNull();
+      fireEvent.click(within(screen.getByTestId('overview-matcher-2')).getByRole('button', { name: 'Show explanation for outcome 2' }));
+      expect(screen.getByTestId('overview-matcher-2').textContent).toContain('The final answer identifies the cache failure.');
       expect(screen.getAllByText('2500ms').length).toBeGreaterThan(0);
       expect(screen.getAllByText('150').length).toBeGreaterThan(0);
       expect(screen.getAllByText('1').length).toBeGreaterThan(0);
@@ -458,7 +482,7 @@ describe('RunDetailsContent', () => {
           { id: 'step-2', type: 'action', content: 'Edit', toolName: 'edit' },
         ] as any,
         matcherResults: [{
-          description: 'outcome one',
+          description: 'Discuss the design before editing',
           method: 'llm-judge',
           pass: false,
           score: 0,
