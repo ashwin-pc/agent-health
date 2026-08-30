@@ -47,6 +47,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { JudgeModelSelect } from '@/components/JudgeModelSelect';
 import { asyncTestCaseStorage, asyncRunStorage } from '@/services/storage';
 import { TestCase, EvaluationReport, TrajectoryStep, Evaluator, RunConfigInput } from '@/types';
+import { expectedOutcomeText } from '@/lib/testCases/declarativeOutcomes';
 import { getLabelColor, formatDate, formatRelativeTime, getModelName, getRunDisplayName } from '@/lib/utils';
 import { RunScore } from '@/components/RunScore';
 import { TestCaseEditor } from '@/components/TestCaseEditor';
@@ -448,7 +449,7 @@ export const TestCaseDetailPage: React.FC = () => {
                         {testCase.expectedOutcomes.map((o, i) => (
                           <li key={i} className="text-[10px] text-muted-foreground flex items-start gap-1 leading-snug">
                             <CheckCircle2 size={9} className="text-green-500 mt-0.5 shrink-0" />
-                            <span className="break-words min-w-0">{o}</span>
+                            <span className="break-words min-w-0">{expectedOutcomeText(o)}</span>
                           </li>
                         ))}
                       </ul>
@@ -697,7 +698,7 @@ export const TestCaseDetailPage: React.FC = () => {
                     {testCase.expectedOutcomes.map((o, i) => (
                       <li key={i} className="text-xs text-muted-foreground flex items-start gap-1.5">
                         <CheckCircle2 size={11} className="text-green-500 mt-0.5 shrink-0" />
-                        <span>{o}</span>
+                        <span>{expectedOutcomeText(o)}</span>
                       </li>
                     ))}
                   </ul>
