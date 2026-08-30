@@ -9,6 +9,9 @@ Inspired by [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)
 
 ## [Unreleased]
 
+### Changed
+- **LLM evidence judge: structured verdicts per expected outcome** ([server/prompts/judgePrompt.ts](server/prompts/judgePrompt.ts), [server/services/piAgenticJudgeService.ts](server/services/piAgenticJudgeService.ts), [server/services/judgeResponseParser.ts](server/services/judgeResponseParser.ts), [lib/matchers/judgeAccessor.ts](lib/matchers/judgeAccessor.ts)): the judge contract now requests one binary, evidence-grounded JSON result per expected outcome and persists each as its own `llm-judge` matcher result. Legacy/custom judge responses that omit or malform the array retain the previous single aggregate matcher instead of failing the run.
+
 ## [0.6.0] - 2026-08-27
 
 ### Added

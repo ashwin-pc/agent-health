@@ -62,9 +62,20 @@ export interface JudgeRequest {
   keepEvidence?: boolean;
 }
 
+export interface JudgeOutcomeResult {
+  /** Expected-outcome text returned by the judge. */
+  outcome: string;
+  /** Binary verdict for this expected outcome. */
+  pass: boolean;
+  /** Short, evidence-grounded explanation for the verdict. */
+  evidence: string;
+}
+
 export interface JudgeResponse {
   passFailStatus: 'passed' | 'failed';
   metrics: EvaluationMetrics;
+  /** One verdict per expected outcome when the judge honored the new contract. */
+  outcomeResults?: JudgeOutcomeResult[];
   llmJudgeReasoning: string;
   improvementStrategies: ImprovementStrategy[];
   duration: number;

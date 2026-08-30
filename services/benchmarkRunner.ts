@@ -34,7 +34,7 @@ import {
   emptyTracesAccessor,
   unavailableTracesAccessor,
   buildTracesAccessor,
-  buildJudgeMatcherEntry,
+  buildJudgeMatcherEntries,
   formatExpectedOutcomesAsClaim,
 } from '@/lib/matchers/index';
 import type { TracesAccessor } from '@/lib/matchers/index';
@@ -1092,13 +1092,12 @@ export function startTracePollingForReportWithModule(report: EvaluationReport, t
             passFailStatus: judgment.passFailStatus,
             metrics: judgment.metrics,
             llmJudgeReasoning: judgment.llmJudgeReasoning,
-            // Unified judge surface (issue #230 follow-up).
-            matcherResults: [
-              buildJudgeMatcherEntry(judgment, {
-                claim: formatExpectedOutcomesAsClaim(testCase.expectedOutcomes),
-                model: judgeModelId,
-              }),
-            ],
+            // One matcher per expected outcome when available, aggregate otherwise.
+            matcherResults: buildJudgeMatcherEntries(judgment, {
+              claim: formatExpectedOutcomesAsClaim(testCase.expectedOutcomes),
+              model: judgeModelId,
+              expectedOutcomes: testCase.expectedOutcomes,
+            }),
             improvementStrategies: judgment.improvementStrategies,
             // Persist the full judge sidecar (rawResponse, parsedMetrics,
             // extraFields, judgeDebug, ...) so the run-detail Judge
@@ -1213,13 +1212,12 @@ function startTracePollingForReport(report: EvaluationReport, testCase: TestCase
             passFailStatus: judgment.passFailStatus,
             metrics: judgment.metrics,
             llmJudgeReasoning: judgment.llmJudgeReasoning,
-            // Unified judge surface (issue #230 follow-up).
-            matcherResults: [
-              buildJudgeMatcherEntry(judgment, {
-                claim: formatExpectedOutcomesAsClaim(testCase.expectedOutcomes),
-                model: judgeModelId,
-              }),
-            ],
+            // One matcher per expected outcome when available, aggregate otherwise.
+            matcherResults: buildJudgeMatcherEntries(judgment, {
+              claim: formatExpectedOutcomesAsClaim(testCase.expectedOutcomes),
+              model: judgeModelId,
+              expectedOutcomes: testCase.expectedOutcomes,
+            }),
             improvementStrategies: judgment.improvementStrategies,
             // Same fix as the storage-module path above — persist the
             // full judge sidecar (rawResponse, parsedMetrics, extraFields,

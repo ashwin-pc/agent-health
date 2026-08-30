@@ -33,7 +33,7 @@ import {
   emptyTracesAccessor,
   unavailableTracesAccessor,
   buildTracesAccessor,
-  buildJudgeMatcherEntry,
+  buildJudgeMatcherEntries,
   formatExpectedOutcomesAsClaim,
 } from '@/lib/matchers/index';
 import type { TracesAccessor } from '@/lib/matchers/index';
@@ -919,16 +919,14 @@ async function waitForTracesAndJudge(
               passFailStatus: judgment.passFailStatus,
               metrics: judgment.metrics,
               llmJudgeReasoning: judgment.llmJudgeReasoning,
-              // Unified judge surface (issue #230 follow-up).
-              // The deterministic path doesn't reach here — trace-mode
-              // judge runs only when the test case has no SDK body —
-              // so there are no pre-existing matcherResults to merge with.
-              matcherResults: [
-                buildJudgeMatcherEntry(judgment, {
-                  claim: formatExpectedOutcomesAsClaim(testCase.expectedOutcomes),
-                  model: judgeModelId,
-                }),
-              ],
+              // The deterministic path doesn't reach here — trace-mode judge
+              // runs only when the test case has no SDK body — so there are no
+              // existing matcher results to merge with.
+              matcherResults: buildJudgeMatcherEntries(judgment, {
+                claim: formatExpectedOutcomesAsClaim(testCase.expectedOutcomes),
+                model: judgeModelId,
+                expectedOutcomes: testCase.expectedOutcomes,
+              }),
               improvementStrategies: judgment.improvementStrategies,
               // Persist the full judge sidecar so the run-detail Judge
               // Output card has all the breadcrumbs even on the

@@ -15,6 +15,7 @@ import { getBackendUrl } from '@/lib/portConfig';
 interface JudgeResult {
   passFailStatus: PassFailStatus;
   metrics: EvaluationMetrics;
+  outcomeResults?: Array<{ outcome: string; pass: boolean; evidence: string }>;
   llmJudgeReasoning: string;
   improvementStrategies: ImprovementStrategy[];
   judgeDurationMs?: number;
@@ -167,6 +168,7 @@ export async function callBedrockJudge(
       return {
         passFailStatus: result.passFailStatus || 'failed', // Default to failed if missing
         metrics: result.metrics,
+        outcomeResults: result.outcomeResults,
         llmJudgeReasoning: result.llmJudgeReasoning,
         improvementStrategies: result.improvementStrategies || [],
         judgeDurationMs: Date.now() - judgeStartTime,

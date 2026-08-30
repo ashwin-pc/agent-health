@@ -146,6 +146,9 @@ describe('buildAgentTraceJudgeSystemPrompt (runtime-composed contract)', () => {
     expect(out).toContain('Complete judgment evidence + restricted tools');
     expect(out).toContain('READ-ONLY');
     expect(out).toContain('evidence/testcase.json');
+    expect(out).toContain('Required Per-Outcome Verdicts');
+    expect(out).toContain('"outcomes"');
+    expect(out).toContain('exactly one item for each expected outcome');
   });
 
   it('renders file-mode trace mounts and the join example only when they resolve in the real tree', () => {
