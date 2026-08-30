@@ -22,6 +22,7 @@ import {
   serializeFormToJson,
 } from '@/lib/testCaseValidation';
 import { parseLabels } from '@/lib/labels';
+import { expectedOutcomeText } from '@/lib/testCases/declarativeOutcomes';
 
 interface TestCaseEditorProps {
   testCase: TestCase | null; // null = create mode
@@ -45,7 +46,7 @@ export const TestCaseEditor: React.FC<TestCaseEditorProps> = ({
   const [initialPrompt, setInitialPrompt] = useState(testCase?.initialPrompt || '');
   const [context, setContext] = useState<AgentContextItem[]>(testCase?.context || []);
   const [expectedOutcomes, setExpectedOutcomes] = useState<string[]>(
-    testCase?.expectedOutcomes || ['']
+    testCase?.expectedOutcomes?.map(expectedOutcomeText) || ['']
   );
 
   // Editor mode state
@@ -297,6 +298,7 @@ export const TestCaseEditor: React.FC<TestCaseEditorProps> = ({
             difficulty: tc.difficulty,
             initialPrompt: tc.initialPrompt,
             context: (tc.context || []) as AgentContextItem[],
+            fixture: tc.fixture as TestCase['fixture'],
             expectedOutcomes: tc.expectedOutcomes || [],
           }));
 
@@ -333,6 +335,7 @@ export const TestCaseEditor: React.FC<TestCaseEditorProps> = ({
               difficulty: data.difficulty,
               initialPrompt: data.initialPrompt,
               context: (data.context || []) as AgentContextItem[],
+              fixture: data.fixture as TestCase['fixture'],
               expectedOutcomes: data.expectedOutcomes || [],
             });
             if (updated) {
@@ -348,6 +351,7 @@ export const TestCaseEditor: React.FC<TestCaseEditorProps> = ({
               difficulty: data.difficulty,
               initialPrompt: data.initialPrompt,
               context: (data.context || []) as AgentContextItem[],
+              fixture: data.fixture as TestCase['fixture'],
               expectedOutcomes: data.expectedOutcomes || [],
             });
             onSave(created);
