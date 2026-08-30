@@ -9,6 +9,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { TestCase } from '@/types';
 import { getLabelColor, formatDate } from '@/lib/utils';
+import { ContextDispositionGroups } from '@/components/ContextDispositionGroups';
 
 interface TestCaseDetailPanelProps {
   testCase: TestCase;
@@ -81,19 +82,7 @@ export const TestCaseDetailPanel: React.FC<TestCaseDetailPanelProps> = ({ testCa
 
       {/* Context */}
       {testCase.context && testCase.context.length > 0 && (
-        <div className="space-y-1">
-          <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Context ({testCase.context.length})</h4>
-          <div className="space-y-2">
-            {testCase.context.map((ctx, i) => (
-              <Card key={i} className="bg-muted/30">
-                <CardContent className="p-2">
-                  <p className="text-xs font-medium text-muted-foreground mb-1">{ctx.description}</p>
-                  <pre className="text-xs overflow-x-auto max-h-20 overflow-y-auto">{ctx.value.slice(0, 200)}{ctx.value.length > 200 ? '...' : ''}</pre>
-                </CardContent>
-              </Card>
-            ))}
-          </div>
-        </div>
+        <ContextDispositionGroups items={testCase.context} />
       )}
 
       {/* Tools */}

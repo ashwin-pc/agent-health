@@ -24,6 +24,15 @@
 
 import * as React from 'react';
 import { render, screen, fireEvent, act } from '@testing-library/react';
+
+// react-markdown (inside ui/markdown) is ESM-only and can't be parsed by this
+// node/ts-jest config — mock it like tests/unit/components/TestCaseDetailPanel.test.ts does.
+jest.mock('@/components/ui/markdown', () => ({
+  Markdown: ({ children }: { children: string }) =>
+    require('react').createElement('div', null, children),
+  hasRealMarkdown: () => false,
+}));
+
 import { CollapsibleTestCaseDefinition } from '@/components/evals3/CollapsibleTestCaseDefinition';
 import type { TestCase } from '@/types';
 
@@ -88,11 +97,15 @@ describe('CollapsibleTestCaseDefinition — JSON branch (unchanged)', () => {
     Object.defineProperty(navigator, 'clipboard', { value: originalClipboard, configurable: true });
   });
 
-  it('renders the full untruncated pretty-printed JSON for a non-SDK test case', () => {
+  it('renders the readable definition with raw JSON behind a toggle for a non-SDK test case', () => {
     const tc = baseTestCase(); // no sourceFile
     render(h(CollapsibleTestCaseDefinition, { testCase: tc, defaultOpen: true }));
-    expect(screen.getByText(/Full Definition \(JSON\)/i)).toBeTruthy();
-    // Whole object present, including nested fields.
+    // Readable definition (from TestCaseDefinition) leads — not a JSON dump.
+    expect(screen.getByText('What is 2+2?')).toBeTruthy();
+    expect(screen.queryByTestId('raw-test-case-json')).toBeNull();
+    // Raw JSON is still reachable, untruncated, behind the toggle.
+    fireEvent.click(screen.getByText(/view raw json/i));
+    expect(screen.getByTestId('raw-test-case-json')).toBeTruthy();
     expect(screen.getByText(/"initialPrompt": "What is 2\+2\?"/)).toBeTruthy();
     expect(screen.getByText(/"expectedOutcomes"/)).toBeTruthy();
     // No eval-source view for JSON test cases.
@@ -104,6 +117,7 @@ describe('CollapsibleTestCaseDefinition — JSON branch (unchanged)', () => {
     Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
     const tc = baseTestCase();
     render(h(CollapsibleTestCaseDefinition, { testCase: tc, defaultOpen: true }));
+    fireEvent.click(screen.getByText(/view raw json/i));
 
     await act(async () => {
       fireEvent.click(screen.getByTitle(/copy json/i));
@@ -116,8 +130,50 @@ describe('CollapsibleTestCaseDefinition — JSON branch (unchanged)', () => {
   it('section itself defaults closed and opens on header click', () => {
     const tc = baseTestCase();
     render(h(CollapsibleTestCaseDefinition, { testCase: tc }));
-    expect(screen.queryByText(/Full Definition \(JSON\)/i)).toBeNull();
+    expect(screen.queryByText('What is 2+2?')).toBeNull();
     openSection();
-    expect(screen.getByText(/Full Definition \(JSON\)/i)).toBeTruthy();
+    expect(screen.getByText('What is 2+2?')).toBeTruthy();
+  });
+});
+
+describe('TestCaseDefinition — SDK / code-authored cases', () => {
+  const { TestCaseDefinition } = require('@/components/TestCaseDefinition');
+  const testCase = baseTestCase({
+    initialPrompt: 'Why are checkout requests failing?',
+    expectedOutcomes: ['Identify the payment-service timeout'],
+  });
+  const sdkCase: TestCase = {
+    ...testCase,
+    id: 'tc-sdk',
+    name: 'sdk registered test',
+    initialPrompt: '',
+    expectedOutcomes: [],
+    sourceFile: 'examples/eval-files/demo.eval.ts',
+  } as TestCase;
+
+  it('renders the source-file pointer instead of an empty declarative rubric', () => {
+    render(React.createElement(TestCaseDefinition, { testCase: sdkCase }));
+    expect(screen.getByText('examples/eval-files/demo.eval.ts')).toBeTruthy();
+    expect(screen.getByText(/isn't serializable from runtime state/)).toBeTruthy();
+    expect(screen.queryByText(/expected outcomes/i)).toBeNull();
+  });
+
+  it('still renders the declarative rubric for JSON cases', () => {
+    render(React.createElement(TestCaseDefinition, { testCase }));
+    expect(screen.getByText('Why are checkout requests failing?')).toBeTruthy();
+    expect(screen.getByText('Identify the payment-service timeout')).toBeTruthy();
+  });
+
+  it('uses canonical, case-sensitive label parsing for chips', () => {
+    render(React.createElement(TestCaseDefinition, { testCase: {
+      ...testCase,
+      category: undefined,
+      difficulty: undefined,
+      labels: ['category:RCA', 'difficulty:Hard', 'subcategory:network', 'Category:NotCanonical', 'difficulty:Impossible'],
+    } }));
+    for (const chip of ['RCA', 'Hard', 'network', 'Category:NotCanonical']) {
+      expect(screen.getByText(chip)).toBeTruthy();
+    }
+    expect(screen.queryByText('difficulty:Impossible')).toBeNull();
   });
 });

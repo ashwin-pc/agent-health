@@ -109,6 +109,14 @@ module.exports = {
     //   render tests (see tests/unit/components/**/*.theme.test.ts) but
     //   codecov/patch is satisfied without opting them in, so there's no
     //   reason to take on that risk.
+    // - TestCaseDefinition.tsx, ContextDispositionGroups.tsx, TestCaseDetailPanel.tsx,
+    //   CollapsibleTestCaseDefinition.tsx (#420): readable test-case definitions —
+    //   each has a focused jsdom/RTL suite so the PR's new rendering lines count
+    //   toward codecov/patch.
+    'components/TestCaseDefinition.tsx',
+    'components/ContextDispositionGroups.tsx',
+    'components/TestCaseDetailPanel.tsx',
+    'components/evals3/CollapsibleTestCaseDefinition.tsx',
     'components/comparison/ComparisonScoreboard.tsx',
     'components/evals3/EvalRunsPage.tsx',
     'hooks/usePersistedState.ts',
