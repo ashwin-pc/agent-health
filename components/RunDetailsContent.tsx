@@ -750,17 +750,34 @@ export const RunDetailsContent: React.FC<RunDetailsContentProps> = ({
   const expectedOutcomes = Array.isArray(testCase?.expectedOutcomes)
     ? testCase.expectedOutcomes.filter((outcome): outcome is string => typeof outcome === 'string' && Boolean(outcome.trim()))
     : [];
-  const judgeEntries = getJudgeMatcherResults(liveReport).filter(entry => entry.role !== 'observe' && !entry.errored);
-  const perOutcomeJudgeEntries = judgeEntries.length === expectedOutcomes.length ? judgeEntries : null;
+  const allJudgeEntries = getJudgeMatcherResults(liveReport);
+  const judgeEntries = allJudgeEntries.filter(entry => entry.role !== 'observe' && !entry.errored);
+  const codeEntries = (liveReport.matcherResults ?? []).filter(entry => entry.method !== 'llm-judge');
+  const allMatcherEntries = [...codeEntries, ...allJudgeEntries];
+  // New evidence-judge reports copy each expected outcome verbatim into its
+  // matcher description. Requiring the full ordered match distinguishes that
+  // shape from SDK judge() calls and from legacy single aggregate entries.
+  const perOutcomeJudgeEntries = expectedOutcomes.length > 0 &&
+    judgeEntries.length === expectedOutcomes.length &&
+    judgeEntries.every((entry, index) => entry.description.trim() === expectedOutcomes[index].trim())
+    ? judgeEntries
+    : null;
+  // Legacy aggregate reports keep the conservative numbered-prose parser from
+  // 7d012b3. Structured reports render their real entries in the unified list
+  // below rather than manufacturing a second set of outcome rows.
   const parsedOutcomeAssessments = perOutcomeJudgeEntries
-    ? perOutcomeJudgeEntries.map(entry => ({
-      state: (entry.pass ? 'passed' : 'failed') as OutcomeState,
-      explanation: entry.reasoning?.trim() || undefined,
-    }))
+    ? null
     : parseOutcomeAssessments(judgeReasoning, expectedOutcomes.length);
   const outcomeBreakdown = parsedOutcomeAssessments
     ? expectedOutcomes.map((outcome, index) => ({ outcome, ...parsedOutcomeAssessments[index] }))
     : null;
+  const outcomesAchieved = perOutcomeJudgeEntries?.filter(entry => entry.pass).length;
+  // A lone non-structured judge entry is the historical aggregate shape. Keep
+  // its Overview presentation exactly as before (prose-derived outcome rows +
+  // reasoning card); the Judge tab still exposes the aggregate matcher row.
+  const overviewMatcherEntries = !perOutcomeJudgeEntries && codeEntries.length === 0 && judgeEntries.length === 1
+    ? []
+    : allMatcherEntries;
 
   return (
     <div className={`flex flex-col h-full ${className}`}>
@@ -1178,6 +1195,11 @@ export const RunDetailsContent: React.FC<RunDetailsContentProps> = ({
                         : 'text-muted-foreground'}`}>
                       {judgeVerdict?.status === 'passed' ? 'PASS' : judgeVerdict?.status === 'failed' ? 'FAIL' : 'PENDING'}
                     </div>
+                    {perOutcomeJudgeEntries && (
+                      <div className="text-sm text-muted-foreground" data-testid="overview-outcomes-achieved">
+                        {outcomesAchieved}/{perOutcomeJudgeEntries.length} outcomes achieved
+                      </div>
+                    )}
                   </div>
                 </div>
                 <div className="text-right shrink-0">
@@ -1188,6 +1210,57 @@ export const RunDetailsContent: React.FC<RunDetailsContentProps> = ({
                 </div>
               </CardContent>
             </Card>
+
+            {overviewMatcherEntries.length > 0 && (
+              <Card data-testid="overview-matcher-results">
+                <CardContent className="p-4 sm:p-5">
+                  <h3 className="font-semibold flex items-center gap-2 mb-3">
+                    <ListChecks size={17} /> Evaluation checks
+                  </h3>
+                  <div className="divide-y rounded-md border">
+                    {overviewMatcherEntries.map((entry, index) => {
+                      const state: OutcomeState = entry.pass ? 'passed' : 'failed';
+                      const explanation = entry.reasoning?.trim() || entry.errorMessage?.trim() || undefined;
+                      return (
+                        <div
+                          key={`${entry.method}-${index}-${entry.description}`}
+                          className="p-3 flex items-start gap-3"
+                          data-testid={`overview-matcher-${index + 1}`}
+                        >
+                          {entry.pass ? (
+                            <CheckCircle2 className="text-green-600 shrink-0 mt-0.5" size={17} />
+                          ) : (
+                            <XCircle className="text-red-600 shrink-0 mt-0.5" size={17} />
+                          )}
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-start justify-between gap-3">
+                              <div className="text-sm leading-relaxed break-words">{entry.description}</div>
+                              <Badge variant="outline" className="text-[9px] px-1.5 py-0 shrink-0">
+                                {entry.method === 'code-assertion' ? 'JS matcher' : entry.method === 'llm-judge' ? 'LLM judge' : entry.method}
+                              </Badge>
+                            </div>
+                            <div className={`text-[11px] mt-1 ${entry.pass
+                              ? 'text-green-700 dark:text-green-400'
+                              : 'text-red-700 dark:text-red-400'}`}>
+                              {entry.pass ? 'Passed' : 'Failed'}
+                            </div>
+                            <OutcomeExplanation
+                              explanation={explanation}
+                              state={state}
+                              outcomeNumber={index + 1}
+                              trajectoryStepCount={trajectory.length}
+                              onStepCitation={handleStepCitation}
+                              onSpanCitation={handleSpanCitation}
+                              canOpenSpan={canOpenSpanCitation}
+                            />
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </CardContent>
+              </Card>
+            )}
 
             {traceNotice && (
               <Card className={traceNotice.tone === 'warning'
@@ -1251,7 +1324,7 @@ export const RunDetailsContent: React.FC<RunDetailsContentProps> = ({
               </Card>
             )}
 
-            {judgeReasoning && (
+            {judgeReasoning && !perOutcomeJudgeEntries && (
               <Card>
                 <CardContent className="p-4 sm:p-5">
                   <div className="flex items-center justify-between gap-3 mb-2">
@@ -1598,14 +1671,7 @@ export const RunDetailsContent: React.FC<RunDetailsContentProps> = ({
                 reports that only have the legacy `llmJudgeReasoning` field,
                 getJudgeMatcherResults() synthesizes a virtual entry on read
                 so they still render here. */}
-            {(() => {
-              const judgeEntries = getJudgeMatcherResults(liveReport);
-              const codeEntries = (liveReport.matcherResults ?? []).filter(
-                m => m.method !== 'llm-judge'
-              );
-              const merged = [...codeEntries, ...judgeEntries];
-              return merged.length > 0 ? <MatcherResultsPanel results={merged} /> : null;
-            })()}
+            {allMatcherEntries.length > 0 ? <MatcherResultsPanel results={allMatcherEntries} /> : null}
 
             {/* Judge Reasoning card removed — judge data now flows through
                 the unified MatcherResultsPanel above as `[llm-judge]`

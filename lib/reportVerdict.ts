@@ -92,7 +92,10 @@ export function getJudgeVerdict(report: VerdictReport | null | undefined): Judge
 
     return {
       status: gatingResults.every(result => result.pass) ? 'passed' : 'failed',
-      score: mean(matcherScores),
+      // Structured per-outcome entries intentionally carry only pass/reasoning;
+      // preserve the judge's report-level overall score when no matcher score
+      // was supplied instead of turning the overview score into an em dash.
+      score: mean(matcherScores) ?? scoreFromMetrics(report.metrics as Record<string, number | undefined>),
       source: 'matcherResults',
     };
   }

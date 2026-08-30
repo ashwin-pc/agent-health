@@ -9,6 +9,9 @@ Inspired by [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)
 
 ## [Unreleased]
 
+### Changed
+- **Run overview: one matcher list for deterministic and per-outcome judge checks** ([components/RunDetailsContent.tsx](components/RunDetailsContent.tsx), [lib/reportVerdict.ts](lib/reportVerdict.ts)): the Overview tab now renders every persisted JS matcher and structured LLM outcome through the same status/description/reasoning list. Structured outcome reports add an `X/Y outcomes achieved` verdict sub-line while legacy aggregate reports retain the conservative numbered-prose fallback without inventing structured marks.
+
 ## [0.6.0] - 2026-08-27
 
 ### Added
