@@ -98,6 +98,8 @@ export interface JudgeResult {
     trajectory_alignment_score?: number;
     [key: string]: number | undefined;
   };
+  /** Per-expected-outcome verdicts when the judge returned the structured contract. */
+  outcomeResults?: Array<{ outcome: string; pass: boolean; evidence: string }>;
   llmJudgeReasoning: string;
   improvementStrategies?: string[];
 }

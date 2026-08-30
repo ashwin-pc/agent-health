@@ -15,7 +15,7 @@ import { AGUIToTrajectoryConverter, consumeSSEStream, buildAgentPayload } from '
 import { AGUIEvent } from '@/types/agui';
 import { generateMockTrajectory } from './mockTrajectory';
 import { callBedrockJudge } from './bedrockJudge';
-import { buildJudgeMatcherEntry, formatExpectedOutcomesAsClaim } from '@/lib/matchers/judgeAccessor';
+import { buildJudgeMatcherEntries, formatExpectedOutcomesAsClaim } from '@/lib/matchers/judgeAccessor';
 import type { MatcherResult } from '@/lib/matchers/types';
 import { buildJudgeAgentsHints } from '@/services/traces/judgeAgentsHints';
 import { resolveConnectorWorkspaceDir } from '@/services/connectors/types';
@@ -590,13 +590,13 @@ export async function runEvaluationWithConnector(
       trajectory: fullTrajectory,
       metrics: judgment.metrics,
       llmJudgeReasoning: judgment.llmJudgeReasoning,
-      // Unified judge surface (Option-B BC: legacy field above kept).
-      matcherResults: [
-        buildJudgeMatcherEntry(judgment, {
-          claim: formatExpectedOutcomesAsClaim(testCase.expectedOutcomes),
-          model: judgeModelId,
-        }),
-      ],
+      // One matcher per expected outcome when the judge returns the structured
+      // contract; legacy/custom responses retain the aggregate fallback.
+      matcherResults: buildJudgeMatcherEntries(judgment, {
+        claim: formatExpectedOutcomesAsClaim(testCase.expectedOutcomes),
+        model: judgeModelId,
+        expectedOutcomes: testCase.expectedOutcomes,
+      }),
       improvementStrategies: judgment.improvementStrategies,
       llmJudgeResponse,
       runId: agentRunId || undefined,
@@ -855,13 +855,12 @@ export async function runEvaluation(
       trajectory: fullTrajectory,
       metrics: judgment.metrics,
       llmJudgeReasoning: judgment.llmJudgeReasoning,
-      // Unified judge surface (Option-B BC: legacy field above kept).
-      matcherResults: [
-        buildJudgeMatcherEntry(judgment, {
-          claim: formatExpectedOutcomesAsClaim(testCase.expectedOutcomes),
-          model: judgeModelId,
-        }),
-      ],
+      // One matcher per expected outcome when available, aggregate otherwise.
+      matcherResults: buildJudgeMatcherEntries(judgment, {
+        claim: formatExpectedOutcomesAsClaim(testCase.expectedOutcomes),
+        model: judgeModelId,
+        expectedOutcomes: testCase.expectedOutcomes,
+      }),
       improvementStrategies: judgment.improvementStrategies,
       llmJudgeResponse,
       openSearchLogs: logs,

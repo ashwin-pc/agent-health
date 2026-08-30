@@ -30,6 +30,7 @@ import { Evaluator } from '@/types';
 import { readEnv } from '@/lib/envCompat';
 import { debug } from '@/lib/debug';
 import { regionInferencePrefix } from '@/lib/bedrockCompat';
+import { PER_OUTCOME_JUDGE_CONTRACT } from '@/server/prompts/judgePrompt';
 
 /**
  * Default base prompt used when no saved evaluator's `systemPrompt` is provided.
@@ -43,7 +44,8 @@ When you are done investigating, respond with ONLY a JSON object (no prose, opti
 {
   "pass_fail_status": "passed" | "failed",
   "accuracy": <0-100>,
-  "reasoning": "<concise explanation grounded in what the tools showed>",
+  "outcomes": [{ "outcome": "<expected outcome text>", "pass": <true | false>, "evidence": "<one short evidence sentence>" }],
+  "reasoning": "<concise overall explanation grounded in what the tools showed>",
   "metrics": { "faithfulness": <0-100>, "latency_score": <0-100>, "trajectory_alignment_score": <0-100> },
   "improvement_strategies": []
 }`;
@@ -161,7 +163,11 @@ Two jq examples:
 
 ${traceSection}
 
-Before returning a verdict, you MUST use restricted \`bash\` to inspect \`evidence/testcase.json\` and the complete trajectory files (at least two focused commands). PREFER real evidence over the narrative. Confirm evidence before crediting a tool call, budget claim, file-safety claim, or root-cause claim.`;
+Before returning a verdict, you MUST use restricted \`bash\` to inspect \`evidence/testcase.json\` and the complete trajectory files (at least two focused commands). PREFER real evidence over the narrative. Confirm evidence before crediting a tool call, budget claim, file-safety claim, or root-cause claim.
+
+${PER_OUTCOME_JUDGE_CONTRACT}
+
+This per-outcome array is required even when the base evaluator prompt uses a different JSON schema.`;
 }
 
 /**

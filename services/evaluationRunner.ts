@@ -17,17 +17,10 @@ import {
   PassFailStatus,
 } from '@/types';
 import type { IStorageModule } from '@/server/adapters/types';
-import {
-  runEvaluationWithConnector,
-  callBedrockJudge,
-  invokeAgent,
-  computeSdkMatcherSessionMetrics,
-  stampObjectiveActuals,
-  appendNotReachedMarker,
-} from '@/services/evaluation';
+import { runEvaluationWithConnector, callBedrockJudge, invokeAgent, computeSdkMatcherSessionMetrics } from '@/services/evaluation';
 import { resolveAgentModel } from '@/lib/resolveAgentModel';
 import { readEnv } from '@/lib/envCompat';
-import { buildJudgeAgentsHints, resolveJudgeRunId } from '@/services/traces/judgeAgentsHints';
+import { buildJudgeAgentsHints } from '@/services/traces/judgeAgentsHints';
 import { buildEvaluatorErrorPatch } from '@/services/evaluation/evaluatorError';
 import { connectorRegistry } from '@/services/connectors/server';
 import { startTestCaseSpan, finalizeTestCaseSpan, addEvaluationResultEvents } from '@/lib/telemetry';
@@ -40,7 +33,7 @@ import {
   emptyTracesAccessor,
   unavailableTracesAccessor,
   buildTracesAccessor,
-  buildJudgeMatcherEntry,
+  buildJudgeMatcherEntries,
   formatExpectedOutcomesAsClaim,
 } from '@/lib/matchers/index';
 import type { TracesAccessor } from '@/lib/matchers/index';
@@ -53,7 +46,6 @@ import { expect } from '@/lib/matchers/expect';
 import type { TrajectoryStep } from '@/types';
 import { createHookOrchestrator, type TestDescriptor } from './hookOrchestrator';
 import { bucketRunResults } from '@/lib/runStats';
-import { extractJudgeFailureReason, computeJudgeFailureSummary } from '@/lib/judgeFailureSummary';
 import { loadConfigSync } from '@/lib/config/index';
 import { getBackendUrl } from '@/lib/portConfig';
 import { DEFAULT_CONFIG } from '@/lib/constants';
@@ -222,11 +214,6 @@ export async function executeEvaluationRun(
   let throttleUntil = 0;
   let consecutiveThrottles = 0;
 
-  // Per-case judge-failure reasons (undefined for cases that weren't a judge
-  // failure), accumulated for the run-level `judgeFailureSummary` computed
-  // after the loop below. See lib/judgeFailureSummary.ts.
-  const judgeFailureReasons: Array<string | undefined> = [];
-
   try {
     await runWithConcurrencyLimit(
       testCases,
@@ -390,7 +377,6 @@ export async function executeEvaluationRun(
             const tracesView: TracesAccessor = {
               get totalTokens() { return loadedTraces.totalTokens; },
               get totalCost() { return loadedTraces.totalCost; },
-              get costSource() { return loadedTraces.costSource; },
               get toolCalls() { return loadedTraces.toolCalls; },
               get spans() { return loadedTraces.spans; },
               spanDuration: (name: string) => loadedTraces.spanDuration(name),
@@ -554,17 +540,6 @@ export async function executeEvaluationRun(
             const agentFailed =
               evalError !== undefined && capturedResult === undefined && !anyGateFailed;
             const failed = anyGateFailed || evalError !== undefined;
-            // ALWAYS-RECORD (owner-hit measurement-harness bug): a failing gate
-            // partway through the body must not erase the objective actuals the
-            // optimizer needs from every axis. durationMs/agentDurationMs already
-            // survive a later throw (stamped inside invoke() above, before the
-            // body gets a chance to fail); totalTokens/totalCostUsd did NOT — see
-            // stampObjectiveActuals() in services/evaluation/index.ts. Also append
-            // a synthetic `notReached` marker so the matcher panel can render a
-            // distinct row for the tail of the test that never ran instead of just
-            // omitting it (see docs/SDK.md "Always-record guarantee").
-            stampObjectiveActuals(report.performanceMetrics, loadedTraces, capturedResult !== undefined);
-            appendNotReachedMarker(matcherResults, evalError, agentFailed);
             (report as any).evaluationType = 'deterministic';
             (report as any).matcherResults = matcherResults;
             if (evalError !== undefined) {
@@ -653,17 +628,6 @@ export async function executeEvaluationRun(
             report = caseSpanContext
               ? await context.with(caseSpanContext, runEval)
               : await runEval();
-
-            // Classic non-trace reports carry no `metricsStatus`. Without an
-            // explicit stamp, the pre-persisted placeholder's 'pending'
-            // survives the update-merge below ({...existing, ...fields}
-            // never clears a key the report doesn't carry), and the runner
-            // then trace-polls a NON-traced agent for the full timeout
-            // (10 min for a mock/demo run) before erroring the report.
-            // benchmarkRunner clears this explicitly; mirror it here.
-            if ((report as any).metricsStatus === undefined) {
-              (report as any).metricsStatus = agentConfig.useTraces ? 'pending' : 'completed';
-            }
           }
 
           // Save the report via storage module. When we successfully
@@ -753,13 +717,6 @@ export async function executeEvaluationRun(
             status,
             ...(reportPassFail ? { passFailStatus: reportPassFail } : {}),
           };
-          // Track judge-failure reasons for the run-level judgeFailureSummary
-          // (see lib/judgeFailureSummary.ts). `savedReport` reflects the
-          // pre-trace-poll state for trace-mode agents (see comment above) --
-          // extractJudgeFailureReason correctly returns undefined for those
-          // (metricsStatus is 'pending', not 'error'), so this only captures
-          // the synchronous/deterministic judge-failure path today.
-          judgeFailureReasons.push(extractJudgeFailureReason(savedReport as any));
 
           // Finalize the OTel test_case span with the evaluation outcome.
           if (caseSpan) {
@@ -855,16 +812,6 @@ export async function executeEvaluationRun(
     const bucketed = bucketRunResults(run.results as Record<string, { status?: string; passFailStatus?: string }>);
     run.stats = { ...bucketed, total: totalTestCases };
 
-    // Run-level judge-failure surfacing (see lib/judgeFailureSummary.ts):
-    // when a dominant share of cases failed AT THE JUDGE STEP specifically,
-    // stamp a one-line reason onto the run doc so the runs list/inspector
-    // isn't silent about *why* -- pre-fix a run like this showed only a
-    // bare warning-triangle count with no reason (the reported incident).
-    const judgeFailureSummary = computeJudgeFailureSummary(judgeFailureReasons, totalTestCases);
-    if (judgeFailureSummary) {
-      run.judgeFailureSummary = judgeFailureSummary;
-    }
-
     // Compute performance metrics
     const totalDuration = Date.now() - runStartTime;
     const testCaseDurations = Object.values(run.results)
@@ -959,9 +906,7 @@ async function waitForTracesAndJudge(
               () => {},
               judgeModelId,
               report.evaluatorId,
-              // See resolveJudgeRunId: falls back to traceId/report.id when
-              // the connector never returned a native runId (REST agents).
-              resolveJudgeRunId(report),
+              report.runId,
               // Strategy C correlation hints (#264) so the agent trace
               // judge tool can find spans the agent emits under its OWN
               // correlation, not just spans matching agent-health's runId.
@@ -974,19 +919,14 @@ async function waitForTracesAndJudge(
               passFailStatus: judgment.passFailStatus,
               metrics: judgment.metrics,
               llmJudgeReasoning: judgment.llmJudgeReasoning,
-              // Set only by the agent (trace) judge provider -- see
-              // JudgeResponse.judgeMode / TestCaseRun.judgeMode.
-              ...(judgment.judgeMode ? { judgeMode: judgment.judgeMode } : {}),
-              // Unified judge surface (issue #230 follow-up).
-              // The deterministic path doesn't reach here — trace-mode
-              // judge runs only when the test case has no SDK body —
-              // so there are no pre-existing matcherResults to merge with.
-              matcherResults: [
-                buildJudgeMatcherEntry(judgment, {
-                  claim: formatExpectedOutcomesAsClaim(testCase.expectedOutcomes),
-                  model: judgeModelId,
-                }),
-              ],
+              // The deterministic path doesn't reach here — trace-mode judge
+              // runs only when the test case has no SDK body — so there are no
+              // existing matcher results to merge with.
+              matcherResults: buildJudgeMatcherEntries(judgment, {
+                claim: formatExpectedOutcomesAsClaim(testCase.expectedOutcomes),
+                model: judgeModelId,
+                expectedOutcomes: testCase.expectedOutcomes,
+              }),
               improvementStrategies: judgment.improvementStrategies,
               // Persist the full judge sidecar so the run-detail Judge
               // Output card has all the breadcrumbs even on the
