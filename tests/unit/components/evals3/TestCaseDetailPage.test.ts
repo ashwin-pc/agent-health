@@ -158,4 +158,55 @@ describe('TestCaseDetailPage definition-first hierarchy', () => {
     await waitFor(() => expect(screen.getByText('Autonomy calibration #1')).toBeTruthy());
     expect(screen.getByTestId('run-inspector')).toBeTruthy();
   });
+
+  it('falls back to createdAt/default version/"Stored definition" and handles empty version metadata', async () => {
+    mockGetTestCase.mockResolvedValue({
+      ...testCase,
+      currentVersion: undefined,
+      updatedAt: undefined,
+      sourceFile: 'evals/autonomy.eval.ts',
+      versions: [
+        { version: 1, createdAt: '2025-01-01T00:00:00Z', context: [], expectedOutcomes: undefined },
+        { version: 2, createdAt: '2025-01-02T00:00:00Z', context: [], expectedOutcomes: [] },
+      ],
+    });
+
+    render(React.createElement(TestCaseDetailPage));
+
+    const hero = await screen.findByTestId('test-case-definition-hero');
+    // currentVersion is undefined -> falls back to the "|| 1" default badge.
+    expect(within(hero).getAllByText('Version 1').length).toBeGreaterThan(0);
+    // sourceFile is set -> "Code-authored" branch of the provenance ternary.
+    expect(within(hero).getByText('Code-authored')).toBeTruthy();
+
+    const versionHistory = within(hero).getByTestId('test-case-version-history');
+    fireEvent.click(within(versionHistory).getByText('Version history'));
+    // expectedOutcomes undefined/empty -> "?.length || 0" fallback, count !== 1 -> plural "s".
+    const zeroOutcomeRows = within(versionHistory).getAllByText('0 expected outcomes');
+    expect(zeroOutcomeRows.length).toBe(2);
+  });
+
+  it('shows "0 runs" (plural) and hides the pass-rate span when there are no reports yet', async () => {
+    mockGetReports.mockResolvedValue({ reports: [], total: 0 });
+
+    render(React.createElement(TestCaseDetailPage));
+
+    const runsSection = await screen.findByTestId('test-case-runs-section');
+    // totalRuns === 0 -> "0 runs" (plural, totalRuns !== 1) and the
+    // `totalRuns > 0 && ...` pass-rate span is not rendered at all.
+    await waitFor(() => expect(within(runsSection).getByText('0 runs')).toBeTruthy());
+    expect(within(runsSection).queryByText(/% pass rate/)).toBeNull();
+  });
+
+  it('pluralizes the run count badge when there is more than one report', async () => {
+    mockGetReports.mockResolvedValue({
+      reports: [report, { ...report, id: 'report-2', name: 'Autonomy calibration #2' }],
+      total: 2,
+    });
+
+    render(React.createElement(TestCaseDetailPage));
+
+    const runsSection = await screen.findByTestId('test-case-runs-section');
+    await waitFor(() => expect(within(runsSection).getByText('2 runs')).toBeTruthy());
+  });
 });
