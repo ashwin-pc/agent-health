@@ -4,7 +4,7 @@
  */
 
 import { Router, Request, Response } from 'express';
-import { EvaluationRun, TestCaseSource, TestCaseSnapshot } from '../../../types/index.js';
+import { BenchmarkRun, EvaluationRun, TestCaseSource, TestCaseSnapshot } from '../../../types/index.js';
 import { getStorageModule } from '../../adapters/index.js';
 import { resolveTestCaseSources } from '../../../services/sourceResolver.js';
 import {
@@ -16,6 +16,7 @@ import { promoteRunToBenchmark } from '../../../services/benchmarkPromotion.js';
 import { loadConfigSync } from '../../../lib/config/index.js';
 import { getCustomAgents } from '../../services/customAgentStore.js';
 import { resolveAgentModel } from '../../../lib/resolveAgentModel.js';
+import { computeImageDigest, buildImageDoc } from '../../../lib/benchmarkImage.js';
 
 const router = Router();
 
@@ -26,14 +27,22 @@ const activeCancellationTokens = new Map<string, CancellationToken>();
  * Send an SSE event to the client.
  */
 function sendSSE(res: Response, event: string, data: any): void {
-  res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+  // The HTTP stream is only an observer of the durable run. A browser close,
+  // proxy timeout, or failed socket write must never reject runner callbacks
+  // (which would prematurely finalize the run and remove its cancel token).
+  if (res.destroyed || res.writableEnded) return;
+  try {
+    res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+  } catch {
+    // Execution continues and persists progress/results for polling clients.
+  }
 }
 
 // GET /api/storage/evaluation-runs - List evaluation runs
 router.get('/api/storage/evaluation-runs', async (req: Request, res: Response) => {
   try {
     const storage = getStorageModule();
-    const { benchmarkId, agentKey, status, testCaseId, trigger, from, size, sort, order } = req.query;
+    const { benchmarkId, agentKey, status, testCaseId, trigger, imageDigest, from, size, sort, order } = req.query;
 
     const filters: any = {};
     if (benchmarkId) filters.benchmarkId = benchmarkId;
@@ -41,6 +50,7 @@ router.get('/api/storage/evaluation-runs', async (req: Request, res: Response) =
     if (status) filters.status = status;
     if (testCaseId) filters.testCaseId = testCaseId;
     if (trigger) filters.trigger = trigger;
+    if (imageDigest) filters.imageDigest = imageDigest;
 
     const pagination = {
       from: from ? parseInt(from as string, 10) : 0,
@@ -84,7 +94,7 @@ router.get('/api/storage/evaluation-runs/:id', async (req: Request, res: Respons
 // POST /api/storage/evaluation-runs - Create and execute an evaluation run (SSE streaming)
 router.post('/api/storage/evaluation-runs', async (req: Request, res: Response) => {
   try {
-    const { sources, agentKey, modelId, judgeModelId, name, evaluatorId, concurrency, benchmarkId, trigger } = req.body;
+    const { sources, agentKey, modelId, judgeModelId, name, description, evaluatorId, concurrency, benchmarkId, trigger, agentEndpoint, headers } = req.body;
 
     // Validate required fields
     if (!sources || !Array.isArray(sources) || sources.length === 0) {
@@ -120,9 +130,27 @@ router.post('/api/storage/evaluation-runs', async (req: Request, res: Response) 
       return;
     }
     const testCases = resolved.testCases;
+    const resolvedTestCaseIds = testCases.map(tc => tc.id);
     const evaluateFnMap = resolved.evaluateFnMap;
     const hooksByFile = resolved.hooksByFile;
     const testHookScopes = resolved.testHookScopes;
+
+    // Keep an explicitly associated benchmark linked to the canonical test
+    // case documents resolved above. Repeated CLI imports therefore reuse one
+    // benchmark and one stable set of testCaseIds instead of creating rows
+    // whose definitions and runs live only in evaluation-run documents.
+    if (benchmarkId) {
+      const benchmark = await storage.benchmarks.getById(benchmarkId);
+      if (!benchmark) {
+        sendSSE(res, 'error', { error: `Benchmark not found: ${benchmarkId}` });
+        res.end();
+        return;
+      }
+      const idsChanged = JSON.stringify(benchmark.testCaseIds || []) !== JSON.stringify(resolvedTestCaseIds);
+      if (idsChanged) {
+        await storage.benchmarks.update(benchmarkId, { testCaseIds: resolvedTestCaseIds });
+      }
+    }
 
     // Create test case snapshots
     const snapshots: TestCaseSnapshot[] = testCases.map(tc => ({
@@ -149,9 +177,12 @@ router.post('/api/storage/evaluation-runs', async (req: Request, res: Response) 
     const run: any = {
       id: runId,
       name: name || `Evaluation Run ${new Date().toLocaleDateString()}`,
-      sources,
+      description,
+      sources: resolved.sources,
       agentKey,
       modelId: resolvedModelId,
+      agentEndpoint,
+      headers,
       // Customer-supplied judge model id (separate from agent's `modelId`).
       // Forwarded onto the run document so the runner reads it and the UI
       // can show which judge model graded each test case in this run.
@@ -165,6 +196,26 @@ router.post('/api/storage/evaluation-runs', async (req: Request, res: Response) 
       results: {},
       createdAt: now,
     };
+
+    // Stamp the content digest of this run's evaluation conditions and
+    // find-or-create the corresponding benchmark image. Content-addressed
+    // identity is the inherent dedup: re-running the same command yields the
+    // same digest → the same image doc — never a duplicate entity. Runs with
+    // equal digests are comparable by construction (same test-case contents,
+    // same evaluator/judge conditions; only the agent varies).
+    // Failure-safe: image bookkeeping must never block run execution.
+    try {
+      const evalConditions = {
+        evaluatorId: evaluatorId || undefined,
+        judgeModelId: run.judgeModelId || undefined,
+      };
+      const digest = computeImageDigest({ testCases, evalConditions });
+      run.imageDigest = digest;
+      await storage.images.create(buildImageDoc({ testCases, evalConditions }));
+      await storage.images.update(digest, { lastRunAt: now }).catch(() => {});
+    } catch (imageErr: any) {
+      console.warn('[StorageAPI] Image digest stamping failed (run continues):', imageErr?.message);
+    }
 
     await storage.evaluationRuns.create(run);
 
@@ -192,15 +243,30 @@ router.post('/api/storage/evaluation-runs', async (req: Request, res: Response) 
         },
       });
 
-      // Update run with final status
       const finalStatus = cancellationToken.isCancelled ? 'cancelled' : 'completed';
-      const updatedRun = await storage.evaluationRuns.update(runId, {
-        status: finalStatus,
-        stats: completedRun.stats,
-        completedAt: new Date().toISOString(),
-        results: completedRun.results,
-      });
+      const completedAt = new Date().toISOString();
 
+      // Link the terminal projection before finalizing the first-class run.
+      // If finalization crashes, retrying is safe because addRun is idempotent;
+      // a terminal evaluation-run can therefore never be orphaned from its benchmark.
+      if (benchmarkId) {
+        const benchmarkRun: BenchmarkRun = {
+          id: run.id, name: run.name, createdAt: run.createdAt, completedAt,
+          status: finalStatus, agentKey: run.agentKey, modelId: run.modelId,
+          judgeModelId: run.judgeModelId, results: completedRun.results, stats: completedRun.stats,
+          ...(run.description ? { description: run.description } : {}),
+          ...(run.evaluatorId ? { evaluatorId: run.evaluatorId } : {}),
+          ...(run.headers ? { headers: run.headers } : {}),
+          ...(run.concurrency ? { concurrency: run.concurrency } : {}),
+          testCaseSnapshots: run.testCaseSnapshots,
+        };
+        const linked = await storage.benchmarks.addRun(benchmarkId, benchmarkRun);
+        if (!linked) throw new Error(`Benchmark not found while linking completed run: ${benchmarkId}`);
+      }
+
+      const updatedRun = await storage.evaluationRuns.update(runId, {
+        status: finalStatus, stats: completedRun.stats, completedAt, results: completedRun.results,
+      });
       sendSSE(res, 'completed', updatedRun);
     } catch (error: any) {
       console.error(`[StorageAPI] Evaluation run failed: ${runId}`, error.message);

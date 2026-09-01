@@ -12,27 +12,26 @@ import { render, screen } from '@testing-library/react';
 import { describeFixturePayload, TestCaseDetailPanel } from '@/components/TestCaseDetailPanel';
 import type { TestCase } from '@/types';
 
-jest.mock('react-markdown', () => {
-  return function MockReactMarkdown({ children }: { children: string }) {
+jest.mock('@/components/ui/markdown', () => ({
+  Markdown: ({ children }: { children: string }) => {
     const [heading, ...body] = children.split(/\n+/).filter(Boolean);
-    const bodyText = body.join(' ');
+    const bodyText = body.join(' ') || heading;
     const bold = /\*\*([^*]+)\*\*/.exec(bodyText);
+    const inline = React.createElement(
+      'p',
+      null,
+      bold ? bodyText.slice(0, bold.index) : bodyText,
+      bold && React.createElement('strong', null, bold[1]),
+      bold ? bodyText.slice((bold.index || 0) + bold[0].length) : null,
+    );
     return React.createElement(
       React.Fragment,
       null,
-      heading.startsWith('# ') ? React.createElement('h1', null, heading.slice(2)) : React.createElement('p', null, heading),
-      bodyText && React.createElement(
-        'p',
-        null,
-        bold ? bodyText.slice(0, bold.index) : bodyText,
-        bold && React.createElement('strong', null, bold[1]),
-        bold ? bodyText.slice((bold.index || 0) + bold[0].length) : null,
-      ),
+      heading.startsWith('# ') ? React.createElement('h1', null, heading.slice(2)) : null,
+      inline,
     );
-  };
-});
-
-jest.mock('remark-gfm', () => () => {});
+  },
+}));
 
 function makeTestCase(overrides: Partial<TestCase> = {}): TestCase {
   return {
@@ -164,5 +163,24 @@ describe('TestCaseDetailPanel fixture rendering', () => {
     render(React.createElement(TestCaseDetailPanel, { testCase: makeTestCase() }));
 
     expect(screen.queryByTestId('workspace-fixture')).toBeNull();
+  });
+});
+
+describe('TestCaseDetailPanel context dispositions', () => {
+  it('uses the shared grouping, delivery summary, and documentation markdown', () => {
+    render(React.createElement(TestCaseDetailPanel, { testCase: makeTestCase({
+      context: [
+        { description: 'legacy', value: 'plain' },
+        { description: 'directive', value: '/tmp/fixture', disposition: 'connector' },
+        { description: 'manifest', value: '**Authored** documentation', disposition: 'documentation' },
+      ],
+    }) }));
+
+    expect(screen.getByTestId('context-delivery-summary').textContent)
+      .toContain('prompt + 1 context items · directives: 1 · documentation: 1');
+    expect(screen.getByText('Delivered to agent')).toBeTruthy();
+    expect(screen.getByText('Connector directive — not delivered')).toBeTruthy();
+    expect(screen.getByText('Documentation — not delivered')).toBeTruthy();
+    expect(screen.getByText('Authored').tagName).toBe('STRONG');
   });
 });

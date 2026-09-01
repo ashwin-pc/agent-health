@@ -517,9 +517,13 @@ export interface TestCaseRun {
 // Alias for backwards compatibility during migration
 export type EvaluationReport = TestCaseRun;
 
+export type ContextItemDisposition = 'prompt' | 'connector' | 'documentation';
+
 export interface AgentContextItem {
   description: string;
   value: string; // JSON stringified context data
+  /** How this item is consumed. Absent is equivalent to `prompt`. */
+  disposition?: ContextItemDisposition;
 }
 
 // Tool definition matching AG-UI/CopilotKit format
@@ -603,6 +607,17 @@ export interface TestCase {
   // Source provenance (code-imported test cases)
   sourceFile?: string;              // Relative path: "evals/cybergym.eval.ts"
   sourceHash?: string;              // SHA-256 of per-test-case content (for drift detection)
+  // Full eval-file source, captured once at import time so the Test Case
+  // detail page can render it as an IDE-style code view. All test cases
+  // parsed from the same file share the same sourceCode (the file, not the
+  // individual test, is the unit of "source"). Absent on:
+  //   - JSON-imported / UI-created test cases (no sourceFile at all), and
+  //   - code-imported test cases persisted BEFORE this field existed --
+  //     the UI shows a "source not captured at import" placeholder for
+  //     that case rather than treating it as an error.
+  sourceCode?: string;               // Full text of the eval file at import time
+  sourceFileName?: string;           // Basename of sourceFile, e.g. "cybergym.eval.ts"
+  sourceLanguage?: 'javascript' | 'typescript'; // For syntax highlighting
 
   // Metadata
   isPromoted: boolean;              // Available for experiments
@@ -994,6 +1009,7 @@ export interface BenchmarkRun {
   name: string;                    // e.g., "Baseline", "With Fix v1", "Claude 4 Test"
   description?: string;            // Optional description of what this run tests
   createdAt: string;               // When this run was created
+  completedAt?: string;            // When execution reached a terminal state
 
   // Execution status (tracks server-side execution progress)
   status?: BenchmarkRunStatus;     // Overall run status (undefined = legacy data, treat as completed)
@@ -1087,7 +1103,27 @@ export type ExperimentStartedEvent = BenchmarkStartedEvent;
  * Discriminator for documents in evals_benchmarks index.
  * Legacy docs without this field default to 'benchmark' via normalization.
  */
-export type EvalDocType = 'benchmark' | 'evaluation-run';
+export type EvalDocType = 'benchmark' | 'evaluation-run' | 'benchmark-image';
+
+/**
+ * BenchmarkImage — content-addressed snapshot of evaluation conditions
+ * ("the controls"): test-case contents + evaluator/judge conditions. Runs
+ * sharing a digest are comparable by construction; the digest is also the
+ * inherent dedup key (same command → same digest → same image, never a
+ * duplicate). Tags are docker-style mutable labels — never identity.
+ * Stored in the evals_benchmarks index/dir with docType 'benchmark-image'.
+ */
+export interface BenchmarkImage {
+  id: string;                      // `img-<digest>` (content-addressed)
+  docType: 'benchmark-image';
+  digest: string;                  // sha256 hex over canonical content
+  tags: string[];                  // human labels ("coding-eval:v3"), mutable
+  testCaseFingerprints: Array<{ id?: string; name: string; contentHash: string }>;
+  testCaseCount: number;
+  evalConditions: { evaluatorId?: string; judgeModelId?: string };
+  createdAt: string;
+  lastRunAt?: string;
+}
 
 /**
  * Describes where test cases came from for an evaluation run.
@@ -1153,6 +1189,13 @@ export interface EvaluationRun {
   // Benchmark association (undefined for ad-hoc runs, set for benchmark runs)
   benchmarkId?: string;
   benchmarkVersion?: number;
+
+  /**
+   * Content digest of this run's evaluation conditions (test-case contents +
+   * evaluator/judge conditions). Runs with equal digests ran under identical
+   * conditions and are directly comparable. See {@link BenchmarkImage}.
+   */
+  imageDigest?: string;
 }
 
 // ============ Comparison Types ============

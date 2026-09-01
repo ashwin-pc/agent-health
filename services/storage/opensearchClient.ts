@@ -79,6 +79,9 @@ export interface StorageTestCase {
    *  layer was just dropping it on read. */
   sourceFile?: string;
   sourceHash?: string;
+  sourceCode?: string;
+  sourceFileName?: string;
+  sourceLanguage?: 'javascript' | 'typescript';
 }
 
 export interface StorageBenchmarkRunConfig {
@@ -256,11 +259,16 @@ export const testCaseStorage = {
   /**
    * Get test cases by specific IDs (latest versions only)
    * Used for efficient filtered fetching (e.g., only test cases in a benchmark)
+   * @param options.summary - request the lightweight list-view payload
+   *   (same server-side transform `getAll` uses — see toSummary() in
+   *   server/routes/storage/testCases.ts) instead of full records.
    */
-  async getByIds(ids: string[]): Promise<StorageTestCase[]> {
+  async getByIds(ids: string[], options?: { summary?: boolean }): Promise<StorageTestCase[]> {
     if (ids.length === 0) return [];
-    const idsParam = ids.join(',');
-    const result = await request<{ testCases: StorageTestCase[]; total: number }>('GET', `/test-cases?ids=${idsParam}`);
+    const params = new URLSearchParams();
+    params.append('ids', ids.join(','));
+    if (options?.summary) params.append('fields', 'summary');
+    const result = await request<{ testCases: StorageTestCase[]; total: number }>('GET', `/test-cases?${params.toString()}`);
     return result.testCases;
   },
 
@@ -326,8 +334,8 @@ export const testCaseStorage = {
   /**
    * Bulk create test cases
    */
-  async bulkCreate(testCases: Partial<StorageTestCase>[]): Promise<{ created: number; errors: boolean }> {
-    return request<{ created: number; errors: boolean }>('POST', '/test-cases/bulk', { testCases });
+  async bulkCreate(testCases: Partial<StorageTestCase>[]): Promise<{ created: number; errors: boolean; testCases: StorageTestCase[] }> {
+    return request<{ created: number; errors: boolean; testCases: StorageTestCase[] }>('POST', '/test-cases/bulk', { testCases });
   },
 };
 
