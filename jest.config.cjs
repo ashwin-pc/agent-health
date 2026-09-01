@@ -133,6 +133,9 @@ module.exports = {
     // jsdom DOM test exercising both the JSON and plain-text render paths —
     // fold it into the unit report rather than relying solely on e2e/nyc.
     'components/evals3/ContextValueView.tsx',
+    // #428: definition-first test-case detail page hero has a focused
+    // jsdom/RTL suite exercising its new rendering lines.
+    'components/evals3/TestCaseDetailPage.tsx',
     '!**/__tests__/**',
     '!**/*.test.ts',
     '!**/dist/**',

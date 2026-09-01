@@ -28,9 +28,9 @@ import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
   Play, Calendar, CheckCircle2, XCircle, Pencil, AlertTriangle,
-  FileText, Target, Loader2, X,
+  FileText, Loader2, X, ChevronDown, ChevronRight, History,
   Link as LinkIcon, Check as CheckIcon,
-  GitBranch, Activity, Scale, MessageSquare, Clock,
+  GitBranch, Activity, Scale, MessageSquare,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -58,8 +58,8 @@ import { DEFAULT_CONFIG, getPreferredDefaultAgentKey } from '@/lib/constants';
 import { PREFS_KEYS } from '@/lib/preferences';
 import { ENV_CONFIG } from '@/lib/config';
 import { Markdown, hasRealMarkdown } from '@/components/ui/markdown';
-import { EvalSourceCodeView } from '@/components/evals3/EvalSourceCodeView';
 import { TestCaseDefinition } from '@/components/TestCaseDefinition';
+import { EvalSourceCodeView } from '@/components/evals3/EvalSourceCodeView';
 
 // Render a test-case prompt ("task definition"): as markdown when it actually
 // contains markdown (so headings / bullet lists indent instead of collapsing
@@ -107,6 +107,9 @@ export const TestCaseDetailPage: React.FC = () => {
 
   // UI state
   const [timeRange, setTimeRange] = useState<TimeRange>('all');
+  // Definition-first by default: run history is available one click below the
+  // complete rubric instead of competing with it for first-paint attention.
+  const [runsExpanded, setRunsExpanded] = useState(false);
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
   // Tracks which row's copy-link button just succeeded — used to flip the
   // icon to a checkmark for a brief moment so the user has feedback.
@@ -287,6 +290,7 @@ export const TestCaseDetailPage: React.FC = () => {
     // see isRunning=false. This synchronous check closes that window.
     if (!testCase || isRunning) return;
     setIsRunConfigOpen(false);
+    setRunsExpanded(true);
     setIsRunning(true);
     setLiveSteps([]);
     setRunError(null);
@@ -351,7 +355,7 @@ export const TestCaseDetailPage: React.FC = () => {
   }
 
   return (
-    <div className="h-full flex flex-col max-md:h-auto max-md:overflow-visible">
+    <div className="h-full overflow-y-auto max-md:h-auto max-md:overflow-visible" data-testid="test-case-detail-page">
       {/* ── Top Summary Bar ────────────────────────────────────────── */}
       <div className="px-4 py-3 border-b bg-card shrink-0">
         <Breadcrumbs
@@ -410,42 +414,95 @@ export const TestCaseDetailPage: React.FC = () => {
         </div>
       </div>
 
-      {/* ── Main Content: Left Panel + Right Panel ─────────────────── */}
+      {/* ── Definition hero ─────────────────────────────────────────
+          A reviewer must understand the rubric before interpreting any run.
+          Keep the complete definition visible on first paint at every width. */}
+      <section
+        className="w-full border-b bg-muted/20 px-4 py-5 sm:px-6 sm:py-7"
+        data-testid="test-case-definition-hero"
+        aria-labelledby="test-case-definition-heading"
+      >
+        <div className="mx-auto w-full max-w-5xl">
+          <div className="mb-5 flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+            <div>
+              <div className="mb-1 text-[10px] font-semibold uppercase tracking-widest text-opensearch-blue">Case under evaluation</div>
+              <h3 id="test-case-definition-heading" className="text-lg font-semibold">Test case definition</h3>
+              <p className="mt-1 max-w-2xl text-xs leading-relaxed text-muted-foreground">
+                This is the prompt, evidence context, and success rubric applied to each run below.
+              </p>
+            </div>
+            <div className="flex flex-wrap items-center gap-2 text-[10px] text-muted-foreground sm:justify-end">
+              <Badge variant="outline" className="text-[10px]">Version {testCase.currentVersion || 1}</Badge>
+              <span>Updated {formatDate(testCase.updatedAt || testCase.createdAt)}</span>
+              <span className="hidden sm:inline text-muted-foreground/40">·</span>
+              <span>{testCase.sourceFile ? 'Code-authored' : 'Stored definition'}</span>
+            </div>
+          </div>
+
+          {testCase.sourceFile ? (
+            // SDK test: EvalSourceCodeView IS the whole surface here too —
+            // rendering TestCaseDefinition's own "Source File" pointer branch
+            // alongside it would just duplicate the path/provenance row (see
+            // origin/main's pre-existing Collapsible Definition behavior).
+            <EvalSourceCodeView testCase={testCase} maxHeight="600px" />
+          ) : (
+            <TestCaseDefinition testCase={testCase} />
+          )}
+
+          {testCase.versions?.length > 1 && (
+            <details className="mt-5 rounded-md border bg-card/60" data-testid="test-case-version-history">
+              <summary className="flex cursor-pointer list-none items-center gap-2 px-3 py-2 text-xs font-medium hover:bg-muted/50">
+                <History size={13} className="text-muted-foreground" />
+                Version history
+                <Badge variant="secondary" className="ml-auto text-[9px]">{testCase.versions.length}</Badge>
+              </summary>
+              <div className="divide-y border-t">
+                {[...testCase.versions].reverse().map(version => (
+                  <div key={version.version} className="flex flex-wrap items-center gap-x-3 gap-y-1 px-3 py-2 text-[10px] text-muted-foreground">
+                    <span className="font-semibold text-foreground">Version {version.version}</span>
+                    <span>{formatDate(version.createdAt)}</span>
+                    <span>{version.expectedOutcomes?.length || 0} expected outcome{version.expectedOutcomes?.length === 1 ? '' : 's'}</span>
+                    {version.version === testCase.currentVersion && <Badge variant="outline" className="text-[8px]">Current</Badge>}
+                  </div>
+                ))}
+              </div>
+            </details>
+          )}
+        </div>
+      </section>
+
+      {/* ── Run history ──────────────────────────────────────────────
+          Secondary and collapsed by default, but all prior list, drill-down,
+          copy-link, filtering, and live-run capabilities remain below. */}
+      <section className="border-b bg-background" data-testid="test-case-runs-section">
+        <button
+          type="button"
+          className="flex w-full items-center gap-3 px-4 py-3 text-left hover:bg-muted/30 sm:px-6"
+          aria-expanded={runsExpanded}
+          aria-controls="test-case-runs-content"
+          onClick={() => setRunsExpanded(value => !value)}
+        >
+          {runsExpanded
+            ? <ChevronDown size={16} className="shrink-0 text-muted-foreground" />
+            : <ChevronRight size={16} className="shrink-0 text-muted-foreground" />}
+          <div className="min-w-0 flex-1">
+            <div className="text-sm font-semibold">Run history</div>
+            <div className="text-[10px] text-muted-foreground">Inspect prior evaluations, trajectories, judge results, and traces.</div>
+          </div>
+          <div className="flex shrink-0 items-center gap-2 text-[10px] text-muted-foreground">
+            <Badge variant="secondary" className="text-[9px]">{totalRuns} run{totalRuns !== 1 ? 's' : ''}</Badge>
+            {totalRuns > 0 && <span className="hidden sm:inline">{passRate}% pass rate</span>}
+          </div>
+        </button>
+
+        {runsExpanded && (
+        <div id="test-case-runs-content" className="h-[900px] min-h-[600px] border-t md:h-[calc(100vh-8rem)]">
+      {/* ── Main Content: Run List + Inspector ────────────────────── */}
       {selectedRunId ? (
-      <ResizablePanelGroup direction="horizontal" className="flex-1 max-md:!h-auto max-md:!overflow-visible max-md:!flex-col">
+      <ResizablePanelGroup direction="horizontal" className="h-full max-md:!h-auto max-md:!overflow-visible max-md:!flex-col">
         {/* ── Left Panel ──────────────────────────────────────────── */}
         <ResizablePanel defaultSize={30} minSize={20} maxSize={45} className="border-r max-md:!h-auto max-md:!min-h-0 max-md:!overflow-visible max-md:border-r-0 max-md:border-b">
           <ScrollArea className="h-full max-md:h-auto">
-            {/* ── Collapsible Definition ──────────────────────────── */}
-            <div className="border-b">
-              {/* Definition is always shown above the runs list — the input
-                  prompt and expected outcomes are the most useful piece of
-                  context when reading any run, so we don't make the user
-                  click a toggle every time they land on the page. */}
-              <div className="px-3 py-2 flex items-center justify-between">
-                <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">Definition</span>
-                <div className="flex items-center gap-2 text-[10px] text-muted-foreground">
-                  {testCase.expectedOutcomes?.length > 0 && (
-                    <span className="flex items-center gap-0.5"><Target size={9} /> {testCase.expectedOutcomes.length} expected</span>
-                  )}
-                  {testCase.context?.length > 0 && (
-                    <span>{testCase.context.length} context</span>
-                  )}
-                </div>
-              </div>
-              <div className="px-3 pb-3">
-                {testCase.sourceFile ? (
-                  // SDK test: EvalSourceCodeView IS the whole surface here too
-                  // (mirrors CollapsibleTestCaseDefinition.tsx) -- rendering
-                  // TestCaseDefinition's own "Source File" pointer branch
-                  // alongside it would just duplicate the path/provenance row.
-                  <EvalSourceCodeView testCase={testCase} maxHeight="320px" />
-                ) : (
-                  <TestCaseDefinition testCase={testCase} compact />
-                )}
-              </div>
-            </div>
-
             {/* ── Runs List ───────────────────────────────────────── */}
             <div className="px-3 pt-2 pb-1 border-b flex items-center justify-between">
               <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">Test Case Runs ({filteredRuns.length})</span>
@@ -652,15 +709,6 @@ export const TestCaseDetailPage: React.FC = () => {
         /* Full-width left panel when no run selected */
         <div className="flex-1 overflow-hidden">
           <ScrollArea className="h-full">
-            {/* Definition section — always open when no run selected */}
-            <div className="border-b px-4 py-3 space-y-2.5">
-              <div className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">Definition</div>
-              {testCase.sourceFile ? (
-                <EvalSourceCodeView testCase={testCase} maxHeight="600px" />
-              ) : (
-                <TestCaseDefinition testCase={testCase} />
-              )}
-            </div>
             {/* Runs list */}
             <div className="px-4 pt-3 pb-1 flex items-center justify-between">
               <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">Test Case Runs ({filteredRuns.length})</span>
@@ -731,6 +779,9 @@ export const TestCaseDetailPage: React.FC = () => {
           </ScrollArea>
         </div>
       )}
+        </div>
+        )}
+      </section>
 
       {/* ── Modals ─────────────────────────────────────────────────── */}
       {/* Run configuration dialog — small, dismissable, closes immediately
