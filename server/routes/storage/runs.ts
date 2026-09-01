@@ -22,6 +22,12 @@ import {
   getSampleRunsByBenchmarkRun,
 } from '../../../cli/demo/sampleRuns.js';
 import type { TestCaseRun } from '../../../types/index.js';
+import {
+  getRunSummaryFields,
+  getRunSummarySourceFields,
+  RUN_SUMMARY_FIELDS,
+  toRunSummary,
+} from '../../adapters/runSummary.js';
 
 const router = Router();
 
@@ -41,10 +47,24 @@ function getTimestampMs(run: { timestamp?: string; createdAt?: string }): number
   return ts ? new Date(ts).getTime() : 0;
 }
 
+function parseListFields(fields: unknown): string[] {
+  const requested = typeof fields === 'string'
+    ? fields.split(',').map(field => field.trim()).filter(Boolean)
+    : undefined;
+  return getRunSummaryFields(requested);
+}
+
+function summarizeRuns(runs: TestCaseRun[], fields?: readonly string[]): TestCaseRun[] {
+  return runs.map(run => toRunSummary(run as TestCaseRun & Record<string, any>, fields));
+}
+
 // GET /api/storage/runs - List all (paginated)
 router.get('/api/storage/runs', async (req: Request, res: Response) => {
   try {
-    const { size = '100', from = '0', fields, ids } = req.query;
+    const { size, limit, from = '0', fields, ids } = req.query;
+    const sizeValue = parseInt((size || limit || '100') as string, 10);
+    const fromValue = parseInt(from as string, 10);
+    const fieldList = parseListFields(fields);
 
     // Batch fetch by ids — collapses N per-report round-trips (e.g. the
     // comparison page loading every cell's report) into ONE request; the
@@ -59,49 +79,29 @@ router.get('/api/storage/runs', async (req: Request, res: Response) => {
           ? Promise.resolve(getSampleRun(id) as TestCaseRun | null)
           : storage.runs.getById(id).catch(() => null),
       ));
-      // Drop rawEvents (the raw SSE event log — KBs to MBs each) from the batch
-      // payload. List/table consumers like the comparison page never read it;
-      // shipping it makes a 16-report fetch tens of MB. ponytail: strip in the
-      // route (server→browser win); add OS _source excludes if the server-side
-      // OS→server fetch ever matters.
-      // Optional `fields` projection on the batch path: `?ids=…&fields=a,b`
-      // returns only the requested top-level fields (id always included).
-      // Lets status/badge consumers (run inspector, runs-list annotation
-      // counts) fetch 80+ reports in one request measured in KBs, not MBs.
-      // `rawEvents` is never projectable — the batch path's contract is that
-      // the raw SSE log (KBs–MBs per report) stays out of batch payloads.
-      const pick = typeof fields === 'string' && fields.trim()
-        ? fields.split(',').map((f) => f.trim()).filter((f) => f && f !== 'rawEvents')
-        : null;
-      const runs = fetched
-        .filter((r): r is TestCaseRun => r !== null)
-        .map((r) => {
-          if (pick) {
-            const out: Record<string, unknown> = { id: (r as any).id };
-            for (const f of pick) if (f in (r as any)) out[f] = (r as any)[f];
-            return out as unknown as TestCaseRun;
-          }
-          const { rawEvents, ...rest } = r as any; return rest as TestCaseRun;
-        });
+      // The batch form is still a list endpoint: even with no explicit fields,
+      // it must never return trajectories, raw events, or raw judge responses.
+      const runs = summarizeRuns(
+        fetched.filter((run): run is TestCaseRun => run !== null),
+        fieldList,
+      );
       return res.json({ runs, total: runs.length });
     }
 
     let realData: TestCaseRun[] = [];
+    let realTotal = 0;
 
-    // Parse fields query param for _source projection
-    const fieldList = typeof fields === 'string'
-      ? fields.split(',').map(f => f.trim()).filter(Boolean)
-      : undefined;
-
-    // Fetch from storage backend
+    // Fetch from storage backend. The projection is mandatory: callers may
+    // narrow the allow-list, but cannot request full report documents here.
     const storage = getStorageModule();
     try {
       const result = await storage.runs.getAll({
-        size: parseInt(size as string),
-        from: parseInt(from as string),
-        _source: fieldList,
+        size: sizeValue,
+        from: fromValue,
+        _source: getRunSummarySourceFields(fieldList),
       });
-      realData = result.items;
+      realData = summarizeRuns(result.items, fieldList);
+      realTotal = result.total;
     } catch (e: any) {
       console.warn('[StorageAPI] Storage unavailable, returning sample data only:', e.message);
     }
@@ -112,10 +112,10 @@ router.get('/api/storage/runs', async (req: Request, res: Response) => {
     );
 
     // User data first, then sample data
-    const allData = [...realData, ...sortedSampleData];
-    const total = allData.length;
+    const allData = [...realData, ...summarizeRuns(sortedSampleData, fieldList)];
+    const total = realTotal + sortedSampleData.length;
 
-    res.json({ runs: allData, total, size: parseInt(size as string), from: parseInt(from as string) });
+    res.json({ runs: allData, total, size: sizeValue, from: fromValue });
   } catch (error: any) {
     console.error('[StorageAPI] List runs failed:', error.message);
     res.status(500).json({ error: error.message });
@@ -312,9 +312,9 @@ router.post('/api/storage/runs/search', async (req: Request, res: Response) => {
     try {
       const result = await storage.runs.search(
         { experimentId, experimentRunId, testCaseId, agentId, modelId, status, passFailStatus, tags, dateRange },
-        { size, from },
+        { size, from, _source: [...RUN_SUMMARY_FIELDS] },
       );
-      realData = result.items;
+      realData = summarizeRuns(result.items);
     } catch (e: any) {
       console.warn('[StorageAPI] Storage unavailable for search:', e.message);
     }
@@ -325,7 +325,7 @@ router.post('/api/storage/runs/search', async (req: Request, res: Response) => {
     );
 
     // User data first, then sample data
-    const allData = [...realData, ...sortedSampleResults];
+    const allData = [...realData, ...summarizeRuns(sortedSampleResults)];
     res.json({ runs: allData, total: allData.length });
   } catch (error: any) {
     console.error('[StorageAPI] Search runs failed:', error.message);
@@ -353,7 +353,7 @@ router.get('/api/storage/runs/by-test-case/:testCaseId', async (req: Request, re
         parseInt(size as string),
         parseInt(from as string),
       );
-      realData = result.items;
+      realData = summarizeRuns(result.items);
       realTotal = result.total;
     } catch (e: any) {
       console.warn('[StorageAPI] Storage unavailable:', e.message);
@@ -366,7 +366,7 @@ router.get('/api/storage/runs/by-test-case/:testCaseId', async (req: Request, re
 
     // Only append sample data on the first page (from === 0)
     const fromInt = parseInt(from as string);
-    const allData = fromInt === 0 ? [...realData, ...sortedSampleResults] : realData;
+    const allData = fromInt === 0 ? [...realData, ...summarizeRuns(sortedSampleResults)] : realData;
     const total = realTotal + sampleResults.length;
 
     res.json({ runs: allData, total, size: parseInt(size as string), from: fromInt });
@@ -390,7 +390,9 @@ router.get('/api/storage/runs/by-benchmark/:benchmarkId', async (req: Request, r
     // Fetch from storage
     const storage = getStorageModule();
     try {
-      realData = await storage.runs.getByExperiment(benchmarkId, parseInt(size as string));
+      realData = summarizeRuns(
+        await storage.runs.getByExperiment(benchmarkId, parseInt(size as string)),
+      );
     } catch (e: any) {
       console.warn('[StorageAPI] Storage unavailable:', e.message);
     }
@@ -401,7 +403,7 @@ router.get('/api/storage/runs/by-benchmark/:benchmarkId', async (req: Request, r
     );
 
     // User data first, then sample data
-    const allData = [...realData, ...sortedSampleResults];
+    const allData = [...realData, ...summarizeRuns(sortedSampleResults)];
     res.json({ runs: allData, total: allData.length });
   } catch (error: any) {
     console.error('[StorageAPI] Get runs by benchmark failed:', error.message);
@@ -423,9 +425,9 @@ router.get('/api/storage/runs/by-benchmark-run/:benchmarkId/:runId', async (req:
     // Fetch from storage
     const storage = getStorageModule();
     try {
-      realData = await storage.runs.getByExperimentRun(
+      realData = summarizeRuns(await storage.runs.getByExperimentRun(
         benchmarkId, runId, parseInt(size as string),
-      );
+      ));
     } catch (e: any) {
       console.warn('[StorageAPI] Storage unavailable:', e.message);
     }
@@ -436,7 +438,7 @@ router.get('/api/storage/runs/by-benchmark-run/:benchmarkId/:runId', async (req:
     );
 
     // User data first, then sample data
-    const allData = [...realData, ...sortedSampleResults];
+    const allData = [...realData, ...summarizeRuns(sortedSampleResults)];
     res.json({ runs: allData, total: allData.length });
   } catch (error: any) {
     console.error('[StorageAPI] Get runs by benchmark run failed:', error.message);
@@ -469,7 +471,7 @@ router.get('/api/storage/runs/iterations/:benchmarkId/:testCaseId', async (req: 
         testCaseId,
         benchmarkRunId as string | undefined,
       );
-      realData = result.items;
+      realData = summarizeRuns(result.items);
       maxIteration = result.maxIteration;
     } catch (e: any) {
       console.warn('[StorageAPI] Storage unavailable:', e.message);
@@ -481,7 +483,7 @@ router.get('/api/storage/runs/iterations/:benchmarkId/:testCaseId', async (req: 
     );
 
     // User data first, then sample data
-    const allData = [...realData, ...sortedSampleResults];
+    const allData = [...realData, ...summarizeRuns(sortedSampleResults)];
     const combinedMaxIteration = allData.length > 0
       ? Math.max(maxIteration, ...allData.map((r: any) => r.iteration || 1))
       : 0;

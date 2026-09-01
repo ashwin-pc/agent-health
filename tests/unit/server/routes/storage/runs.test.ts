@@ -177,7 +177,11 @@ describe('Runs Storage Routes', () => {
 
       await handler(req, res);
 
-      expect(mockRunsGetAll).toHaveBeenCalledWith({ size: 50, from: 0, _source: undefined });
+      expect(mockRunsGetAll).toHaveBeenCalledWith({
+        size: 50,
+        from: 0,
+        _source: expect.arrayContaining(['id', 'testCaseId', 'matcherResults', 'metrics']),
+      });
       expect(res.json).toHaveBeenCalledWith(
         expect.objectContaining({
           runs: expect.arrayContaining([
@@ -203,7 +207,7 @@ describe('Runs Storage Routes', () => {
       });
     });
 
-    it('should not pass _source when fields query param is missing', async () => {
+    it('should always pass a safe summary projection when fields are missing', async () => {
       mockRunsGetAll.mockResolvedValue({ items: [], total: 0 });
 
       const { req, res } = createMocks({}, {}, {});
@@ -214,8 +218,25 @@ describe('Runs Storage Routes', () => {
       expect(mockRunsGetAll).toHaveBeenCalledWith({
         size: 100,
         from: 0,
-        _source: undefined,
+        _source: expect.arrayContaining(['id', 'runId', 'testCaseId', 'status', 'metrics']),
       });
+      const projection = mockRunsGetAll.mock.calls[0][0]._source;
+      expect(projection).not.toContain('rawEvents');
+      expect(projection).not.toContain('trajectory');
+      expect(projection).not.toContain('llmJudgeResponse');
+      expect(projection).not.toContain('rawResponse');
+    });
+
+    it('accepts limit as an alias for size', async () => {
+      mockRunsGetAll.mockResolvedValue({ items: [], total: 0 });
+
+      const { req, res } = createMocks({}, {}, { limit: '5' });
+      const handler = getRouteHandler(runsRoutes, 'get', '/api/storage/runs');
+
+      await handler(req, res);
+
+      expect(mockRunsGetAll).toHaveBeenCalledWith(expect.objectContaining({ size: 5 }));
+      expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ size: 5 }));
     });
 
     it('should return only sample data when storage unavailable', async () => {
@@ -235,7 +256,7 @@ describe('Runs Storage Routes', () => {
       );
     });
 
-    it('batch ids path returns full docs minus rawEvents when no fields given', async () => {
+    it('batch ids path returns summaries when no fields are given', async () => {
       mockRunsGetById.mockImplementation(async (id: string) => ({
         id,
         testCaseId: 'tc-1',
@@ -253,7 +274,8 @@ describe('Runs Storage Routes', () => {
       expect(mockRunsGetById).toHaveBeenCalledTimes(2);
       const body = (res.json as jest.Mock).mock.calls[0][0];
       expect(body.total).toBe(2);
-      expect(body.runs[0].trajectory).toBeDefined();
+      expect(body.runs[0].status).toBe('completed');
+      expect(body.runs[0].trajectory).toBeUndefined();
       expect(body.runs[0].rawEvents).toBeUndefined();
     });
 
