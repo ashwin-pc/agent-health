@@ -260,13 +260,14 @@ describe('Runs Storage Routes', () => {
       );
     });
 
-    it('batch ids path returns summaries when no fields are given', async () => {
+    it('batch ids path preserves full comparison fields when no projection is given', async () => {
       mockRunsGetById.mockImplementation(async (id: string) => ({
         id,
         testCaseId: 'tc-1',
         status: 'completed',
         passFailStatus: 'passed',
         trajectory: [{ type: 'assistant', content: 's' }],
+        llmJudgeReasoning: 'why it passed',
         rawEvents: [{ type: 'RAW' }],
       }));
 
@@ -279,7 +280,8 @@ describe('Runs Storage Routes', () => {
       const body = (res.json as jest.Mock).mock.calls[0][0];
       expect(body.total).toBe(2);
       expect(body.runs[0].status).toBe('completed');
-      expect(body.runs[0].trajectory).toBeUndefined();
+      expect(body.runs[0].trajectory).toEqual([{ type: 'assistant', content: 's' }]);
+      expect(body.runs[0].llmJudgeReasoning).toBe('why it passed');
       expect(body.runs[0].rawEvents).toBeUndefined();
     });
 
@@ -700,9 +702,21 @@ describe('Runs Storage Routes', () => {
   });
 
   describe('GET /api/storage/runs/by-test-case/:testCaseId', () => {
-    it('should return runs for test case', async () => {
+    it('should return runs for test case with all list UI metadata', async () => {
       mockRunsGetByTestCase.mockResolvedValue({
-        items: [{ id: 'run-123', testCaseId: 'tc-123' }],
+        items: [{
+          id: 'run-123',
+          name: 'Baseline',
+          description: 'Before prompt tuning',
+          testCaseId: 'tc-123',
+          agentId: 'demo',
+          modelId: 'demo-model',
+          createdAt: '2024-02-01T00:00:00Z',
+          status: 'completed',
+          passFailStatus: 'passed',
+          metricsStatus: 'ready',
+          metrics: { accuracy: 95 },
+        }],
         total: 1,
       });
 
@@ -714,7 +728,20 @@ describe('Runs Storage Routes', () => {
       expect(mockRunsGetByTestCase).toHaveBeenCalledWith('tc-123', 100, 0);
       expect(res.json).toHaveBeenCalledWith(
         expect.objectContaining({
-          runs: expect.any(Array),
+          runs: expect.arrayContaining([
+            expect.objectContaining({
+              id: 'run-123',
+              name: 'Baseline',
+              description: 'Before prompt tuning',
+              agentId: 'demo',
+              modelId: 'demo-model',
+              createdAt: '2024-02-01T00:00:00Z',
+              status: 'completed',
+              passFailStatus: 'passed',
+              metricsStatus: 'ready',
+              metrics: { accuracy: 95 },
+            }),
+          ]),
           total: expect.any(Number),
           size: 100,
           from: 0,

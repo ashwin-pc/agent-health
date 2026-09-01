@@ -149,6 +149,10 @@ function toTestCaseRun(stored: StorageRun): TestCaseRun {
     // as undefined even though the field is stored and non-empty.
     performanceMetrics: (stored as any).performanceMetrics,
     llmJudgeReasoning: stored.llmJudgeReasoning || '',
+    // Detail projections keep the structured judge response (with rawResponse
+    // omitted for `core` and hydrated on demand for `judgeRawResponse`). The
+    // browser mapper must not discard it after the server has projected it.
+    llmJudgeResponse: (stored as any).llmJudgeResponse,
     annotations: (stored.annotations || []).map(ann => ({
       id: ann.id,
       reportId: stored.id,

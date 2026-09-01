@@ -82,12 +82,19 @@ router.get('/api/storage/runs', async (req: Request, res: Response) => {
           ? Promise.resolve(getSampleRun(id) as TestCaseRun | null)
           : storage.runs.getById(id).catch(() => null),
       ));
-      // The batch form is still a list endpoint: even with no explicit fields,
-      // it must never return trajectories, raw events, or raw judge responses.
-      const runs = summarizeRuns(
-        fetched.filter((run): run is TestCaseRun => run !== null),
-        fieldList,
-      );
+      const found = fetched.filter((run): run is TestCaseRun => run !== null);
+      const hasExplicitFields = typeof fields === 'string' && fields.trim().length > 0;
+      // `ids` without a fields projection is the established full-report batch
+      // contract used by comparison views (trajectory, judge reasoning, and
+      // performance data). Keep it intact while still excluding rawEvents,
+      // which has never been part of this response. Status/list consumers use
+      // an explicit fields projection and remain lightweight.
+      const runs = hasExplicitFields
+        ? summarizeRuns(found, fieldList)
+        : found.map(run => {
+            const { rawEvents: _rawEvents, ...rest } = run as any;
+            return rest as TestCaseRun;
+          });
       return res.json({ runs, total: runs.length });
     }
 
