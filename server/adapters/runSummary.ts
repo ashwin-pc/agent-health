@@ -13,6 +13,7 @@ import type { EvaluationRun, TestCaseRun } from '../../types/index.js';
 export const RUN_SUMMARY_FIELDS = [
   'id',
   'name',
+  'description',
   'runId',
   'traceId',
   'sessionId',
