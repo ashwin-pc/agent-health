@@ -81,58 +81,39 @@ test.describe('Evals3 Benchmark Runs Page', () => {
     await expect(page.locator('button:has-text("Add Run")')).toBeVisible();
   });
 
-  test('should default to split layout (Test Cases left, Runs right)', async ({ page }) => {
+  test('should default the benchmark route to the Cases review workspace', async ({ page }) => {
     test.skip(!benchmarkId, 'No benchmark created');
-    // Wipe persisted layout pref so this asserts the *default*, not whatever the
-    // user happens to have saved.
-    await page.addInitScript(() => { try { localStorage.clear(); } catch {} });
-    await page.goto(`/evaluations/benchmarks/${benchmarkId}/runs`);
+    await page.goto(`/evaluations/benchmarks/${benchmarkId}`);
     await page.waitForSelector('h2', { timeout: 30000 });
 
-    // Split container present — this is the regression check for restoring the
-    // legacy two-panel layout (https://.../components/evals3/BenchmarkRunsPage.tsx).
-    await expect(page.locator('[data-testid="benchmark-runs-split"]')).toBeVisible();
-
-    // Both panel headers visible side-by-side.
-    await expect(page.locator('h3:has-text("Test Cases")')).toBeVisible();
-    await expect(page.locator('h3:has-text("Runs")')).toBeVisible();
-
-    // Tabs (TabsList) should NOT exist in split mode.
-    await expect(page.locator('[role="tablist"]')).toHaveCount(0);
-
-    // Layout toggle visible with Split active.
-    const splitToggle = page.locator('[data-testid="layout-mode-split"]');
-    await expect(splitToggle).toBeVisible();
-    await expect(splitToggle).toHaveAttribute('aria-pressed', 'true');
+    const casesTab = page.getByRole('tab', { name: /Cases/ });
+    await expect(casesTab).toHaveAttribute('aria-selected', 'true');
+    await expect(page.getByRole('tab', { name: /Runs/ })).toBeVisible();
+    await expect(page.getByTestId('benchmark-cases-tab')).toBeVisible();
+    await expect(page.locator('[data-testid="suite-health"]:visible')).toBeVisible();
   });
 
-  test('should switch to tabs layout when toggled and persist the choice', async ({ page }) => {
+  test('should switch between route-backed Cases and Runs tabs across reloads', async ({ page }) => {
     test.skip(!benchmarkId, 'No benchmark created');
     await page.goto(`/evaluations/benchmarks/${benchmarkId}/runs`);
     await page.waitForSelector('h2', { timeout: 30000 });
-    // Start from a known-clean layout preference. NOTE: clear ONCE here, not
-    // via addInitScript — an init script re-runs on the reload below and would
-    // wipe the very preference whose persistence we're asserting.
-    await page.evaluate(() => { try { localStorage.removeItem('benchmark-runs:layoutMode'); } catch {} });
+
+    const runsTab = page.getByRole('tab', { name: /Runs/ });
+    const casesTab = page.getByRole('tab', { name: /Cases/ });
+    await expect(runsTab).toHaveAttribute('aria-selected', 'true');
+
+    await casesTab.click();
+    await expect(page).toHaveURL(new RegExp(`/evaluations/benchmarks/${benchmarkId}/?$`));
+    await expect(casesTab).toHaveAttribute('aria-selected', 'true');
+    await expect(page.getByTestId('benchmark-cases-tab')).toBeVisible();
+
+    // Route state, rather than a stale global layout preference, survives a reload.
     await page.reload();
-    await page.waitForSelector('h2', { timeout: 30000 });
+    await expect(page.getByRole('tab', { name: /Cases/ })).toHaveAttribute('aria-selected', 'true');
 
-    // Click the tabs toggle.
-    await page.click('[data-testid="layout-mode-tabs"]');
-
-    // Tabs visible, split container gone.
-    await expect(page.locator('[role="tab"]:has-text("Runs")')).toBeVisible();
-    await expect(page.locator('[role="tab"]:has-text("Test Cases")')).toBeVisible();
-    await expect(page.locator('[data-testid="benchmark-runs-split"]')).toHaveCount(0);
-
-    // Toggle should be aria-pressed=true on the Tabs side.
-    await expect(page.locator('[data-testid="layout-mode-tabs"]')).toHaveAttribute('aria-pressed', 'true');
-
-    // Reload — the choice must persist via localStorage (`benchmark-runs:layoutMode`).
-    await page.reload();
-    await page.waitForSelector('h2', { timeout: 30000 });
-    await expect(page.locator('[role="tab"]:has-text("Runs")')).toBeVisible();
-    await expect(page.locator('[data-testid="benchmark-runs-split"]')).toHaveCount(0);
+    await page.getByRole('tab', { name: /Runs/ }).click();
+    await expect(page).toHaveURL(new RegExp(`/evaluations/benchmarks/${benchmarkId}/runs/?$`));
+    await expect(page.getByRole('tab', { name: /Runs/ })).toHaveAttribute('aria-selected', 'true');
   });
 
   test('should show breadcrumbs with navigation', async ({ page }) => {
@@ -197,28 +178,29 @@ test.describe('Evals3 Benchmark Runs Page', () => {
     await expect(dialog.locator('[data-testid="run-config-evaluator-trigger"]')).toBeVisible();
   });
 
-  test('Start Run posts evaluatorId from the dialog through to /execute', async ({ page }) => {
+  test('Start Run posts evaluatorId from the dialog through to the unified runner', async ({ page }) => {
     test.skip(!benchmarkId, 'No benchmark created');
 
-    // Capture the body of the /execute POST so we can assert the dialog's
-    // selected evaluatorId actually rides through. We DON'T fulfill the
-    // request — we let the real backend handle it so this also exercises
-    // the round-trip through validateRunConfig + the storage layer (the
-    // detailed contract is in
-    // tests/integration/server/routes/storage/benchmarkExecuteEvaluator.integration.test.ts;
-    // here we just need to know the UI delivered the right body).
+    // Capture the unified evaluation-run request so we assert both the dialog
+    // selection and benchmark source survive the UI adapter. Fulfill a complete
+    // SSE exchange: this test owns UI wiring, while runner persistence is
+    // covered by the storage route integration tests.
     let executeBody: any = null;
-    await page.route(
-      `**/api/storage/benchmarks/${encodeURIComponent(benchmarkId!)}/execute`,
-      async route => {
-        try {
-          executeBody = JSON.parse(route.request().postData() || '{}');
-        } catch {
-          /* ignore parse errors */
-        }
-        await route.continue();
-      },
-    );
+    await page.route('**/api/storage/evaluation-runs', async route => {
+      try {
+        executeBody = JSON.parse(route.request().postData() || '{}');
+      } catch {
+        /* ignore parse errors */
+      }
+      await route.fulfill({
+        status: 200,
+        headers: { 'content-type': 'text/event-stream', 'cache-control': 'no-cache' },
+        body: [
+          `event: started\ndata: ${JSON.stringify({ runId: 'e2e-eval-run', testCases: [] })}\n\n`,
+          `event: completed\ndata: ${JSON.stringify({ id: 'e2e-eval-run', status: 'completed', results: [] })}\n\n`,
+        ].join(''),
+      });
+    });
 
     await page.goto(`/evaluations/benchmarks/${benchmarkId}/runs`);
     await page.waitForSelector('h2', { timeout: 30_000 });
@@ -243,14 +225,14 @@ test.describe('Evals3 Benchmark Runs Page', () => {
 
     await page.click('button:has-text("Start Run")');
 
-    // Wait for the route handler to capture the request body. The /execute
-    // call streams over SSE so the request fires before completion; the
-    // postData is captured synchronously inside route.continue().
+    // Wait for the route handler to capture the unified SSE request body.
     for (let i = 0; i < 40 && executeBody === null; i++) {
       await page.waitForTimeout(100);
     }
 
-    expect(executeBody, '/execute POST body should have been captured').toBeTruthy();
+    expect(executeBody, 'evaluation-runs POST body should have been captured').toBeTruthy();
+    expect(executeBody.sources).toEqual([{ type: 'benchmark', benchmarkId }]);
+    expect(executeBody.benchmarkId).toBe(benchmarkId);
     expect(executeBody.agentKey).toBeTruthy();
     expect(executeBody.modelId).toBeTruthy();
     expect(executeBody.name).toBeTruthy();
