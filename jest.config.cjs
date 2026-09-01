@@ -76,6 +76,10 @@ module.exports = {
     'lib/**/*.ts',
     'cli/**/*.ts',
     'types/**/*.ts',
+    // Fixture rendering has a focused RTL suite; include it in the unit
+    // report so Codecov sees those exercised UI branches (components are not
+    // part of the broad server/lib collection globs above).
+    'components/TestCaseDetailPanel.tsx',
     '!**/__tests__/**',
     '!**/*.test.ts',
     '!**/dist/**',

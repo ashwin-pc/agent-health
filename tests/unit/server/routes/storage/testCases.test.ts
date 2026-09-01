@@ -405,6 +405,23 @@ describe('Test Cases Storage Routes', () => {
       );
     });
 
+    it('rejects an invalid fixture before updating storage', async () => {
+      const { req, res } = createMocks(
+        { id: 'tc-123' },
+        { fixture: { type: 'filesystem-workspace', ref: '', integrity: 'not-pinned' } },
+      );
+      const handler = getRouteHandler(testCasesRoutes, 'put', '/api/storage/test-cases/:id');
+
+      await handler(req, res);
+
+      expect(res.status).toHaveBeenCalledWith(400);
+      expect(res.json).toHaveBeenCalledWith(expect.objectContaining({
+        error: expect.stringContaining('Invalid test-case fixture'),
+        errors: expect.arrayContaining([expect.stringContaining('fixture.ref')]),
+      }));
+      expect(mockStorage.testCases.update).not.toHaveBeenCalled();
+    });
+
     it('should create new version when updating', async () => {
       mockStorage.testCases.update.mockResolvedValue({
         id: 'tc-123',

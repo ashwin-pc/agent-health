@@ -120,6 +120,46 @@ describe('TestCaseDetailPanel fixture rendering', () => {
     expect(screen.getByText('Raw JSON')).toBeTruthy();
   });
 
+  it('formats fixture tree sizes across bytes, KB, MB, and GB', () => {
+    const entries = [
+      { path: 'bytes.txt', size: 512, sha256: 'a'.repeat(64) },
+      { path: 'kilobytes.bin', size: 12 * 1024, sha256: 'b'.repeat(64) },
+      { path: 'megabytes.bin', size: 1.5 * 1024 * 1024, sha256: 'c'.repeat(64) },
+      { path: 'gigabytes.bin', size: 2 * 1024 * 1024 * 1024, sha256: 'd'.repeat(64) },
+    ];
+    render(React.createElement(TestCaseDetailPanel, { testCase: makeTestCase({
+      fixture: {
+        type: 'filesystem-workspace',
+        ref: 'large-workspace',
+        integrity: 'sha256:abc123',
+        payload: { manifest: { tree: entries } },
+      },
+    }) }));
+
+    expect(screen.getByText('512 B')).toBeTruthy();
+    expect(screen.getByText('12 KB')).toBeTruthy();
+    expect(screen.getByText('1.5 MB')).toBeTruthy();
+    expect(screen.getByText('2.0 GB')).toBeTruthy();
+  });
+
+  it('falls back to raw JSON for malformed or unknown manifest shapes', () => {
+    const malformed = describeFixturePayload({
+      manifest: { tree: [{ path: 'missing-size.txt', sha256: 'abc' }] },
+    });
+    expect(malformed).toMatchObject({
+      isManifest: false,
+      authoredNotes: undefined,
+      tree: undefined,
+    });
+
+    expect(describeFixturePayload(undefined)).toEqual({
+      authoredNotes: undefined,
+      tree: undefined,
+      isManifest: false,
+      rawJson: 'undefined',
+    });
+  });
+
   it('does not render fixture UI for backward-compatible cases without the field', () => {
     render(React.createElement(TestCaseDetailPanel, { testCase: makeTestCase() }));
 
