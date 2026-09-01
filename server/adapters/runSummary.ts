@@ -6,8 +6,9 @@
 import type { EvaluationRun, TestCaseRun } from '../../types/index.js';
 
 /**
- * The only report fields that list/table endpoints may return. Report detail
- * endpoints intentionally keep using getById and return the complete document.
+ * The only report fields that list/table endpoints may return. Detail endpoints
+ * use the separate projections below so their first paint can retain richer
+ * report metadata without serializing multi-megabyte execution payloads.
  */
 export const RUN_SUMMARY_FIELDS = [
   'id',
@@ -92,6 +93,46 @@ export function getRunSummarySourceFields(requested?: readonly string[]): string
   const fields = getRunSummaryFields(requested);
   if (fields.includes('runId') && !fields.includes('traceId')) fields.push('traceId');
   return fields;
+}
+
+export type RunDetailInclude = 'core' | 'full' | 'trajectory' | 'rawEvents' | 'judgeRawResponse';
+
+export const RUN_DETAIL_INCLUDES = new Set<RunDetailInclude>([
+  'core',
+  'full',
+  'trajectory',
+  'rawEvents',
+  'judgeRawResponse',
+]);
+
+/**
+ * Project a report detail response. `core` deliberately keeps every ordinary
+ * field (including matcher verdicts and judge reasoning) and removes only the
+ * three expensive payloads. Targeted projections let the UI hydrate those
+ * payloads when their tab is opened. `full` returns the original object so
+ * export/CLI callers retain byte-for-byte field compatibility.
+ */
+export function toRunDetail(
+  run: TestCaseRun & Record<string, any>,
+  include: RunDetailInclude,
+): Partial<TestCaseRun> & { id: string } {
+  if (include === 'full') return run;
+  if (include === 'trajectory') return { id: run.id, trajectory: run.trajectory };
+  if (include === 'rawEvents') return { id: run.id, rawEvents: run.rawEvents };
+  if (include === 'judgeRawResponse') {
+    return {
+      id: run.id,
+      ...(run.llmJudgeResponse?.rawResponse === undefined
+        ? {}
+        : { llmJudgeResponse: { rawResponse: run.llmJudgeResponse.rawResponse } as any }),
+    };
+  }
+
+  const { rawEvents: _rawEvents, trajectory: _trajectory, ...core } = run;
+  if (!run.llmJudgeResponse || run.llmJudgeResponse.rawResponse === undefined) return core;
+
+  const { rawResponse: _rawResponse, ...judgeCore } = run.llmJudgeResponse;
+  return { ...core, llmJudgeResponse: judgeCore } as any;
 }
 
 export function toRunSummary(

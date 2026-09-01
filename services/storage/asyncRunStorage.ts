@@ -15,6 +15,7 @@ import {
   runStorage as opensearchRuns,
   StorageRun,
   StorageRunAnnotation,
+  type RunReportInclude,
 } from './opensearchClient';
 import type {
   EvaluationReport,
@@ -299,8 +300,11 @@ class AsyncRunStorage {
   /**
    * Get a single report by ID
    */
-  async getReportById(reportId: string): Promise<EvaluationReport | null> {
-    const stored = await opensearchRuns.getById(reportId);
+  async getReportById(
+    reportId: string,
+    include: RunReportInclude = 'full',
+  ): Promise<EvaluationReport | null> {
+    const stored = await opensearchRuns.getById(reportId, include);
     return stored ? toTestCaseRun(stored) : null;
   }
 

@@ -230,7 +230,7 @@ describe('AsyncRunStorage', () => {
 
       const result = await asyncRunStorage.getReportById('run-1');
 
-      expect(mockOsRuns.getById).toHaveBeenCalledWith('run-1');
+      expect(mockOsRuns.getById).toHaveBeenCalledWith('run-1', 'full');
       expect(result).not.toBeNull();
       expect(result?.id).toBe('run-1');
     });

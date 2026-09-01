@@ -25,7 +25,10 @@ import type { TestCaseRun } from '../../../types/index.js';
 import {
   getRunSummaryFields,
   getRunSummarySourceFields,
+  RUN_DETAIL_INCLUDES,
   RUN_SUMMARY_FIELDS,
+  type RunDetailInclude,
+  toRunDetail,
   toRunSummary,
 } from '../../adapters/runSummary.js';
 
@@ -156,27 +159,37 @@ router.get('/api/storage/runs/counts-by-test-case', async (req: Request, res: Re
   }
 });
 
-// GET /api/storage/runs/:id - Get by ID
+// GET /api/storage/runs/:id - Get a projected report detail.
+// Default `core` omits large execution payloads. Consumers that export or
+// otherwise require the historical complete document must request `full`.
 router.get('/api/storage/runs/:id', async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
+    const includeValue = req.query.include ?? 'core';
+    if (typeof includeValue !== 'string' || !RUN_DETAIL_INCLUDES.has(includeValue as RunDetailInclude)) {
+      return res.status(400).json({
+        error: `Invalid include. Expected one of: ${[...RUN_DETAIL_INCLUDES].join(', ')}`,
+      });
+    }
+    const include = includeValue as RunDetailInclude;
 
     // Check sample data first
     if (isSampleId(id)) {
       const sample = getSampleRun(id);
       if (sample) {
-        return res.json(sample);
+        return res.json(toRunDetail(sample as TestCaseRun & Record<string, any>, include));
       }
       return res.status(404).json({ error: 'Run not found' });
     }
 
-    // Fetch from storage
+    // Fetch from storage. File storage must parse the source JSON, but the
+    // projection still avoids serializing/sending tens of megabytes over HTTP.
     const storage = getStorageModule();
     const run = await storage.runs.getById(id);
     if (!run) {
       return res.status(404).json({ error: 'Run not found' });
     }
-    res.json(run);
+    res.json(toRunDetail(run as TestCaseRun & Record<string, any>, include));
   } catch (error: any) {
     console.error('[StorageAPI] Get run failed:', error.message);
     res.status(500).json({ error: error.message });
