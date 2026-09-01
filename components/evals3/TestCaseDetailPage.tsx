@@ -59,6 +59,7 @@ import { PREFS_KEYS } from '@/lib/preferences';
 import { ENV_CONFIG } from '@/lib/config';
 import { Markdown, hasRealMarkdown } from '@/components/ui/markdown';
 import { TestCaseDefinition } from '@/components/TestCaseDefinition';
+import { EvalSourceCodeView } from '@/components/evals3/EvalSourceCodeView';
 
 // Render a test-case prompt ("task definition"): as markdown when it actually
 // contains markdown (so headings / bullet lists indent instead of collapsing
@@ -438,7 +439,15 @@ export const TestCaseDetailPage: React.FC = () => {
             </div>
           </div>
 
-          <TestCaseDefinition testCase={testCase} />
+          {testCase.sourceFile ? (
+            // SDK test: EvalSourceCodeView IS the whole surface here too —
+            // rendering TestCaseDefinition's own "Source File" pointer branch
+            // alongside it would just duplicate the path/provenance row (see
+            // origin/main's pre-existing Collapsible Definition behavior).
+            <EvalSourceCodeView testCase={testCase} maxHeight="600px" />
+          ) : (
+            <TestCaseDefinition testCase={testCase} />
+          )}
 
           {testCase.versions?.length > 1 && (
             <details className="mt-5 rounded-md border bg-card/60" data-testid="test-case-version-history">
