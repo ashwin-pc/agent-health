@@ -129,8 +129,12 @@ export function getRecentCompletedRuns<T extends VerdictRun>(runs: T[], limit = 
 }
 
 /**
- * Resolve one case×run cell. The report wins over the denormalized result so a
- * later evaluator error cannot be mistaken for a stale pass/fail verdict.
+ * Resolve one case×run cell. A real pass/fail verdict from the report is
+ * authoritative and outranks `metricsStatus === 'error'`: metrics/cost
+ * enrichment runs after the agent-vs-judge verdict is already known, so a
+ * later enrichment failure must not overwrite a genuine pass/fail with
+ * 'errored'. `metricsStatus === 'error'` only decides the cell when the
+ * report has no real passFailStatus yet.
  */
 export function deriveCaseVerdict(
   run: VerdictRun,
@@ -141,9 +145,9 @@ export function deriveCaseVerdict(
   if (!result || result.status === 'pending' || result.status === 'running') return 'not-run';
 
   const report = result.reportId ? reportsById[result.reportId] : undefined;
-  if (report?.metricsStatus === 'error') return 'errored';
   if (report?.passFailStatus === 'passed') return 'passed';
   if (report?.passFailStatus === 'failed') return 'failed';
+  if (report?.metricsStatus === 'error') return 'errored';
 
   // New benchmark documents carry this summary. It is a resilience fallback
   // for deleted/legacy report documents, not the primary source of truth.

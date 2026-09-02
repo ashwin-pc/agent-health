@@ -45,14 +45,14 @@ describe('benchmark case-review verdicts', () => {
     const completed = run('r1', '2025-01-05T00:00:00Z', {
       pass: { reportId: 'rp', status: 'completed' },
       fail: { reportId: 'rf', status: 'completed' },
-      error: { reportId: 're', status: 'completed', passFailStatus: 'passed' },
+      error: { reportId: 're', status: 'completed' },
       executionFailure: { reportId: 'rx', status: 'failed' },
     });
     const reports = {
       rp: { passFailStatus: 'passed' as const },
       rf: { passFailStatus: 'failed' as const },
-      // metricsStatus must override a stale denormalized pass.
-      re: { metricsStatus: 'error', passFailStatus: 'passed' as const },
+      // No real passFailStatus yet: metricsStatus === 'error' is the only signal.
+      re: { metricsStatus: 'error' },
       rx: { status: 'failed' },
     };
 
@@ -61,6 +61,26 @@ describe('benchmark case-review verdicts', () => {
     expect(deriveCaseVerdict(completed, 'error', reports)).toBe('errored');
     expect(deriveCaseVerdict(completed, 'executionFailure', reports)).toBe('failed');
     expect(deriveCaseVerdict(completed, 'missing', reports)).toBe('not-run');
+  });
+
+  it('precedence: a real passFailStatus outranks metricsStatus === "error"', () => {
+    // A later metrics/cost-enrichment pass can fail well after the agent-vs-judge
+    // verdict is already known. That enrichment failure must never overwrite a
+    // genuine pass/fail with 'errored' -- see PR #447 review discussion.
+    const completed = run('r1', '2025-01-05T00:00:00Z', {
+      passWithMetricsError: { reportId: 'rpe', status: 'completed' },
+      failWithMetricsError: { reportId: 'rfe', status: 'completed' },
+      errorOnly: { reportId: 'reo', status: 'completed' },
+    });
+    const reports = {
+      rpe: { passFailStatus: 'passed' as const, metricsStatus: 'error' },
+      rfe: { passFailStatus: 'failed' as const, metricsStatus: 'error' },
+      reo: { metricsStatus: 'error' },
+    };
+
+    expect(deriveCaseVerdict(completed, 'passWithMetricsError', reports)).toBe('passed');
+    expect(deriveCaseVerdict(completed, 'failWithMetricsError', reports)).toBe('failed');
+    expect(deriveCaseVerdict(completed, 'errorOnly', reports)).toBe('errored');
   });
 
   it('uses only the five newest completed runs and preserves newest-first cell order', () => {
