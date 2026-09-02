@@ -138,6 +138,28 @@ function touchEvent(type: string, touches: Array<{ clientX: number; clientY: num
   return event;
 }
 
+class MockIntersectionObserver implements IntersectionObserver {
+  static instances: MockIntersectionObserver[] = [];
+  readonly root: Element | Document | null = null;
+  readonly rootMargin = '';
+  readonly thresholds: ReadonlyArray<number> = [];
+  private readonly callback: IntersectionObserverCallback;
+
+  constructor(callback: IntersectionObserverCallback) {
+    this.callback = callback;
+    MockIntersectionObserver.instances.push(this);
+  }
+
+  observe = jest.fn();
+  unobserve = jest.fn();
+  disconnect = jest.fn();
+  takeRecords = jest.fn(() => []);
+
+  trigger(isIntersecting: boolean) {
+    this.callback([{ isIntersecting } as IntersectionObserverEntry], this);
+  }
+}
+
 beforeAll(() => {
   Object.defineProperty(window, 'matchMedia', {
     writable: true,
@@ -163,10 +185,12 @@ beforeAll(() => {
     return 1;
   };
   globalThis.cancelAnimationFrame = jest.fn();
+  (globalThis as any).IntersectionObserver = MockIntersectionObserver;
 });
 
 beforeEach(() => {
   jest.clearAllMocks();
+  MockIntersectionObserver.instances = [];
 });
 
 describe('BenchmarkCasesTab', () => {
@@ -243,6 +267,117 @@ describe('BenchmarkCasesTab', () => {
 
     expect(onSelectCase).toHaveBeenCalledWith('case-stable');
     jest.useRealTimers();
+  });
+
+  it('shows the needs-attention filter predicate as a tooltip (PR #447 review question)', () => {
+    renderTab();
+    const button = screen.getByTestId('case-filter-needs-attention');
+    expect(button.getAttribute('title')).toMatch(/last 3 completed runs/);
+  });
+
+  it('shows no historical-version notice when every run matches the current case version', () => {
+    renderTab('case-failing');
+    expect(screen.queryByTestId('historical-version-notice')).toBeNull();
+  });
+
+  it('shows a historical-version notice when a run evaluated an older case definition', () => {
+    const versionedCase = {
+      id: 'case-versioned',
+      name: 'Versioned case',
+      labels: [],
+      category: 'RCA',
+      difficulty: 'Easy',
+      currentVersion: 2,
+      versions: [],
+      isPromoted: false,
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+      initialPrompt: 'Prompt',
+      context: [],
+    } as TestCase;
+
+    const versionedRuns: BenchmarkRun[] = [{
+      id: 'run-v1',
+      name: 'Run at v1',
+      createdAt: '2026-01-05T00:00:00.000Z',
+      status: 'completed',
+      results: { 'case-versioned': { status: 'completed', reportId: 'report-v1' } },
+    } as BenchmarkRun];
+
+    const versionedReports = {
+      'report-v1': { passFailStatus: 'passed', testCaseVersion: 1 },
+    } as Record<string, EvaluationReport>;
+
+    render(React.createElement(
+      MemoryRouter,
+      null,
+      React.createElement(BenchmarkCasesTab, {
+        benchmarkId: 'bench-versioned',
+        testCases: [versionedCase],
+        recentRuns: versionedRuns,
+        allRuns: versionedRuns,
+        totalRuns: 1,
+        reportsById: versionedReports,
+        selectedCaseId: 'case-versioned',
+        onSelectCase,
+        onClearCase,
+        onOpenRuns,
+      }),
+    ));
+
+    const notice = screen.getByTestId('historical-version-notice');
+    expect(notice.textContent).toMatch(/v2/);
+  });
+
+  it('renders a 400-case benchmark incrementally and loads more when the sentinel intersects', () => {
+    const manyCases: TestCase[] = Array.from({ length: 130 }, (_, index) => ({
+      id: `case-bulk-${index}`,
+      name: `Bulk case ${index}`,
+      labels: [],
+      category: 'RCA',
+      difficulty: 'Easy',
+      currentVersion: 1,
+      versions: [],
+      isPromoted: false,
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+      initialPrompt: `Prompt ${index}`,
+      context: [],
+    } as TestCase));
+
+    render(React.createElement(
+      MemoryRouter,
+      null,
+      React.createElement(BenchmarkCasesTab, {
+        benchmarkId: 'bench-bulk',
+        testCases: manyCases,
+        recentRuns: [],
+        allRuns: [],
+        totalRuns: 0,
+        reportsById: {},
+        onSelectCase,
+        onClearCase,
+        onOpenRuns,
+      }),
+    ));
+
+    // Only a bounded window renders up front, not all 130 cases at once.
+    expect(screen.getAllByRole('option')).toHaveLength(60);
+    expect(screen.getByTestId('case-list-load-more-sentinel')).toBeTruthy();
+
+    const observer = MockIntersectionObserver.instances.at(-1);
+    expect(observer).toBeDefined();
+    act(() => observer!.trigger(true));
+
+    // Crossing the sentinel (infinite scroll) grows the window by another page.
+    expect(screen.getAllByRole('option')).toHaveLength(120);
+    expect(screen.getByTestId('case-list-load-more-sentinel')).toBeTruthy();
+
+    act(() => MockIntersectionObserver.instances.at(-1)!.trigger(true));
+
+    // The final page renders everything and drops the sentinel.
+    expect(screen.getAllByRole('option')).toHaveLength(130);
+    expect(screen.queryByTestId('case-list-load-more-sentinel')).toBeNull();
   });
 });
 

@@ -12,10 +12,12 @@ import {
   getCasePagerPosition,
   getCasePassRate,
   getRecentCompletedRuns,
+  hasHistoricalVersionMismatch,
   resolveSwipeDirection,
   type CaseReviewRow,
   type ReviewableCase,
   type VerdictRun,
+  type VersionedRun,
 } from '@/lib/benchmarkCaseReview';
 
 function run(
@@ -210,5 +212,30 @@ describe('benchmark case-review filtered pager', () => {
       previousId: 'attention-a',
       nextId: 'no-data',
     });
+  });
+});
+
+describe('historical case-version notice', () => {
+  const runWithReport = (reportId: string): VersionedRun => ({
+    results: { c1: { reportId } },
+  });
+
+  it('flags a mismatch when a run\'s report used a different case version', () => {
+    const reportsById = { r1: { testCaseVersion: 2 } };
+    expect(hasHistoricalVersionMismatch(3, [runWithReport('r1')], 'c1', reportsById)).toBe(true);
+  });
+
+  it('does not flag when every report matches the current version', () => {
+    const reportsById = { r1: { testCaseVersion: 3 }, r2: { testCaseVersion: 3 } };
+    expect(hasHistoricalVersionMismatch(3, [runWithReport('r1'), runWithReport('r2')], 'c1', reportsById)).toBe(false);
+  });
+
+  it('does not flag when the report has no recorded version (legacy data)', () => {
+    const reportsById = { r1: {} };
+    expect(hasHistoricalVersionMismatch(3, [runWithReport('r1')], 'c1', reportsById)).toBe(false);
+  });
+
+  it('ignores runs with no result or report for this case', () => {
+    expect(hasHistoricalVersionMismatch(3, [{ results: {} }, { results: undefined }], 'c1', {})).toBe(false);
   });
 });

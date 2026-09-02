@@ -255,3 +255,37 @@ export function getCasePagerPosition<T extends ReviewableCase>(
     nextId: index >= 0 && index < rows.length - 1 ? rows[index + 1].testCase.id : undefined,
   };
 }
+
+export interface VersionedRunResult {
+  reportId?: string;
+}
+
+export interface VersionedRun {
+  results?: Record<string, VersionedRunResult>;
+}
+
+export interface VersionedReportSummary {
+  testCaseVersion?: number;
+}
+
+/**
+ * The Cases tab always renders a case's *current* definition, even when the
+ * user arrived from a specific historical run (e.g. a heat-strip cell click).
+ * This detects that mismatch so callers can show a minimal, honest notice
+ * instead of silently presenting a definition the run never actually used.
+ * Deliberately does not resurrect the old per-version selector — just a
+ * disclosure that the definition may have changed since some of the runs
+ * shown here.
+ */
+export function hasHistoricalVersionMismatch(
+  currentVersion: number,
+  runs: VersionedRun[],
+  testCaseId: string,
+  reportsById: Record<string, VersionedReportSummary | undefined>,
+): boolean {
+  return runs.some(run => {
+    const result = run.results?.[testCaseId];
+    const report = result?.reportId ? reportsById[result.reportId] : undefined;
+    return typeof report?.testCaseVersion === 'number' && report.testCaseVersion !== currentVersion;
+  });
+}

@@ -837,7 +837,17 @@ export const BenchmarkRunsPage2: React.FC = () => {
               </TabsList>
               {activeTab === 'runs' && runsVersionSelect}
             </div>
-            <TabsContent value="cases" className="flex-1 min-h-0 mt-0 overflow-hidden max-md:overflow-visible">{testCasesBody}</TabsContent>
+            {/*
+              flex + flex-col here is required, not cosmetic: BenchmarkCasesTab's
+              root renders "flex-1 min-h-0" panes expecting a flex parent. Without
+              `display: flex` on this TabsContent, those classes are no-ops (they
+              only affect flex items), so the whole subtree grows to its natural
+              content height instead of being clamped to the tab's available
+              height — the aside's own `overflow-y-auto` never gets a bounded
+              box to scroll within, so nothing below the fold is reachable on
+              large benchmarks. See PR #447 review: "scrolling doesn't work".
+            */}
+            <TabsContent value="cases" className="flex-1 min-h-0 mt-0 flex flex-col overflow-hidden max-md:overflow-visible">{testCasesBody}</TabsContent>
             <TabsContent value="runs" className="flex-1 min-h-0 overflow-y-auto mt-0">{runsBody}</TabsContent>
           </Tabs>
         );

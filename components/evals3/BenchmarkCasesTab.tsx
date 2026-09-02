@@ -3,11 +3,11 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
   AlertTriangle, ArrowLeft, BarChart3, ChevronLeft, ChevronRight,
-  Search, ShieldCheck, X,
+  History, Search, ShieldCheck, X,
 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -22,6 +22,7 @@ import {
   filterAndSortCaseRows,
   getCasePagerPosition,
   getCasePassRate,
+  hasHistoricalVersionMismatch,
   resolveSwipeDirection,
   type CaseReviewFilter,
   type CaseVerdict,
@@ -67,6 +68,26 @@ const FILTER_LABEL: Record<CaseReviewFilter, string> = {
   'needs-attention': 'Needs attention',
   flaky: 'Flaky',
   stable: 'Stable',
+};
+
+/**
+ * Cases render incrementally (infinite scroll) rather than all at once so a
+ * 400+ case benchmark stays smooth to scroll through — see PR #447 review
+ * question about scrolling on large benchmarks.
+ */
+const CASE_LIST_PAGE_SIZE = 60;
+
+/**
+ * Exact predicate behind each rollup filter, shown as a tooltip on the filter
+ * chip. Mirrors `classifyCaseVerdicts` in lib/benchmarkCaseReview.ts — keep
+ * these in sync if that priority logic changes. Answers PR #447's review
+ * question: "how you are filtering Needs attention use-cases".
+ */
+const FILTER_TOOLTIP: Record<CaseReviewFilter, string> = {
+  all: 'Every test case in this benchmark, regardless of recent verdict.',
+  'needs-attention': 'Failed or errored in ≥ 1 of the last 3 completed runs — or has run history with no passes at all (a stale failure/error outside that 3-run window).',
+  flaky: 'Mixed passed/failed verdicts across the last 5 completed runs, but no failure or error in the last 3.',
+  stable: 'Passing, with no failure or error in the last 3 completed runs.',
 };
 
 function difficultyFor(testCase: TestCase): string {
@@ -280,7 +301,9 @@ export const BenchmarkCasesTab: React.FC<BenchmarkCasesTabProps> = ({
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState<CaseReviewFilter>('all');
   const [lastSelectedCaseId, setLastSelectedCaseId] = useState<string | undefined>(selectedCaseId);
+  const [visibleCount, setVisibleCount] = useState(CASE_LIST_PAGE_SIZE);
   const listRef = useRef<HTMLDivElement>(null);
+  const loadMoreObserverRef = useRef<IntersectionObserver | null>(null);
   const pagerContainerRef = useRef<HTMLDivElement>(null);
   const pagerPaneRef = useRef<HTMLDivElement>(null);
   const swipeStartRef = useRef<{
@@ -337,12 +360,58 @@ export const BenchmarkCasesTab: React.FC<BenchmarkCasesTabProps> = ({
     'no-data': rows.filter(row => row.bucket === 'no-data').length,
   }), [rows]);
   const selectedRow = rows.find(row => row.testCase.id === selectedCaseId);
+  const showsHistoricalVersionNotice = useMemo(() => {
+    if (!selectedRow) return false;
+    return hasHistoricalVersionMismatch(
+      selectedRow.testCase.currentVersion,
+      allRuns,
+      selectedRow.testCase.id,
+      reportsById,
+    );
+  }, [selectedRow, allRuns, reportsById]);
   const pager = getCasePagerPosition(filteredRows, selectedCaseId);
   pagerNavigationRef.current = {
     previousId: pager.previousId,
     nextId: pager.nextId,
     onSelectCase,
   };
+
+  // Reset the incremental window whenever the filtered set changes shape
+  // (search/filter), so switching views doesn't leave a stale, oversized
+  // window mounted or hide rows that a narrower filter would show sooner.
+  useEffect(() => {
+    setVisibleCount(CASE_LIST_PAGE_SIZE);
+  }, [search, filter]);
+
+  // Always keep the selected/last-selected row rendered even if it falls
+  // outside the incremental window (e.g. deep link, keyboard nav, or a
+  // heat-strip click landing far down an unfiltered 400-case list).
+  const visibleRowCount = Math.min(
+    filteredRows.length,
+    Math.max(visibleCount, pager.index >= 0 ? pager.index + 1 : 0),
+  );
+  const visibleRows = useMemo(
+    () => filteredRows.slice(0, visibleRowCount),
+    [filteredRows, visibleRowCount],
+  );
+
+  const loadMoreSentinelRef = useCallback((node: HTMLDivElement | null) => {
+    loadMoreObserverRef.current?.disconnect();
+    loadMoreObserverRef.current = null;
+    // Environments without IntersectionObserver (older browsers, some test
+    // harnesses) simply keep the fixed CASE_LIST_PAGE_SIZE window — degrades
+    // to "click search/filter to narrow down" rather than throwing.
+    if (!node || typeof IntersectionObserver === 'undefined') return;
+    const observer = new IntersectionObserver(entries => {
+      if (entries.some(entry => entry.isIntersecting)) {
+        setVisibleCount(count => count + CASE_LIST_PAGE_SIZE);
+      }
+    }, { root: listRef.current, rootMargin: '200px' });
+    observer.observe(node);
+    loadMoreObserverRef.current = observer;
+  }, []);
+
+  useEffect(() => () => loadMoreObserverRef.current?.disconnect(), []);
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -581,6 +650,8 @@ export const BenchmarkCasesTab: React.FC<BenchmarkCasesTabProps> = ({
                 onClick={() => setFilter(item.value)}
                 className={`rounded-full border px-2 py-0.5 text-[11px] transition-colors ${filter === item.value ? 'bg-primary text-primary-foreground border-primary' : 'hover:bg-muted'}`}
                 aria-pressed={filter === item.value}
+                title={FILTER_TOOLTIP[item.value]}
+                data-testid={`case-filter-${item.value}`}
               >
                 {FILTER_LABEL[item.value]} {item.count}
               </button>
@@ -595,7 +666,7 @@ export const BenchmarkCasesTab: React.FC<BenchmarkCasesTabProps> = ({
         <div ref={listRef} className="flex-1 min-h-0 overflow-y-auto max-md:max-h-none max-md:overflow-visible" role="listbox" aria-label="Benchmark cases">
           {filteredRows.length === 0 ? (
             <div className="p-8 text-center text-sm text-muted-foreground">No cases match this view.</div>
-          ) : filteredRows.map(row => {
+          ) : <>{visibleRows.map(row => {
             const selected = row.testCase.id === (selectedCaseId || lastSelectedCaseId);
             const difficulty = difficultyFor(row.testCase);
             return (
@@ -625,6 +696,16 @@ export const BenchmarkCasesTab: React.FC<BenchmarkCasesTabProps> = ({
               </button>
             );
           })}
+          {visibleRows.length < filteredRows.length && (
+            <div
+              ref={loadMoreSentinelRef}
+              key="load-more-sentinel"
+              data-testid="case-list-load-more-sentinel"
+              className="p-3 text-center text-[10px] text-muted-foreground"
+            >
+              Loading more cases… ({visibleRows.length} of {filteredRows.length})
+            </div>
+          )}</>}
         </div>
       </aside>
 
@@ -657,6 +738,19 @@ export const BenchmarkCasesTab: React.FC<BenchmarkCasesTabProps> = ({
                 </div>
                 <Button variant="ghost" size="sm" className="hidden md:inline-flex h-7 text-xs" onClick={onClearCase}><X size={13} className="mr-1" />Suite health</Button>
               </div>
+              {showsHistoricalVersionNotice && (
+                <div
+                  className="flex items-start gap-1.5 rounded-md border border-amber-300/70 bg-amber-50 px-2.5 py-1.5 text-[11px] text-amber-800 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-200"
+                  data-testid="historical-version-notice"
+                  role="note"
+                >
+                  <History size={12} className="mt-0.5 shrink-0" />
+                  <span>
+                    Showing the current case definition (v{selectedRow.testCase.currentVersion}). At least one run below
+                    evaluated an earlier version of this case, so its recorded pass/fail may not match the text shown here.
+                  </span>
+                </div>
+              )}
               <div>
                 <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground mb-1.5">Recent verdicts · newest first</div>
                 <RecentVerdictChips benchmarkId={benchmarkId} testCase={selectedRow.testCase} recentRuns={recentRuns} reportsById={reportsById} />
