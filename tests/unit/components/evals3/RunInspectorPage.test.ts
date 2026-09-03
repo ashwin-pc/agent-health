@@ -500,6 +500,132 @@ describe('RunInspectorPage — Re-run button (eval-run mode)', () => {
   });
 });
 
+describe('RunInspectorPage — benchmark-mode fallback for not-yet-linked runs', () => {
+  const originalFetch = (globalThis as any).fetch;
+  afterEach(() => {
+    // These tests stub `global.fetch` directly (the fallback path fetches
+    // /api/storage/evaluation-runs/:id inline rather than through the
+    // shared getEvaluationRun() helper, so status codes stay distinguishable
+    // — see codex_review finding on conflating 404 with other failures).
+    // Restore afterwards so later tests/files never inherit this stub.
+    (globalThis as any).fetch = originalFetch;
+  });
+
+  // Regression coverage for the "Claude Code run row not clickable" bug:
+  // benchmark.runs[] only gets an entry once a run-first evaluation-run
+  // completes (linkCompletedRunToBenchmark runs at completion, not create
+  // time), so a still-`running` run is absent from bm.runs even though it
+  // already exists as a standalone evaluation-run document AND is already
+  // shown as a row on the runs list page (which unions both sources). The
+  // inspector page used to `navigate()` straight back to the runs list the
+  // instant `bm.runs.find(...)` came up empty — from the user's
+  // perspective, clicking the row did nothing.
+
+  function makeStandaloneEvalRun(overrides: Partial<Record<string, unknown>> = {}) {
+    return {
+      id: 'run-not-embedded',
+      docType: 'evaluation-run',
+      name: 'ClaudeCode-WithTraces-001',
+      agentKey: 'cc-os-rag-stark-retail',
+      modelId: 'us.anthropic.claude-sonnet-4-6',
+      createdAt: '2024-01-01T00:00:00Z',
+      status: 'running',
+      sources: [{ type: 'benchmark', benchmarkId: 'bench-1' }],
+      trigger: 'ui',
+      benchmarkId: 'bench-1',
+      testCaseSnapshots: [{ id: 'tc-0', version: 1, name: 'Case 0' }],
+      results: { 'tc-0': { reportId: 'rep-0', status: 'running' } },
+      ...overrides,
+    };
+  }
+
+  it('falls back to the standalone evaluation-run document when the run is missing from benchmark.runs[], instead of bouncing to the runs list', async () => {
+    mockParams = { benchmarkId: 'bench-1', runId: 'run-not-embedded' };
+    // benchmark.runs[] does NOT contain this run id — it's still running.
+    mockBenchmarkGetById.mockResolvedValue({ id: 'bench-1', name: 'Bench', testCaseIds: ['tc-0'], runs: [] });
+    const fetchMock = jest.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => makeStandaloneEvalRun(),
+    });
+    (globalThis as any).fetch = fetchMock;
+    mockTestCasesGetByIds.mockResolvedValue([{ id: 'tc-0', name: 'Case 0' }]);
+    mockGetReportSummariesByIds.mockResolvedValue({
+      'rep-0': { id: 'rep-0', status: 'running', metricsStatus: 'pending', trajectory: [] },
+    });
+
+    renderPage();
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/storage/evaluation-runs/run-not-embedded'));
+    await waitFor(() => expect(screen.getAllByTestId('test-case-row')).toHaveLength(1));
+
+    // The old silent-bounce behavior must NOT fire.
+    expect(mockNavigate).not.toHaveBeenCalledWith('/evaluations/benchmarks/bench-1/runs');
+    expect(screen.queryByTestId('run-inspector-not-found')).toBeNull();
+    expect(screen.getByText('ClaudeCode-WithTraces-001')).toBeTruthy();
+
+    // Re-run capability is keyed on isEvaluationRun(run) (a doc concern,
+    // not a route concern) after the #466 predicate unification -- this
+    // fallback-loaded run genuinely IS a first-class EvaluationRun doc, so
+    // Re-run is correctly ENABLED here, consistent with the eval-run-mode
+    // and benchmark-mode-with-embedded-doc cases covered elsewhere in this
+    // file. (Superseded expectation: this run used to stay artificially
+    // disabled because Re-run was gated on route `mode` instead of the
+    // run's actual doc type.)
+    const rerunBtn = screen.getByTestId('inspector-rerun-btn') as HTMLButtonElement;
+    expect(rerunBtn.disabled).toBe(false);
+  });
+
+  it('rejects a standalone run that exists but is NOT associated with this benchmark (cross-benchmark data must never render) — codex_review finding', async () => {
+    mockParams = { benchmarkId: 'bench-1', runId: 'belongs-to-other-benchmark' };
+    mockBenchmarkGetById.mockResolvedValue({ id: 'bench-1', name: 'Bench', testCaseIds: [], runs: [] });
+    const fetchMock = jest.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      // A real, fetchable standalone run — but tied to a DIFFERENT benchmark.
+      json: async () => makeStandaloneEvalRun({ benchmarkId: 'bench-OTHER', sources: [{ type: 'benchmark', benchmarkId: 'bench-OTHER' }] }),
+    });
+    (globalThis as any).fetch = fetchMock;
+
+    renderPage();
+
+    await waitFor(() => expect(screen.getByTestId('run-inspector-not-found')).toBeTruthy());
+    // Never renders the other benchmark's run data under this URL.
+    expect(screen.queryByText('ClaudeCode-WithTraces-001')).toBeNull();
+    expect(mockNavigate).not.toHaveBeenCalled();
+  });
+
+  it('treats a non-404 fallback failure (transient 500/network error) as a load error with Retry, NOT as "not found" — codex_review finding', async () => {
+    mockParams = { benchmarkId: 'bench-1', runId: 'run-not-embedded' };
+    mockBenchmarkGetById.mockResolvedValue({ id: 'bench-1', name: 'Bench', testCaseIds: [], runs: [] });
+    const fetchMock = jest.fn().mockResolvedValue({ ok: false, status: 500, statusText: 'Internal Server Error' });
+    (globalThis as any).fetch = fetchMock;
+
+    renderPage();
+
+    await waitFor(() => expect(screen.getByTestId('run-inspector-error')).toBeTruthy());
+    expect(screen.queryByTestId('run-inspector-not-found')).toBeNull();
+  });
+
+  it('renders an explicit not-found state (not a silent bounce) when the run is missing from BOTH benchmark.runs[] and the standalone evaluation-run store', async () => {
+    mockParams = { benchmarkId: 'bench-1', runId: 'truly-gone' };
+    mockBenchmarkGetById.mockResolvedValue({ id: 'bench-1', name: 'Bench', testCaseIds: [], runs: [] });
+    const fetchMock = jest.fn().mockResolvedValue({ ok: false, status: 404, statusText: 'Not Found' });
+    (globalThis as any).fetch = fetchMock;
+
+    renderPage();
+
+    await waitFor(() => expect(screen.getByTestId('run-inspector-not-found')).toBeTruthy());
+    expect(screen.getByText(/truly-gone/)).toBeTruthy();
+    // No silent navigate away — the user gets an explicit reason and an
+    // explicit way back, not an invisible redirect.
+    expect(mockNavigate).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByText('Back to runs'));
+    expect(mockNavigate).toHaveBeenCalledWith('/evaluations/benchmarks/bench-1/runs');
+  });
+});
+
 describe('RunInspectorPage — Re-run button (benchmark mode)', () => {
   // Regression matrix for the route-vs-doc-type bug: RunInspectorPage serves
   // both /evaluations/benchmarks/:benchmarkId/runs/:runId/inspect (mode
