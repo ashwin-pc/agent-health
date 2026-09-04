@@ -138,39 +138,44 @@ export const AgentTrendsBand: React.FC<AgentTrendsBandProps> = ({
 
   return (
     <Card className="flex flex-col" data-testid="agent-trends-band">
-      <CardHeader className="pb-2 px-4 pt-3">
-        <div className="flex flex-wrap items-center gap-1.5" data-testid="agent-trends-header-row">
-          <CardTitle className="text-sm mr-auto shrink-0" title="Latest per-agent snapshot for one benchmark, ranked by score.">
+      <CardHeader className="px-4 pb-2 pt-3">
+        <div className="flex flex-col items-stretch gap-2 sm:flex-row sm:flex-wrap sm:items-center sm:gap-1.5" data-testid="agent-trends-header-row">
+          <CardTitle className="shrink-0 text-sm sm:mr-auto" title="Latest per-agent snapshot for one benchmark, ranked by score.">
             Agent Trends
           </CardTitle>
 
-          <div className="flex items-center gap-1" data-testid="agent-trends-metric-toggle">
-            {METRIC_OPTIONS.map(opt => (
-              <button
-                key={opt.value}
-                type="button"
-                data-testid={`agent-trends-metric-${opt.value}`}
-                onClick={() => setMetric(opt.value)}
-                className={`text-[11px] px-2.5 py-1 rounded-md transition-colors ${
-                  metric === opt.value
-                    ? 'bg-primary text-primary-foreground'
-                    : 'bg-muted/60 text-muted-foreground hover:bg-muted'
-                }`}
-              >
-                {opt.label}
-              </button>
-            ))}
+          <div className="flex max-w-full items-center gap-1 overflow-x-auto whitespace-nowrap pb-0.5 sm:contents sm:overflow-visible sm:pb-0" data-testid="agent-trends-actions">
+            <div className="flex shrink-0 items-center gap-1" data-testid="agent-trends-metric-toggle">
+              {METRIC_OPTIONS.map(opt => (
+                <button
+                  key={opt.value}
+                  type="button"
+                  data-testid={`agent-trends-metric-${opt.value}`}
+                  onClick={() => setMetric(opt.value)}
+                  className={`rounded-md px-2.5 py-1 text-[11px] transition-colors ${
+                    metric === opt.value
+                      ? 'bg-primary text-primary-foreground'
+                      : 'bg-muted/60 text-muted-foreground hover:bg-muted'
+                  }`}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+
+            <AgentTrendsAgentListDrawer
+              rows={historyRows}
+              metric={metric}
+              onSelectAgent={goToAgentLatestRun}
+            />
           </div>
 
-          <AgentTrendsAgentListDrawer
-            rows={historyRows}
-            metric={metric}
-            onSelectAgent={goToAgentLatestRun}
-          />
-
-          <div className="flex items-center gap-1.5 shrink-0" data-testid="agent-trends-controls">
+          <div className="flex w-full flex-col items-stretch gap-1.5 sm:w-auto sm:shrink-0 sm:flex-row sm:items-center" data-testid="agent-trends-controls">
             <Select value={effectiveBenchmarkId ?? ''} onValueChange={setBenchmarkId}>
-              <SelectTrigger className="h-7 w-[180px] text-[11px]" data-testid="agent-trends-benchmark-select">
+              <SelectTrigger
+                className="flex h-7 w-full min-w-0 !flex-nowrap items-center justify-between text-[11px] [&>span:first-child]:block [&>span:first-child]:min-w-0 [&>span:first-child]:flex-1 [&>span:first-child]:truncate [&>svg]:ml-2 [&>svg]:shrink-0 sm:w-[180px]"
+                data-testid="agent-trends-benchmark-select"
+              >
                 <SelectValue placeholder="Benchmark" />
               </SelectTrigger>
               <SelectContent>
@@ -180,7 +185,10 @@ export const AgentTrendsBand: React.FC<AgentTrendsBandProps> = ({
               </SelectContent>
             </Select>
             <Select value={timeRange} onValueChange={v => setTimeRange(v as TrendsTimeRange)}>
-              <SelectTrigger className="h-7 w-[105px] text-[11px]" data-testid="agent-trends-range-select">
+              <SelectTrigger
+                className="flex h-7 w-full min-w-0 !flex-nowrap items-center justify-between text-[11px] [&>span:first-child]:block [&>span:first-child]:min-w-0 [&>span:first-child]:flex-1 [&>span:first-child]:truncate [&>svg]:ml-2 [&>svg]:shrink-0 sm:w-[105px]"
+                data-testid="agent-trends-range-select"
+              >
                 <SelectValue placeholder="Range" />
               </SelectTrigger>
               <SelectContent>
