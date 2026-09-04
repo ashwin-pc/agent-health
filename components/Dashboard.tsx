@@ -22,7 +22,7 @@ import { ReadyToRun } from './dashboard/ReadyToRun';
 import { useDataState } from '@/hooks/useDataState';
 import { isSampleDataActive } from '@/config/sampleData';
 import { DEFAULT_CONFIG } from '@/lib/constants';
-import { formatRelativeTime, getModelName } from '@/lib/utils';
+import { cn, formatRelativeTime, getModelName } from '@/lib/utils';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -164,10 +164,10 @@ const StatusIcon: React.FC<{ row: Pick<RunRow, 'failed' | 'passed'> }> = ({ row 
 
 // ==================== Truncate-with-tooltip ====================
 
-const TruncText: React.FC<{ text: string; className?: string }> = ({ text, className }) => (
+const TruncText: React.FC<{ text: string; className?: string; testId?: string }> = ({ text, className, testId }) => (
   <Tooltip>
     <TooltipTrigger asChild>
-      <span className={`truncate inline-block max-w-full align-bottom ${className || ''}`}>
+      <span data-testid={testId} className={cn('inline-block max-w-full align-bottom', className)}>
         {text}
       </span>
     </TooltipTrigger>
@@ -265,7 +265,7 @@ interface RecentRowProps {
   onClick: () => void;
 }
 
-const RecentRow: React.FC<RecentRowProps> = ({ row, onClick }) => {
+export const RecentRow: React.FC<RecentRowProps> = ({ row, onClick }) => {
   const verdict = row.failed === 0 && row.passed > 0
     ? 'Passed'
     : row.failed > 0
@@ -277,23 +277,23 @@ const RecentRow: React.FC<RecentRowProps> = ({ row, onClick }) => {
       onClick={onClick}
       data-testid="recent-run-row"
       data-run-id={row.run.id}
-      className="group mx-3 mb-2 grid w-[calc(100%-1.5rem)] min-w-0 grid-cols-[14px_minmax(0,1fr)_14px] items-start gap-x-2 gap-y-2 rounded-md border bg-muted/10 p-2.5 text-left text-[11px] transition-colors hover:bg-muted/50 sm:mx-0 sm:mb-0 sm:h-6 sm:w-full sm:min-w-[720px] sm:grid-cols-[14px_minmax(0,1.6fr)_minmax(0,1fr)_minmax(0,1fr)_130px_80px_14px] sm:items-center sm:gap-3 sm:rounded-none sm:border-0 sm:border-b sm:bg-transparent sm:px-3 sm:py-0"
+      className="group mx-3 mb-2 grid w-[calc(100%-1.5rem)] min-w-0 grid-cols-[14px_minmax(0,1fr)_14px] items-start gap-x-2 gap-y-2 rounded-md border bg-muted/10 p-2.5 text-left text-[11px] transition-colors hover:bg-muted/50 sm:mx-0 sm:mb-0 sm:h-6 sm:w-full sm:min-w-[720px] sm:grid-cols-[14px_minmax(0,1.6fr)_minmax(0,1fr)_minmax(0,1fr)_130px_80px_14px] sm:items-center sm:gap-3 sm:rounded-none sm:border-0 sm:border-b sm:bg-transparent sm:px-3 sm:py-0 sm:last:border-b-0"
     >
       <span className="mt-0.5 sm:mt-0"><StatusIcon row={row} /></span>
       <div className="min-w-0">
-        <div data-testid="recent-run-name" className="break-words text-xs font-medium leading-tight sm:inline-block sm:max-w-full sm:truncate sm:align-bottom sm:text-[11px]">{row.run.name}</div>
+        <TruncText testId="recent-run-name" text={row.run.name} className="block sm:inline-block break-words text-xs font-medium leading-tight sm:truncate sm:text-[11px]" />
         <span className="hidden text-muted-foreground sm:inline"> · </span>
-        <div data-testid="recent-run-benchmark" className="mt-0.5 break-words text-[10px] leading-tight text-muted-foreground sm:mt-0 sm:inline-block sm:max-w-full sm:truncate sm:align-bottom">{row.benchmarkName}</div>
+        <TruncText testId="recent-run-benchmark" text={row.benchmarkName} className="block sm:inline-block mt-0.5 break-words text-[10px] leading-tight text-muted-foreground sm:mt-0 sm:truncate" />
       </div>
 
       <div className="col-start-2 row-start-2 grid min-w-0 grid-cols-[minmax(0,1fr)_minmax(0,1fr)] gap-x-3 sm:contents">
         <div className="min-w-0 sm:col-start-3 sm:row-start-1">
           <span className="text-[9px] text-muted-foreground sm:hidden">Agent</span>
-          <div data-testid="recent-run-agent" className="break-words sm:truncate">{row.agentName}</div>
+          <TruncText testId="recent-run-agent" text={row.agentName} className="break-words sm:truncate" />
         </div>
         <div className="min-w-0 sm:col-start-4 sm:row-start-1">
           <span className="text-[9px] text-muted-foreground sm:hidden">Model</span>
-          <div data-testid="recent-run-model" className="break-words text-muted-foreground sm:truncate">{getModelName(row.run.modelId)}</div>
+          <TruncText testId="recent-run-model" text={getModelName(row.run.modelId)} className="break-words text-muted-foreground sm:truncate" />
         </div>
       </div>
 
