@@ -47,7 +47,6 @@ export interface AgentBenchmarkDotPlotProps {
 }
 
 const TICK_FRACTIONS = [0, 0.25, 0.5, 0.75, 1];
-const NAME_COL_WIDTH = 132;
 
 function dotTitle(agentName: string, metric: TrendMetricKey, entry: { point: { timestamp: number; modelId: string; passed: number; total: number }; value: number }, isLatest: boolean): string {
   const date = new Date(entry.point.timestamp).toLocaleString();
@@ -79,15 +78,21 @@ export const AgentBenchmarkDotPlot: React.FC<AgentBenchmarkDotPlotProps> = ({ ro
 
   return (
     <div data-testid="agent-dot-plot" className="text-xs">
-      {/* Shared tick header \u2014 same name-column + flex-1 plot-column split as every row, so ticks line up without measuring pixels. */}
-      <div className="flex items-center gap-2 mb-1" style={{ paddingLeft: NAME_COL_WIDTH + 8 }} data-testid="agent-dot-plot-ticks">
-        <div className="relative flex-1 h-3">
+      {/* Desktop alignment: the 132px name column + gap-2 (8px) below equals sm:pl-[140px]. */}
+      <div className="mb-1 flex items-center gap-2 pl-0 sm:pl-[140px]" data-testid="agent-dot-plot-ticks">
+        <div className="relative mx-2 h-3 flex-1 sm:mx-0">
           {TICK_FRACTIONS.map(frac => {
             const value = domain[0] + frac * (domain[1] - domain[0]);
+            const isIntermediateTick = frac === 0.25 || frac === 0.75;
+            const mobileEdgeAnchor = frac === 0
+              ? 'translate-x-0 sm:-translate-x-1/2'
+              : frac === 1
+                ? '-translate-x-full sm:-translate-x-1/2'
+                : '-translate-x-1/2';
             return (
               <span
                 key={frac}
-                className="absolute -translate-x-1/2 text-[10px] text-muted-foreground tabular-nums"
+                className={`absolute text-[10px] tabular-nums text-muted-foreground ${mobileEdgeAnchor} ${isIntermediateTick ? 'hidden sm:block' : ''}`}
                 style={{ left: `${frac * 100}%` }}
               >
                 {formatMetricValue(metric, value)}
@@ -108,17 +113,16 @@ export const AgentBenchmarkDotPlot: React.FC<AgentBenchmarkDotPlotProps> = ({ ro
           return (
             <div
               key={row.agentKey}
-              className="flex items-center gap-2 h-8 border-b border-border/60 last:border-b-0"
+              className="flex min-h-12 flex-col items-stretch gap-1 border-b border-border/60 py-1.5 last:border-b-0 sm:h-8 sm:min-h-0 sm:flex-row sm:items-center sm:gap-2 sm:py-0"
               data-testid={`agent-dot-plot-row-${row.agentKey}`}
             >
               <span
-                className="text-[11px] font-medium truncate shrink-0"
-                style={{ width: NAME_COL_WIDTH }}
+                className="text-[11px] font-medium break-words sm:w-[132px] sm:shrink-0 sm:truncate"
                 title={row.agentName}
               >
                 {row.agentName}
               </span>
-              <div className="relative flex-1 h-full">
+              <div className="relative mx-2 h-5 flex-1 sm:mx-0 sm:h-full">
                 {/* Faint tick gridlines, per-row (avoids cross-row absolute-overlay alignment math). */}
                 {TICK_FRACTIONS.map(frac => (
                   <div
