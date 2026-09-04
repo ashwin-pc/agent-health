@@ -144,7 +144,7 @@ export const AgentTrendsBand: React.FC<AgentTrendsBandProps> = ({
             Agent Trends
           </CardTitle>
 
-          <div className="flex w-full min-w-0 max-w-full items-center gap-1 overflow-x-auto whitespace-nowrap pb-0.5 sm:contents sm:w-auto sm:overflow-visible sm:pb-0" data-testid="agent-trends-actions">
+          <div className="flex w-full min-w-0 max-w-full flex-wrap items-center gap-1 whitespace-nowrap pb-0.5 sm:contents sm:w-auto sm:flex-nowrap sm:pb-0" data-testid="agent-trends-actions">
             <div className="flex shrink-0 items-center gap-1" data-testid="agent-trends-metric-toggle">
               {METRIC_OPTIONS.map(opt => (
                 <button

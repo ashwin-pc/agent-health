@@ -63,7 +63,7 @@ async function seedMobileData(request: APIRequestContext, tracker: TestDataTrack
       name: benchmarkRunName,
       agentKey: AGENTS[0],
       modelId: MODEL_ID,
-      createdAt: new Date(now + 60_000).toISOString(),
+      createdAt: new Date(now).toISOString(),
       status: 'completed',
       results: {},
       stats: { passed: 2, failed: 1, pending: 0, total: 3 },
@@ -181,6 +181,16 @@ test.describe('required mobile readability gate', () => {
     await expectInsideViewport(heading);
     await expectSelectChevronsInsideTriggers(page);
     await expectNoHorizontalOverflow(page);
+
+    const trendsCard = page.getByTestId('agent-trends-band');
+    const history = page.getByTestId('agent-trends-agents-toggle');
+    const [cardBox, historyBox] = await Promise.all([trendsCard.boundingBox(), history.boundingBox()]);
+    expect(cardBox).not.toBeNull();
+    expect(historyBox).not.toBeNull();
+    expect(historyBox!.x + historyBox!.width).toBeLessThanOrEqual(cardBox!.x + cardBox!.width - 12);
+    await history.click();
+    await expect(page.getByTestId('agent-trends-agents-menu')).toBeVisible();
+    await history.click();
 
     const ticks = page.getByTestId('agent-dot-plot-ticks').locator('span:visible');
     await expect(ticks).toHaveCount(3);
