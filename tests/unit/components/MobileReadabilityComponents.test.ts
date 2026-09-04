@@ -10,12 +10,17 @@
 import React from 'react';
 import { cleanup, render, screen } from '@testing-library/react';
 import { InlineRenameField } from '@/components/evals3/InlineRenameField';
-import { RecentRow } from '@/components/Dashboard';
+import { IMPROVEMENT_ROW_BADGE_CLASS, RecentRow } from '@/components/Dashboard';
 import { TooltipProvider } from '@/components/ui/tooltip';
 
 afterEach(cleanup);
 
 describe('mobile readability component contracts', () => {
+  it('keeps improvement-row badges from shrinking or wrapping', () => {
+    expect(IMPROVEMENT_ROW_BADGE_CLASS).toEqual(expect.stringContaining('shrink-0'));
+    expect(IMPROVEMENT_ROW_BADGE_CLASS).toEqual(expect.stringContaining('whitespace-nowrap'));
+  });
+
   it('InlineRenameField enables mobile wrapping only when requested', () => {
     const { rerender } = render(React.createElement(InlineRenameField, { value: 'Long run title', onSave: jest.fn(), testId: 'rename' }));
     expect(screen.getByTestId('rename-text').className).toContain('truncate');
