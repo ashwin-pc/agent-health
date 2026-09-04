@@ -485,8 +485,9 @@ export const RunInspectorPage: React.FC = () => {
                 value={run.name}
                 onSave={handleRenameRun}
                 className="max-w-full"
-                textClassName="min-w-0 !whitespace-normal break-words text-lg font-bold sm:truncate sm:!whitespace-nowrap"
+                textClassName="text-lg font-bold"
                 testId="run-inspector-rename"
+                wrapOnMobile
               />
             ) : (
               <h2 className="text-lg font-bold truncate">{run.name}</h2>

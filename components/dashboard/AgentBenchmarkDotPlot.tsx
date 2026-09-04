@@ -154,7 +154,7 @@ export const AgentBenchmarkDotPlot: React.FC<AgentBenchmarkDotPlotProps> = ({ ro
                         data-testid={`agent-dot-plot-history-${row.agentKey}-${i}`}
                         title={dotTitle(row.agentName, metric, entry, false)}
                         onClick={() => onSelectPoint(row, entry.point.runDocId, entry.point.benchmarkId)}
-                        className="absolute top-1/2 rounded-full -translate-x-1/2 -translate-y-1/2 opacity-45 hover:opacity-80 transition-opacity"
+                        className="absolute top-1/2 !min-h-0 -translate-x-1/2 -translate-y-1/2 rounded-full opacity-45 transition-opacity hover:opacity-80"
                         style={{ left: `${valueToPercent(entry.value, domain)}%`, width: 7, height: 7, backgroundColor: color }}
                       />
                     ))}
@@ -164,7 +164,7 @@ export const AgentBenchmarkDotPlot: React.FC<AgentBenchmarkDotPlotProps> = ({ ro
                       data-testid={`agent-dot-plot-latest-${row.agentKey}`}
                       title={dotTitle(row.agentName, metric, row.latest, true)}
                       onClick={() => onSelectPoint(row, (row.latest as NonNullable<typeof row.latest>).point.runDocId, (row.latest as NonNullable<typeof row.latest>).point.benchmarkId)}
-                      className="absolute top-1/2 rounded-full -translate-x-1/2 -translate-y-1/2 ring-2 ring-background hover:scale-110 transition-transform"
+                      className="absolute top-1/2 !min-h-0 -translate-x-1/2 -translate-y-1/2 rounded-full ring-2 ring-background transition-transform hover:scale-110"
                       style={{ left: `${valueToPercent(row.latest.value, domain)}%`, width: 14, height: 14, backgroundColor: color }}
                     />
                   </>
