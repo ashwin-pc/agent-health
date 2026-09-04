@@ -196,11 +196,15 @@ test.describe('required mobile readability gate', () => {
       const row = plotRows.nth(index);
       const name = row.locator(':scope > span');
       const bar = row.locator(':scope > div');
+      const latestDot = row.locator('[data-testid^="agent-dot-plot-latest-"]');
       const nameBox = await name.boundingBox();
       const barBox = await bar.boundingBox();
+      const dotBox = await latestDot.boundingBox();
       expect(nameBox).not.toBeNull();
       expect(barBox).not.toBeNull();
+      expect(dotBox).not.toBeNull();
       expect(rectanglesOverlap(nameBox!, barBox!), `agent label ${index} must not overlap its bar`).toBe(false);
+      expect(dotBox!.height, `agent dot ${index} must not inherit the shell's 40px button height`).toBeLessThanOrEqual(16);
       nameBoxes.push(nameBox!);
       await expectInsideViewport(name);
     }
