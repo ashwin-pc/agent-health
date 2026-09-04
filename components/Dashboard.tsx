@@ -276,23 +276,24 @@ const RecentRow: React.FC<RecentRowProps> = ({ row, onClick }) => {
     <button
       onClick={onClick}
       data-testid="recent-run-row"
+      data-run-id={row.run.id}
       className="group mx-3 mb-2 grid w-[calc(100%-1.5rem)] min-w-0 grid-cols-[14px_minmax(0,1fr)_14px] items-start gap-x-2 gap-y-2 rounded-md border bg-muted/10 p-2.5 text-left text-[11px] transition-colors hover:bg-muted/50 sm:mx-0 sm:mb-0 sm:h-6 sm:w-full sm:min-w-[720px] sm:grid-cols-[14px_minmax(0,1.6fr)_minmax(0,1fr)_minmax(0,1fr)_130px_80px_14px] sm:items-center sm:gap-3 sm:rounded-none sm:border-0 sm:border-b sm:bg-transparent sm:px-3 sm:py-0"
     >
       <span className="mt-0.5 sm:mt-0"><StatusIcon row={row} /></span>
       <div className="min-w-0">
-        <div className="break-words text-xs font-medium leading-tight sm:inline-block sm:max-w-full sm:truncate sm:align-bottom sm:text-[11px]">{row.run.name}</div>
+        <div data-testid="recent-run-name" className="break-words text-xs font-medium leading-tight sm:inline-block sm:max-w-full sm:truncate sm:align-bottom sm:text-[11px]">{row.run.name}</div>
         <span className="hidden text-muted-foreground sm:inline"> · </span>
-        <div className="mt-0.5 break-words text-[10px] leading-tight text-muted-foreground sm:mt-0 sm:inline-block sm:max-w-full sm:truncate sm:align-bottom">{row.benchmarkName}</div>
+        <div data-testid="recent-run-benchmark" className="mt-0.5 break-words text-[10px] leading-tight text-muted-foreground sm:mt-0 sm:inline-block sm:max-w-full sm:truncate sm:align-bottom">{row.benchmarkName}</div>
       </div>
 
       <div className="col-start-2 row-start-2 grid min-w-0 grid-cols-[minmax(0,1fr)_minmax(0,1fr)] gap-x-3 sm:contents">
         <div className="min-w-0 sm:col-start-3 sm:row-start-1">
           <span className="text-[9px] text-muted-foreground sm:hidden">Agent</span>
-          <div className="break-words sm:truncate">{row.agentName}</div>
+          <div data-testid="recent-run-agent" className="break-words sm:truncate">{row.agentName}</div>
         </div>
         <div className="min-w-0 sm:col-start-4 sm:row-start-1">
           <span className="text-[9px] text-muted-foreground sm:hidden">Model</span>
-          <div className="break-words text-muted-foreground sm:truncate">{getModelName(row.run.modelId)}</div>
+          <div data-testid="recent-run-model" className="break-words text-muted-foreground sm:truncate">{getModelName(row.run.modelId)}</div>
         </div>
       </div>
 
@@ -303,10 +304,10 @@ const RecentRow: React.FC<RecentRowProps> = ({ row, onClick }) => {
         >
           {verdict}
         </Badge>
-        <div className="min-w-0 flex-1 sm:col-start-5 sm:row-start-1">
+        <div data-testid="recent-run-pass-rate" className="min-w-0 flex-1 sm:col-start-5 sm:row-start-1">
           <RateBar rate={row.passRate} passed={row.passed} failed={row.failed} total={row.total} />
         </div>
-        <span className="shrink-0 whitespace-nowrap text-right text-[10px] tabular-nums text-muted-foreground sm:col-start-6 sm:row-start-1">
+        <span data-testid="recent-run-time" className="shrink-0 whitespace-nowrap text-right text-[10px] tabular-nums text-muted-foreground sm:col-start-6 sm:row-start-1">
           {formatRelativeTime(row.run.createdAt)}
         </span>
       </div>
