@@ -391,7 +391,7 @@ const NeedsImprovementWidget: React.FC<NeedsImprovementWidgetProps> = ({
   const empty = failingAgents.length === 0 && regressingAgents.length === 0;
 
   return (
-    <Card className="flex flex-col overflow-hidden" data-testid="needs-improvement-card">
+    <Card className="flex min-w-0 flex-col overflow-hidden" data-testid="needs-improvement-card">
       <CardHeader className="pb-2 px-4 pt-3 space-y-1">
         <div className="flex items-center justify-between">
           <CardTitle className="text-sm flex items-center gap-1.5">
@@ -817,8 +817,8 @@ export const Dashboard: React.FC = () => {
                 (which is already `flex flex-col` + an internal `ScrollArea h-full`)
                 naturally matches AgentTrendsBand's height without a hard-coded
                 row height to keep in sync with the new, taller trends card. */}
-            <div className="grid gap-4 lg:grid-cols-3 lg:items-stretch" data-testid="agent-trends-and-needs-improvement-row">
-              <div className="lg:col-span-2">
+            <div className="grid min-w-0 gap-4 lg:grid-cols-3 lg:items-stretch" data-testid="agent-trends-and-needs-improvement-row">
+              <div className="min-w-0 lg:col-span-2">
                 <AgentTrendsBand
                   benchmarks={benchmarks}
                   reports={reports}
@@ -835,7 +835,7 @@ export const Dashboard: React.FC = () => {
             </div>
 
             {/* Recent Evaluation Runs — full width */}
-            <Card data-testid="recent-runs-card">
+            <Card className="min-w-0 overflow-hidden" data-testid="recent-runs-card">
               <CardHeader className="pb-2 px-4 pt-3 space-y-1">
                 <div className="flex items-center justify-between">
                   <div>
