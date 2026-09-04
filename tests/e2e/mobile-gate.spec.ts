@@ -227,6 +227,15 @@ test.describe('required mobile readability gate', () => {
     const improvementRow = page.getByTestId('needs-improvement-card').getByRole('button', { name: new RegExp(AGENTS[0]) });
     await expect(improvementRow).toContainText(AGENTS[0]);
     await expectInsideViewport(improvementRow);
+    const improvementBadge = improvementRow.getByTestId('improvement-row-badge');
+    const improvementBadgeBox = await improvementBadge.boundingBox();
+    expect(improvementBadgeBox, 'improvement badge should have rendered geometry').not.toBeNull();
+    expect(improvementBadgeBox!.height, 'improvement badge must stay on one line').toBeLessThanOrEqual(18);
+    const improvementBadgeHeight = await improvementBadge.evaluate(element => ({
+      clientHeight: element.clientHeight,
+      scrollHeight: element.scrollHeight,
+    }));
+    expect(improvementBadgeHeight.scrollHeight, 'improvement badge content must fit its height').toBeLessThanOrEqual(improvementBadgeHeight.clientHeight + 1);
 
     const recentRow = page.locator(`[data-testid="recent-run-row"][data-run-id="${seed.benchmarkRunId}"]`);
     await expect(recentRow).toBeVisible();

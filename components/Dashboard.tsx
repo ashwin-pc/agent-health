@@ -335,6 +335,8 @@ const RecentHeader: React.FC = () => (
 
 // ==================== Needs Improvement Widget (agent-centric) ====================
 
+export const IMPROVEMENT_ROW_BADGE_CLASS = 'h-4 shrink-0 whitespace-nowrap border-red-500/40 px-1.5 py-0 text-[9px] leading-none text-red-600 dark:text-red-400';
+
 interface NeedsImprovementWidgetProps {
   failingAgents: AgentImprovementRow[];
   regressingAgents: AgentRegressionRow[];
@@ -452,7 +454,8 @@ const NeedsImprovementWidget: React.FC<NeedsImprovementWidgetProps> = ({
                       trailing={
                         <Badge
                           variant="outline"
-                          className="text-[9px] h-4 py-0 px-1.5 border-red-500/40 text-red-600 dark:text-red-400 leading-none"
+                          className={IMPROVEMENT_ROW_BADGE_CLASS}
+                          data-testid="improvement-row-badge"
                         >
                           {a.failedTestCases} failing
                         </Badge>
@@ -478,7 +481,8 @@ const NeedsImprovementWidget: React.FC<NeedsImprovementWidgetProps> = ({
                       trailing={
                         <Badge
                           variant="outline"
-                          className="text-[9px] h-4 py-0 px-1.5 border-red-500/40 text-red-600 dark:text-red-400 gap-0.5 leading-none"
+                          className={`${IMPROVEMENT_ROW_BADGE_CLASS} gap-0.5`}
+                          data-testid="improvement-row-badge"
                         >
                           <TrendingDown className="h-2.5 w-2.5" />
                           {Math.round(a.delta * 100)}pp
