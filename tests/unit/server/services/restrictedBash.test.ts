@@ -301,6 +301,7 @@ describe('confinement and failure semantics', () => {
       rootDir: root, timeoutMs: 50, maxFileBytes: 64 * 1024 * 1024,
       maxInputBytes: 64 * 1024 * 1024, onWorkerExit: () => { exited = true; },
     });
+    expect((await limited.execute('echo warm')).stdout).toBe('warm\n');
     const started = Date.now();
     const result = await limited.execute('sort big.txt | uniq -c | sort -rn');
     expect(result.stderr).toMatch(/timed out/);
@@ -315,6 +316,7 @@ describe('confinement and failure semantics', () => {
     for (let i = 0; i < 150; i++) { dir = path.join(dir, `d${i}`); await fs.mkdir(dir); await fs.writeFile(path.join(dir, 'x'), 'x'); }
     let exited = false;
     const limited = await RestrictedBash.create({ rootDir: root, timeoutMs: 10, onWorkerExit: () => { exited = true; } });
+    expect((await limited.execute('echo warm')).stdout).toBe('warm\n');
     const started = Date.now();
     const result = await limited.execute('find deep -type f');
     expect(result.stderr).toMatch(/timed out/);
@@ -328,12 +330,16 @@ describe('confinement and failure semantics', () => {
     expect(Date.now() - started).toBeLessThan(5_000);
   });
 
-  it('passes ordinary commands through the worker', async () => {
-    expect((await bash.execute('echo worker-ok')).stdout).toBe('worker-ok\n');
+  it('does not bill fresh-worker startup against a tiny command deadline', async () => {
+    const fresh = await RestrictedBash.create({ rootDir: root, timeoutMs: 50 });
+    const result = await fresh.execute('echo worker-ok');
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toBe('worker-ok\n');
   });
 
   it('preemptively terminates a busy jq worker', async () => {
     const limited = await RestrictedBash.create({ rootDir: root, timeoutMs: 100 });
+    expect((await limited.execute('echo warm')).stdout).toBe('warm\n');
     const started = Date.now();
     const result = await limited.execute("jq -n '[range(1000000000)] | length'");
     expect(result.stderr).toMatch(/timed out/);

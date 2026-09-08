@@ -525,19 +525,21 @@ export class RestrictedBash {
     try {
       const id = ++this.requestSequence;
       const result = await new Promise<CommandResult>((resolve, reject) => {
-        timer = setTimeout(() => {
-          timedOut = true;
-          const active = this.commandWorker;
-          this.commandWorker = undefined;
-          this.workerReady = undefined;
-          if (active) void active.terminate().then(() => {
-            this.onWorkerExit?.();
-            resolve(fail(`restricted bash: command timed out after ${remainingMs}ms`, 2));
-          });
-          else resolve(fail(`restricted bash: command timed out after ${remainingMs}ms`, 2));
-        }, remainingMs);
         void this.getCommandWorker().then((readyWorker) => {
           worker = readyWorker;
+          // Worker module loading is initialization, not command execution.
+          // Arm the hard command deadline only after the worker reports ready.
+          timer = setTimeout(() => {
+            timedOut = true;
+            const active = this.commandWorker;
+            this.commandWorker = undefined;
+            this.workerReady = undefined;
+            if (active) void active.terminate().then(() => {
+              this.onWorkerExit?.();
+              resolve(fail(`restricted bash: command timed out after ${remainingMs}ms`, 2));
+            });
+            else resolve(fail(`restricted bash: command timed out after ${remainingMs}ms`, 2));
+          }, remainingMs);
           const onMessage = (message: any) => {
             if (message?.id !== id) return;
             readyWorker.off('message', onMessage);
@@ -573,7 +575,15 @@ export class RestrictedBash {
   private getCommandWorker(): Promise<Worker> {
     if (this.workerReady) return this.workerReady;
     this.workerReady = new Promise<Worker>((resolve, reject) => {
-      const worker = new Worker(`
+      const bootTimer = setTimeout(() => {
+        this.commandWorker = undefined;
+        this.workerReady = undefined;
+        void worker?.terminate();
+        reject(new Error('restricted bash: command worker failed to start within 30000ms'));
+      }, 30_000);
+      bootTimer.unref();
+      let worker: Worker | undefined;
+      worker = new Worker(`
         const { workerData } = require('node:worker_threads');
         import(workerData.moduleUrl).catch((error) => { throw error; });
       `, {
@@ -601,12 +611,17 @@ export class RestrictedBash {
       worker.unref();
       const ready = (message: any) => {
         if (!message?.ready) return;
-        worker.off('message', ready);
-        resolve(worker);
+        clearTimeout(bootTimer);
+        worker!.off('message', ready);
+        resolve(worker!);
       };
       worker.on('message', ready);
-      worker.once('error', reject);
+      worker.once('error', (error) => {
+        clearTimeout(bootTimer);
+        reject(error);
+      });
       worker.once('exit', (code) => {
+        clearTimeout(bootTimer);
         if (code !== 0) reject(new Error(`restricted bash: command worker exited ${code}`));
       });
     });
