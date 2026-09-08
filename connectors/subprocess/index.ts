@@ -11,7 +11,7 @@
 import { spawn, ChildProcess } from 'child_process';
 import { ToolCallStatus } from '@/types';
 import type { TrajectoryStep } from '@/types';
-import { BaseConnector } from '@/connectors/base/BaseConnector';
+import { BaseConnector } from '@/connectors/base';
 import type {
   ConnectorAuth,
   ConnectorRequest,

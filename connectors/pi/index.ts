@@ -14,7 +14,7 @@ import { ToolCallStatus } from '@/types';
 import {
   SubprocessConnector,
   type SubprocessExecutionState,
-} from '@/connectors/subprocess/SubprocessConnector';
+} from '@/connectors/subprocess';
 import type {
   ConnectorAuth,
   ConnectorRequest,
