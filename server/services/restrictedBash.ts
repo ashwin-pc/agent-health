@@ -13,8 +13,9 @@
 
 import * as fs from 'node:fs/promises';
 import { constants as fsConstants } from 'node:fs';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import * as path from 'node:path';
-import { Worker } from 'node:worker_threads';
+import { Worker, isMainThread, parentPort, workerData } from 'node:worker_threads';
 
 export const RESTRICTED_COMMANDS = [
   'jq', 'grep', 'rg', 'sort', 'cat', 'ls', 'find', 'head', 'tail', 'wc',
@@ -22,6 +23,11 @@ export const RESTRICTED_COMMANDS = [
 ] as const;
 
 const AVAILABLE = RESTRICTED_COMMANDS.join(', ');
+const SELF_STACK_URL = new Error().stack?.match(/(file:\/\/[^:)]+)/)?.[1];
+const SELF_MODULE_URL = typeof __filename === 'string'
+  ? pathToFileURL(__filename).href
+  : SELF_STACK_URL ?? pathToFileURL(process.argv[1]).href;
+const SELF_IS_TS = SELF_MODULE_URL.endsWith('.ts');
 const DEFAULT_OUTPUT_CAP = 50 * 1024;
 const DEFAULT_TIMEOUT_MS = 2_000;
 const DEFAULT_QUOTA_BYTES = 100 * 1024 * 1024;
@@ -68,6 +74,8 @@ export interface RestrictedBashOptions {
   maxCommands?: number;
   maxTotalMs?: number;
   onCommand?: (command: string) => void;
+  /** Test/telemetry hook fired after the command worker has exited. */
+  onWorkerExit?: () => void;
 }
 
 export interface BashExecutionResult {
@@ -224,7 +232,11 @@ export class RestrictedBash {
   private readonly maxTotalMs: number;
   private commandCount = 0;
   private totalElapsedMs = 0;
+  private commandWorker?: Worker;
+  private workerReady?: Promise<Worker>;
+  private requestSequence = 0;
   private readonly onCommand?: (command: string) => void;
+  private readonly onWorkerExit?: () => void;
   private readonly mounts: ReadonlyMap<string, ResolvedMount>;
 
   private constructor(
@@ -243,6 +255,7 @@ export class RestrictedBash {
     this.maxCommands = options.maxCommands ?? 200;
     this.maxTotalMs = options.maxTotalMs ?? 60_000;
     this.onCommand = options.onCommand;
+    this.onWorkerExit = options.onWorkerExit;
     this.mounts = mounts;
   }
 
@@ -505,15 +518,48 @@ export class RestrictedBash {
       const result = fail(`restricted bash: command timed out after ${this.timeoutMs}ms`, 2);
       return { ...result, text: this.render(result.stdout, result.stderr, result.exitCode) };
     }
-    const work = this.executeParsed(parsed);
+    const remainingMs = Math.min(this.timeoutMs, Math.max(0, this.maxTotalMs - this.totalElapsedMs));
     let timer: NodeJS.Timeout | undefined;
-    const timeout = new Promise<never>((_, reject) => {
-      timer = setTimeout(() => reject(new Error(`restricted bash: command timed out after ${this.timeoutMs}ms`)), this.timeoutMs);
-    });
+    let timedOut = false;
+    let worker: Worker | undefined;
     try {
-      const result = await Promise.race([work, timeout]);
+      const id = ++this.requestSequence;
+      const result = await new Promise<CommandResult>((resolve, reject) => {
+        timer = setTimeout(() => {
+          timedOut = true;
+          const active = this.commandWorker;
+          this.commandWorker = undefined;
+          this.workerReady = undefined;
+          if (active) void active.terminate().then(() => {
+            this.onWorkerExit?.();
+            resolve(fail(`restricted bash: command timed out after ${remainingMs}ms`, 2));
+          });
+          else resolve(fail(`restricted bash: command timed out after ${remainingMs}ms`, 2));
+        }, remainingMs);
+        void this.getCommandWorker().then((readyWorker) => {
+          worker = readyWorker;
+          const onMessage = (message: any) => {
+            if (message?.id !== id) return;
+            readyWorker.off('message', onMessage);
+            resolve(message.result);
+          };
+          readyWorker.on('message', onMessage);
+          readyWorker.once('error', reject);
+          readyWorker.once('exit', () => {
+            if (this.commandWorker === readyWorker) {
+              this.commandWorker = undefined;
+              this.workerReady = undefined;
+            }
+
+          });
+          readyWorker.postMessage({ id, parsed });
+        }, (error) => {
+          if (!timedOut) reject(error);
+        });
+      });
       const capped = this.capOutput(result.stdout, result.stderr);
-      return { ...result, ...capped, text: this.render(capped.stdout, capped.stderr, result.exitCode) };
+      const breach = timedOut ? 'timeout' as const : Buffer.byteLength(result.stdout + result.stderr) > this.outputCapBytes ? 'output' as const : undefined;
+      return { ...result, ...capped, text: this.render(capped.stdout, capped.stderr, result.exitCode), ...(breach ? { breach } : {}) };
     } catch (err: any) {
       const result = fail(err?.message ?? String(err), 2);
       const capped = this.capOutput(result.stdout, result.stderr);
@@ -523,6 +569,55 @@ export class RestrictedBash {
       if (timer) clearTimeout(timer);
     }
   }
+
+  private getCommandWorker(): Promise<Worker> {
+    if (this.workerReady) return this.workerReady;
+    this.workerReady = new Promise<Worker>((resolve, reject) => {
+      const worker = new Worker(`
+        const { workerData } = require('node:worker_threads');
+        import(workerData.moduleUrl).catch((error) => { throw error; });
+      `, {
+        eval: true,
+        execArgv: SELF_IS_TS ? ['--loader', 'ts-node/esm'] : [],
+        workerData: {
+          restrictedBashWorker: true,
+          moduleUrl: SELF_MODULE_URL,
+          rootDir: this.rootDir,
+          mounts: this.mounts,
+          options: {
+            rootDir: this.rootDir,
+            timeoutMs: this.timeoutMs,
+            outputCapBytes: this.outputCapBytes,
+            quotaBytes: this.quotaBytes,
+            quotaFiles: this.quotaFiles,
+            maxFileBytes: this.maxFileBytes,
+            maxInputBytes: this.maxInputBytes,
+            maxCommands: Number.MAX_SAFE_INTEGER,
+            maxTotalMs: Number.MAX_SAFE_INTEGER,
+          },
+        },
+      });
+      this.commandWorker = worker;
+      worker.unref();
+      const ready = (message: any) => {
+        if (!message?.ready) return;
+        worker.off('message', ready);
+        resolve(worker);
+      };
+      worker.on('message', ready);
+      worker.once('error', reject);
+      worker.once('exit', (code) => {
+        if (code !== 0) reject(new Error(`restricted bash: command worker exited ${code}`));
+      });
+    });
+    return this.workerReady;
+  }
+
+  /** Worker-only entry: all parsing, filesystem traversal, and builtins run here. */
+  private static createWorkerInstance(payload: any): RestrictedBash {
+    return new RestrictedBash(payload.options, payload.rootDir, payload.mounts);
+  }
+
 
   private budgetFailure(message: string, breach: BashExecutionResult['breach']): BashExecutionResult {
     const result = fail(message, 2);
@@ -1002,4 +1097,16 @@ export class RestrictedBash {
       });
     });
   }
+}
+
+
+if (!isMainThread && workerData?.restrictedBashWorker) {
+  const instance = (RestrictedBash as any).createWorkerInstance(workerData);
+  parentPort!.on('message', ({ id, parsed }: { id: number; parsed: ParsedRestrictedCommand }) => {
+    void instance.executeParsed(parsed).then(
+      (result: CommandResult) => parentPort!.postMessage({ id, result }),
+      (error: any) => parentPort!.postMessage({ id, result: fail(error?.message ?? String(error), 2) })
+    );
+  });
+  parentPort!.postMessage({ ready: true });
 }

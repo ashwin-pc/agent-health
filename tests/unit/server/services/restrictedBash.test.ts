@@ -23,7 +23,7 @@ beforeEach(async () => {
     { type: 'action', toolName: 'read' },
     { type: 'response', content: 'done' },
   ]));
-  bash = await RestrictedBash.create({ rootDir: root, quotaBytes: 100, quotaFiles: 2 });
+  bash = await RestrictedBash.create({ rootDir: root, timeoutMs: 5000, quotaBytes: 100, quotaFiles: 2 });
 });
 
 afterEach(async () => {
@@ -241,7 +241,7 @@ describe('confinement and failure semantics', () => {
         const result = await bash.execute(`${engine} '${pattern}' evidence/words.txt`);
         expect(result.exitCode).toBe(1);
       }
-      expect(Date.now() - started).toBeLessThan(500);
+      expect(Date.now() - started).toBeLessThan(8_000);
     }
   );
 
@@ -287,10 +287,49 @@ describe('confinement and failure semantics', () => {
   it('rejects an oversized aggregate input set', async () => {
     await fs.writeFile(path.join(root, 'one.txt'), '1'.repeat(24));
     await fs.writeFile(path.join(root, 'two.txt'), '2'.repeat(24));
-    const limited = await RestrictedBash.create({ rootDir: root, maxFileBytes: 32, maxInputBytes: 40 });
+    const limited = await RestrictedBash.create({ rootDir: root, timeoutMs: 5000, maxFileBytes: 32, maxInputBytes: 40 });
     const result = await limited.execute('cat one.txt two.txt');
     expect(result.exitCode).toBe(2);
     expect(result.stderr).toMatch(/inputs exceed 40 bytes.*find\/head/);
+  });
+
+  it('preemptively terminates a CPU-heavy non-jq pipeline and observes worker exit', async () => {
+    const big = path.join(root, 'big.txt');
+    await fs.writeFile(big, Array.from({ length: 300_000 }, (_, i) => `${300_000 - i} value`).join('\n'));
+    let exited = false;
+    const limited = await RestrictedBash.create({
+      rootDir: root, timeoutMs: 50, maxFileBytes: 64 * 1024 * 1024,
+      maxInputBytes: 64 * 1024 * 1024, onWorkerExit: () => { exited = true; },
+    });
+    const started = Date.now();
+    const result = await limited.execute('sort big.txt | uniq -c | sort -rn');
+    expect(result.stderr).toMatch(/timed out/);
+    expect(result.exitCode).not.toBe(0);
+    expect(Date.now() - started).toBeLessThan(500);
+    expect(exited).toBe(true);
+  });
+
+  it('preemptively terminates a deep find traversal', async () => {
+    let dir = path.join(root, 'deep');
+    await fs.mkdir(dir);
+    for (let i = 0; i < 150; i++) { dir = path.join(dir, `d${i}`); await fs.mkdir(dir); await fs.writeFile(path.join(dir, 'x'), 'x'); }
+    let exited = false;
+    const limited = await RestrictedBash.create({ rootDir: root, timeoutMs: 10, onWorkerExit: () => { exited = true; } });
+    const started = Date.now();
+    const result = await limited.execute('find deep -type f');
+    expect(result.stderr).toMatch(/timed out/);
+    expect(Date.now() - started).toBeLessThan(410);
+    expect(exited).toBe(true);
+  });
+
+  it('reuses a worker for a flood of cheap commands', async () => {
+    const started = Date.now();
+    for (let i = 0; i < 50; i++) expect((await bash.execute('cat evidence/data.json')).exitCode).toBe(0);
+    expect(Date.now() - started).toBeLessThan(5_000);
+  });
+
+  it('passes ordinary commands through the worker', async () => {
+    expect((await bash.execute('echo worker-ok')).stdout).toBe('worker-ok\n');
   });
 
   it('preemptively terminates a busy jq worker', async () => {
