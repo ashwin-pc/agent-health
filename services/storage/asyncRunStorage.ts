@@ -95,15 +95,7 @@ function storedMetricsToApp(
  */
 function toTestCaseRun(stored: StorageRun): TestCaseRun {
   // Cast to access trace-mode fields
-  const storedAny = stored as StorageRun & {
-    metricsStatus?: string;
-    traceFetchAttempts?: number;
-    lastTraceFetchAt?: string;
-    traceError?: string;
-    spans?: unknown[];
-    connectorProtocol?: string;
-    judgeMode?: 'trajectory-only' | 'trace-tools';
-  };
+  const storedAny = stored as any;
 
   return {
     id: stored.id,
@@ -112,16 +104,16 @@ function toTestCaseRun(stored: StorageRun): TestCaseRun {
     // File storage returns app-shaped run documents with `timestamp`, while
     // OpenSearch returns storage-shaped documents with `createdAt`. Reading
     // only createdAt made every file-backed report header say "Invalid Date".
-    timestamp: stored.createdAt || stored.timestamp || '',
+    timestamp: stored.createdAt || storedAny.timestamp || '',
     testCaseId: stored.testCaseId,
-    testCaseVersion: stored.testCaseVersion ?? parseInt(stored.testCaseVersionId?.split('-v')[1] || '1'),
+    testCaseVersion: storedAny.testCaseVersion ?? parseInt(stored.testCaseVersionId?.split('-v')[1] || '1'),
     experimentId: stored.experimentId || undefined,
     experimentRunId: stored.experimentRunId || undefined,
-    agentName: stored.agentName || stored.agentId,
-    agentKey: stored.agentKey || stored.agentId,
-    agentEndpoint: stored.agentEndpoint,
-    modelName: stored.modelName || stored.modelId,
-    modelId: stored.modelId || stored.modelName || '',
+    agentName: storedAny.agentName || stored.agentId,
+    agentKey: storedAny.agentKey || stored.agentId,
+    agentEndpoint: storedAny.agentEndpoint,
+    modelName: storedAny.modelName || stored.modelId,
+    modelId: stored.modelId || storedAny.modelName || '',
     // Judge model used for this run (PR #390 persists it). Without this
     // mapping, browser-side trace-recovery judging silently fell back to the
     // agent's modelId even when a distinct judge model was configured.
@@ -158,7 +150,7 @@ function toTestCaseRun(stored: StorageRun): TestCaseRun {
       id: ann.id,
       reportId: stored.id,
       text: ann.text,
-      timestamp: ann.createdAt || ann.timestamp || '',
+      timestamp: ann.createdAt || (ann as any).timestamp || '',
       tags: ann.tags,
       author: ann.author,
     })),
@@ -180,16 +172,15 @@ function toTestCaseRun(stored: StorageRun): TestCaseRun {
     traceId: (stored as any).traceId,
     sessionId: (stored as any).sessionId,
     rawEvents: stored.rawEvents as any[] | undefined,
-    logs: (stored.logs || stored.openSearchLogs || []) as OpenSearchLog[],
+    logs: (stored.logs || storedAny.openSearchLogs || []) as OpenSearchLog[],
     improvementStrategies: stored.improvementStrategies as any[] | undefined,
     // Preserve the full judge + timing surfaces returned by the file adapter.
     // The report Overview/header needs these when traces are intentionally off.
-    llmJudgeResponse: stored.llmJudgeResponse,
-    performanceMetrics: stored.performanceMetrics,
+    llmJudgeResponse: storedAny.llmJudgeResponse,
     // Per-matcher verdicts captured by the SDK during the test body
-    matcherResults: stored.matcherResults,
+    matcherResults: storedAny.matcherResults,
     // Trace-mode fields
-    traceStatus: stored.traceStatus,
+    traceStatus: storedAny.traceStatus,
     metricsStatus: storedAny.metricsStatus as 'pending' | 'calculating' | 'ready' | 'error' | undefined,
     traceFetchAttempts: storedAny.traceFetchAttempts,
     lastTraceFetchAt: storedAny.lastTraceFetchAt,
