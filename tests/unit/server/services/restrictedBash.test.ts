@@ -261,6 +261,21 @@ describe('confinement and failure semantics', () => {
       .rejects.toThrow(/hard-linked/);
   });
 
+
+  it('rejects hardlinks within directory mounts both at snapshot and after mount', async () => {
+    const workspace = await fs.mkdtemp(path.join(os.tmpdir(), 'restricted-hardlink-workspace-'));
+    const file = path.join(workspace, 'allowed.txt');
+    await fs.writeFile(file, 'allowed');
+    await fs.link(file, path.join(workspace, 'alias.txt'));
+    await expect(RestrictedBash.create({ rootDir: root, mounts: [{ virtualPath: 'evidence/workspace', sourcePaths: [workspace] }] }))
+      .rejects.toThrow(/hard-linked/);
+    await fs.unlink(path.join(workspace, 'alias.txt'));
+    const mounted = await RestrictedBash.create({ rootDir: root, mounts: [{ virtualPath: 'evidence/workspace', sourcePaths: [workspace] }] });
+    await fs.link(file, path.join(workspace, 'late-alias.txt'));
+    expect((await mounted.execute('cat evidence/workspace/allowed.txt')).stderr).toMatch(/snapshot inode/);
+    await fs.rm(workspace, { recursive: true, force: true });
+  });
+
   it('rejects oversized files before reading them into memory', async () => {
     await fs.writeFile(path.join(root, 'large.txt'), 'x'.repeat(33));
     const limited = await RestrictedBash.create({ rootDir: root, maxFileBytes: 32, maxInputBytes: 64 });
@@ -278,9 +293,27 @@ describe('confinement and failure semantics', () => {
     expect(result.stderr).toMatch(/inputs exceed 40 bytes.*find\/head/);
   });
 
-  it('enforces the configured per-command timeout', async () => {
-    const immediate = await RestrictedBash.create({ rootDir: root, timeoutMs: 0 });
-    expect((await immediate.execute('cat evidence/words.txt')).stderr).toMatch(/timed out after 0ms/);
+  it('preemptively terminates a busy jq worker', async () => {
+    const limited = await RestrictedBash.create({ rootDir: root, timeoutMs: 100 });
+    const started = Date.now();
+    const result = await limited.execute("jq -n '[range(1000000000)] | length'");
+    expect(result.stderr).toMatch(/timed out/);
+    expect(result.exitCode).not.toBe(0);
+    expect(Date.now() - started).toBeLessThan(750);
+  });
+
+  it('enforces command-count and cumulative judgment budgets', async () => {
+    const countLimited = await RestrictedBash.create({ rootDir: root, maxCommands: 2 });
+    expect((await countLimited.execute('echo one')).exitCode).toBe(0);
+    expect((await countLimited.execute('echo two')).exitCode).toBe(0);
+    const refused = await countLimited.execute('echo three');
+    expect(refused.stderr).toMatch(/command budget exhausted/);
+    expect(refused.breach).toBe('command-count');
+
+    const timeLimited = await RestrictedBash.create({ rootDir: root, maxTotalMs: 0 });
+    const timed = await timeLimited.execute('echo never');
+    expect(timed.stderr).toMatch(/time budget exhausted/);
+    expect(timed.breach).toBe('total-time');
   });
 
   it('reports unknown commands, cd, and output truncation instructively', async () => {

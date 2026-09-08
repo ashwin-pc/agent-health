@@ -16,6 +16,8 @@ export interface EvidenceBashToolOptions {
   outputCapBytes?: number;
   quotaBytes?: number;
   quotaFiles?: number;
+  maxCommands?: number;
+  maxTotalMs?: number;
 }
 
 export function createEvidenceJudgeExtension(
@@ -50,7 +52,7 @@ export function createEvidenceJudgeExtension(
         const result = await (await bash).execute(params.command);
         return {
           content: [{ type: 'text' as const, text: result.text }],
-          details: { stdout: result.stdout, stderr: result.stderr, exitCode: result.exitCode },
+          details: { stdout: result.stdout, stderr: result.stderr, exitCode: result.exitCode, ...(result.breach ? { resourceBreach: result.breach } : {}) },
         };
       },
     });

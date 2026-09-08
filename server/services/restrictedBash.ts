@@ -65,6 +65,8 @@ export interface RestrictedBashOptions {
   quotaFiles?: number;
   maxFileBytes?: number;
   maxInputBytes?: number;
+  maxCommands?: number;
+  maxTotalMs?: number;
   onCommand?: (command: string) => void;
 }
 
@@ -73,6 +75,7 @@ export interface BashExecutionResult {
   stderr: string;
   exitCode: number;
   text: string;
+  breach?: 'timeout' | 'command-count' | 'total-time' | 'output';
 }
 
 type Operator = ';' | '&&' | '||';
@@ -217,6 +220,10 @@ export class RestrictedBash {
   private readonly quotaFiles: number;
   private readonly maxFileBytes: number;
   private readonly maxInputBytes: number;
+  private readonly maxCommands: number;
+  private readonly maxTotalMs: number;
+  private commandCount = 0;
+  private totalElapsedMs = 0;
   private readonly onCommand?: (command: string) => void;
   private readonly mounts: ReadonlyMap<string, ResolvedMount>;
 
@@ -233,6 +240,8 @@ export class RestrictedBash {
     this.quotaFiles = options.quotaFiles ?? DEFAULT_QUOTA_FILES;
     this.maxFileBytes = options.maxFileBytes ?? DEFAULT_MAX_FILE_BYTES;
     this.maxInputBytes = options.maxInputBytes ?? DEFAULT_MAX_INPUT_BYTES;
+    this.maxCommands = options.maxCommands ?? 200;
+    this.maxTotalMs = options.maxTotalMs ?? 60_000;
     this.onCommand = options.onCommand;
     this.mounts = mounts;
   }
@@ -251,6 +260,7 @@ export class RestrictedBash {
         if (stat.nlink > 1) throw new Error(`restricted bash: hard-linked mount files are not allowed: ${candidate}`);
         identities.set(await fs.realpath(candidate), RestrictedBash.identity(stat));
       } else if (stat.isDirectory()) {
+        identities.set(await fs.realpath(candidate), RestrictedBash.identity(stat));
         for (const entry of await fs.readdir(candidate)) await visit(path.join(candidate, entry));
       } else throw new Error(`restricted bash: mount entries must be regular files or directories: ${candidate}`);
     };
@@ -370,7 +380,10 @@ export class RestrictedBash {
     if (!RestrictedBash.inside(mount.sourceRoot, real) || real !== path.resolve(mount.sourcePath)) {
       throw new Error(`restricted bash: mounted workspace path escapes its root: ${mount.virtualPath}`);
     }
-    if (stat.isFile() && (stat.nlink > 1 || mount.identities.get(real) !== RestrictedBash.identity(stat))) {
+    if (mount.identities.get(real) !== RestrictedBash.identity(stat)) {
+      throw new Error(`restricted bash: mounted workspace entry is not an allowed snapshot inode: ${mount.virtualPath}`);
+    }
+    if (stat.isFile() && stat.nlink > 1) {
       throw new Error(`restricted bash: mounted workspace file is not an allowed snapshot inode: ${mount.virtualPath}`);
     }
     return real;
@@ -410,7 +423,7 @@ export class RestrictedBash {
         if (mount?.kind === 'file' && mount.identities.get(source) !== RestrictedBash.identity(opened)) {
           throw new Error('restricted bash: mounted source inode changed while opening');
         }
-        if (mount?.kind === 'directory' && mount.identities.get(source) !== RestrictedBash.identity(opened)) {
+        if (mount?.kind === 'directory' && (opened.nlink > 1 || mount.identities.get(source) !== RestrictedBash.identity(opened))) {
           throw new Error('restricted bash: mounted workspace inode changed while opening');
         }
         return await handle.readFile('utf8');
@@ -483,6 +496,10 @@ export class RestrictedBash {
 
   async execute(command: string): Promise<BashExecutionResult> {
     this.onCommand?.(command);
+    if (this.commandCount >= this.maxCommands) return this.budgetFailure(`restricted bash: judgment command budget exhausted (${this.maxCommands})`, 'command-count');
+    if (this.totalElapsedMs >= this.maxTotalMs) return this.budgetFailure(`restricted bash: judgment time budget exhausted (${this.maxTotalMs}ms)`, 'total-time');
+    this.commandCount++;
+    const started = Date.now();
     const parsed = parseRestrictedCommand(command);
     if (this.timeoutMs <= 0) {
       const result = fail(`restricted bash: command timed out after ${this.timeoutMs}ms`, 2);
@@ -502,8 +519,14 @@ export class RestrictedBash {
       const capped = this.capOutput(result.stdout, result.stderr);
       return { ...result, ...capped, text: this.render(capped.stdout, capped.stderr, result.exitCode) };
     } finally {
+      this.totalElapsedMs += Date.now() - started;
       if (timer) clearTimeout(timer);
     }
+  }
+
+  private budgetFailure(message: string, breach: BashExecutionResult['breach']): BashExecutionResult {
+    const result = fail(message, 2);
+    return { ...result, text: this.render(result.stdout, result.stderr, result.exitCode), breach };
   }
 
   private capOutput(stdout: string, stderr: string): { stdout: string; stderr: string } {
@@ -954,11 +977,11 @@ export class RestrictedBash {
         })();
       `, { eval: true, workerData: { input, query, flags } });
       let settled = false;
-      const finish = (result: CommandResult) => {
+      const finish = async (result: CommandResult) => {
         if (settled) return;
         settled = true;
         clearTimeout(timer);
-        void worker.terminate();
+        await worker.terminate();
         resolve(result);
       };
       const timer = setTimeout(
