@@ -585,13 +585,28 @@ export class RestrictedBash {
       let worker: Worker | undefined;
       worker = new Worker(`
         const { workerData } = require('node:worker_threads');
-        import(workerData.moduleUrl).catch((error) => { throw error; });
+        if (workerData.modulePath.endsWith('.ts')) {
+          // Source-level tests run on Node 18/20/22. Compile this one module
+          // directly instead of depending on version-sensitive ESM loaders.
+          const fs = require('node:fs');
+          const Module = require('node:module');
+          const ts = require('typescript');
+          const compiled = ts.transpileModule(fs.readFileSync(workerData.modulePath, 'utf8'), {
+            compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, esModuleInterop: true },
+          }).outputText;
+          const loaded = new Module(workerData.modulePath);
+          loaded.filename = workerData.modulePath;
+          loaded.paths = Module._nodeModulePaths(require('node:path').dirname(workerData.modulePath));
+          loaded._compile(compiled, workerData.modulePath);
+        } else {
+          import(workerData.moduleUrl).catch((error) => { throw error; });
+        }
       `, {
         eval: true,
-        execArgv: SELF_IS_TS ? ['--loader', 'ts-node/esm'] : [],
         workerData: {
           restrictedBashWorker: true,
           moduleUrl: SELF_MODULE_URL,
+          modulePath: fileURLToPath(SELF_MODULE_URL),
           rootDir: this.rootDir,
           mounts: this.mounts,
           options: {

@@ -11,8 +11,15 @@ import { parseRestrictedCommand, RestrictedBash } from '@/server/services/restri
 let root: string;
 let bash: RestrictedBash;
 
-beforeEach(async () => {
+beforeAll(async () => {
   root = await fs.mkdtemp(path.join(os.tmpdir(), 'restricted-bash-test-'));
+  await fs.mkdir(path.join(root, 'scratch'));
+  bash = await RestrictedBash.create({ rootDir: root, timeoutMs: 5000, quotaBytes: 100, quotaFiles: 2 });
+});
+
+beforeEach(async () => {
+  await fs.rm(path.join(root, 'evidence'), { recursive: true, force: true });
+  await fs.rm(path.join(root, 'scratch'), { recursive: true, force: true });
   await fs.mkdir(path.join(root, 'evidence', 'nested'), { recursive: true });
   await fs.mkdir(path.join(root, 'scratch'));
   await fs.writeFile(path.join(root, 'evidence', 'words.txt'), 'pear\napple\napple\nBANANA\n');
@@ -23,10 +30,9 @@ beforeEach(async () => {
     { type: 'action', toolName: 'read' },
     { type: 'response', content: 'done' },
   ]));
-  bash = await RestrictedBash.create({ rootDir: root, timeoutMs: 5000, quotaBytes: 100, quotaFiles: 2 });
 });
 
-afterEach(async () => {
+afterAll(async () => {
   await fs.rm(root, { recursive: true, force: true });
 });
 
