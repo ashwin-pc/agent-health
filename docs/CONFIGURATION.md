@@ -388,3 +388,5 @@ This shows:
 - AWS credentials
 - Storage configuration
 - Available agents and connectors
+
+> **Agent-judge workspace evidence is a live read-only reference, not a byte snapshot or mount namespace.** Mount creation snapshots allowed `(dev, ino)` identities; symlinks and files with `nlink > 1` are rejected, and every open repeats `O_NOFOLLOW`/`fstat` identity and link-count checks. A same-UID process controlling the source workspace can still delete or replace entries between commands; replacements are denied rather than silently becoming new allowed evidence.

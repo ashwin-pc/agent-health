@@ -126,7 +126,7 @@ export function composeAgentTraceToolAddendum(state: AgentTraceJudgePromptState)
 
   let traceSection: string;
   if (!state.traceDataExists) {
-    traceSection = 'no trace data exists for this run — judge from trajectory evidence';
+    traceSection = '## No trace-query tools available\n\nThe agent is not instrumented with OpenTelemetry. No trace tools available for this run: no trace data exists for this run — judge from trajectory evidence. Judge strictly from trajectory evidence and do not claim span/log verification.';
   } else if (state.traceMode === 'file') {
     const files = traceFiles.map((entry) => `\`${entry}\``).join(' and ');
     traceSection = `Trace data is mounted directly from the canonical file store as ${files}; these virtual entries are read-only and are not copies.\n\nTrace/trajectory join example:\n- \`jq -s '.[0] as $steps | .[1:] | map({spanId, name, tool: ."gen_ai.tool.name"}) as $spans | {trajectorySteps: ($steps|length), spans: $spans}' evidence/trajectory.json evidence/spans.ndjson\``;
@@ -213,13 +213,16 @@ function bedrockBaseId(id: string): string {
  */
 export function buildAgentTraceJudgeSystemPrompt(
   evaluator: { systemPrompt?: string } | undefined,
-  state: AgentTraceJudgePromptState
+  state: AgentTraceJudgePromptState | boolean = true
 ): string {
+  const resolvedState: AgentTraceJudgePromptState = typeof state === 'boolean'
+    ? { registeredTools: state ? ['bash', 'query_spans', 'query_logs'] : ['bash'], evidenceEntries: [], traceMode: state ? 'cluster' : 'unknown', traceDataExists: state }
+    : state;
   const baseSystemPrompt =
     evaluator?.systemPrompt && evaluator.systemPrompt.trim().length > 0
       ? evaluator.systemPrompt
       : DEFAULT_AGENT_TRACE_JUDGE_BASE_PROMPT;
-  return baseSystemPrompt + composeAgentTraceToolAddendum(state);
+  return baseSystemPrompt + composeAgentTraceToolAddendum(resolvedState);
 }
 
 /**
@@ -300,7 +303,8 @@ export function extractFinalAssistantText(messages: any[]): string {
  */
 export async function evaluateWithPiAgenticTrace(
   request: JudgeRequest,
-  evaluator?: Evaluator
+  evaluator?: Evaluator,
+  traceToolsAvailable: boolean = true
 ): Promise<JudgeResponse> {
   const { trajectory, expectedOutcomes, expectedTrajectory, logs, runId, agents } = request;
 
@@ -318,7 +322,7 @@ export async function evaluateWithPiAgenticTrace(
   const keepEvidence =
     request.keepEvidence === true ||
     ['1', 'true', 'yes'].includes(String(process.env.AH_JUDGE_KEEP_EVIDENCE ?? '').toLowerCase());
-  const useClusterTraceTools = evidence.trace.mode === 'cluster' && evidence.trace.exists && !!runId;
+  const useClusterTraceTools = traceToolsAvailable && evidence.trace.mode === 'cluster' && evidence.trace.exists && !!runId;
   const registeredTools = useClusterTraceTools
     ? ['bash', 'query_spans', 'query_logs']
     : ['bash'];
@@ -406,7 +410,7 @@ export async function evaluateWithPiAgenticTrace(
         toolCalls: bashCommands.map((command) => ({ tool: 'bash', command })),
       };
     }
-    return { ...parsed, improvementStrategies: [] };
+    return { ...parsed, improvementStrategies: [], judgeMode: traceToolsAvailable ? 'trace-tools' : 'trajectory-only' };
   } finally {
     if (keepEvidence) {
       console.info(`[AgentJudge] Keeping evidence directory: ${evidence.rootDir}`);

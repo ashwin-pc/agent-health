@@ -736,7 +736,8 @@ describe('Judge Routes', () => {
       expect(res.status).not.toHaveBeenCalledWith(400);
       expect(mockEvaluateWithPiAgenticTrace).toHaveBeenCalledWith(
         expect.objectContaining({ runId: undefined, trajectory: expect.any(Array) }),
-        expect.objectContaining({ id: 'custom-trace-eval' })
+        expect.objectContaining({ id: 'custom-trace-eval' }),
+        expect.any(Boolean)
       );
       expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ passFailStatus: 'passed' }));
     });
@@ -763,7 +764,8 @@ describe('Judge Routes', () => {
       expect(res.status).not.toHaveBeenCalledWith(400);
       expect(mockEvaluateWithPiAgenticTrace).toHaveBeenCalledWith(
         expect.objectContaining({ runId: 'run-abc-123' }),
-        expect.objectContaining({ id: 'custom-trace-eval' }) // Saved evaluator
+        expect.objectContaining({ id: 'custom-trace-eval' }), // Saved evaluator
+        true
       );
       expect(res.json).toHaveBeenCalledWith(
         expect.objectContaining({ passFailStatus: 'passed' })
@@ -798,7 +800,8 @@ describe('Judge Routes', () => {
 
       expect(mockEvaluateWithPiAgenticTrace).toHaveBeenCalledWith(
         expect.objectContaining({ evidenceContext: expect.objectContaining({ agentKey: 'test-agent' }) }),
-        expect.anything()
+        expect.anything(),
+        expect.any(Boolean)
       );
     });
 
@@ -826,7 +829,8 @@ describe('Judge Routes', () => {
         expect.objectContaining({
           evidenceContext: expect.objectContaining({ workspaceDir: undefined }),
         }),
-        expect.objectContaining({ id: 'custom-trace-eval' })
+        expect.objectContaining({ id: 'custom-trace-eval' }),
+        expect.any(Boolean)
       );
     });
 
@@ -868,7 +872,8 @@ describe('Judge Routes', () => {
       expect(res.status).not.toHaveBeenCalledWith(403);
       expect(mockEvaluateWithPiAgenticTrace).toHaveBeenCalledWith(
         expect.objectContaining({ runId: 'run-OWN' }),
-        expect.objectContaining({ id: 'custom-trace-eval' }) // Saved evaluator
+        expect.objectContaining({ id: 'custom-trace-eval' }), // Saved evaluator
+        true
       );
     });
   });

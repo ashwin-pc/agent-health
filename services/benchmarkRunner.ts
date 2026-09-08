@@ -23,18 +23,26 @@ import {
 } from '@/server/services/storage';
 import type { Client } from '@opensearch-project/opensearch';
 import type { IStorageModule } from '@/server/adapters/types';
-import { runEvaluationWithConnector, callBedrockJudge, invokeAgent, computeSdkMatcherSessionMetrics } from './evaluation';
+import {
+  runEvaluationWithConnector,
+  callBedrockJudge,
+  invokeAgent,
+  computeSdkMatcherSessionMetrics,
+  stampObjectiveActuals,
+  appendNotReachedMarker,
+} from './evaluation';
 import { buildEvaluatorErrorPatch } from './evaluation/evaluatorError';
 import { connectorRegistry } from '@/services/connectors/server';
 import { readEnv } from '@/lib/envCompat';
-import { buildJudgeAgentsHints } from '@/services/traces/judgeAgentsHints';
+import { buildJudgeAgentsHints, resolveJudgeRunId } from '@/services/traces/judgeAgentsHints';
+import { extractJudgeFailureReason, computeJudgeFailureSummary } from '@/lib/judgeFailureSummary';
 import {
   runInSession,
   recordVerdict,
   emptyTracesAccessor,
   unavailableTracesAccessor,
   buildTracesAccessor,
-  buildJudgeMatcherEntries,
+  buildJudgeMatcherEntry,
   formatExpectedOutcomesAsClaim,
 } from '@/lib/matchers/index';
 import type { TracesAccessor } from '@/lib/matchers/index';
@@ -384,8 +392,8 @@ export async function executeRun(
             );
             const tracesView: TracesAccessor = {
               get totalTokens() { return loadedTraces.totalTokens; },
-              get costSource() { return loadedTraces.costSource; },
               get totalCost() { return loadedTraces.totalCost; },
+              get costSource() { return loadedTraces.costSource; },
               get toolCalls() { return loadedTraces.toolCalls; },
               get spans() { return loadedTraces.spans; },
               spanDuration: (name: string) => loadedTraces.spanDuration(name),
@@ -516,6 +524,15 @@ export async function executeRun(
             // labelled `errored` run, not a silent `failed` with an empty card.
             const agentFailed = evalError !== undefined && capturedResult === undefined;
             const failed = anyGateFailed || evalError !== undefined;
+            // ALWAYS-RECORD (owner-hit measurement-harness bug): mirrors the same
+            // fix in evaluationRunner.ts — stamp the objective totalTokens/
+            // totalCostUsd actuals (durationMs already survives a later throw,
+            // stamped inside invoke() above) and append a synthetic `notReached`
+            // marker for the tail of the test that never ran. See
+            // stampObjectiveActuals()/appendNotReachedMarker() in
+            // services/evaluation/index.ts and docs/SDK.md "Always-record guarantee".
+            stampObjectiveActuals((report as any).performanceMetrics, loadedTraces, capturedResult !== undefined);
+            appendNotReachedMarker(matcherResults, evalError, agentFailed);
             (report as any).evaluationType = 'deterministic';
             (report as any).matcherResults = matcherResults;
             if (evalError !== undefined) {
@@ -857,6 +874,9 @@ async function saveReportWithModule(storage: IStorageModule, report: any): Promi
     traceError: report.traceError,
     spans: report.spans,
     connectorProtocol: report.connectorProtocol,
+    // Set only by the agent (trace) judge provider -- see
+    // JudgeResponse.judgeMode / TestCaseRun.judgeMode.
+    judgeMode: report.judgeMode,
   } as any);
   return { ...report, id: saved.id, timestamp: saved.timestamp };
 }
@@ -978,6 +998,9 @@ export async function runSingleUseCase(
       traceError: report.traceError,
       spans: report.spans,
       connectorProtocol: report.connectorProtocol,
+      // Set only by the agent (trace) judge provider -- see
+      // JudgeResponse.judgeMode / TestCaseRun.judgeMode.
+      judgeMode: (report as any).judgeMode,
     } as Partial<TestCaseRun>;
     const updated = await storage.runs.update(existingReportId, updates);
     savedReport = { ...report, id: updated.id, timestamp: updated.timestamp };
@@ -1080,8 +1103,11 @@ export function startTracePollingForReportWithModule(report: EvaluationReport, t
             () => {}, // No progress callback needed
             judgeModelId,
             report.evaluatorId,
-            // Forward report.runId so the agent (trace) judge can scope.
-            report.runId,
+            // Forward report.runId so the agent (trace) judge can scope;
+            // fall back to the eval's own traceId, then the report's own id,
+            // when the connector never returns a native runId (REST agents
+            // — see resolveJudgeRunId doc comment / #trace-poll-fix).
+            resolveJudgeRunId(report),
             // Strategy C correlation hints (#264).
             buildJudgeAgentsHints(report, agentConfig?.traceServiceName)
           );
@@ -1093,12 +1119,16 @@ export function startTracePollingForReportWithModule(report: EvaluationReport, t
             passFailStatus: judgment.passFailStatus,
             metrics: judgment.metrics,
             llmJudgeReasoning: judgment.llmJudgeReasoning,
-            // One matcher per expected outcome when available, aggregate otherwise.
-            matcherResults: buildJudgeMatcherEntries(judgment, {
-              claim: formatExpectedOutcomesAsClaim(testCase.expectedOutcomes),
-              model: judgeModelId,
-              expectedOutcomes: testCase.expectedOutcomes,
-            }),
+            // Set only by the agent (trace) judge provider -- see
+            // JudgeResponse.judgeMode / TestCaseRun.judgeMode.
+            ...(judgment.judgeMode ? { judgeMode: judgment.judgeMode } : {}),
+            // Unified judge surface (issue #230 follow-up).
+            matcherResults: [
+              buildJudgeMatcherEntry(judgment, {
+                claim: formatExpectedOutcomesAsClaim(testCase.expectedOutcomes),
+                model: judgeModelId,
+              }),
+            ],
             improvementStrategies: judgment.improvementStrategies,
             // Persist the full judge sidecar (rawResponse, parsedMetrics,
             // extraFields, judgeDebug, ...) so the run-detail Judge
@@ -1204,7 +1234,9 @@ function startTracePollingForReport(report: EvaluationReport, testCase: TestCase
             () => {},
             judgeModelId,
             report.evaluatorId,
-            report.runId,
+            // See resolveJudgeRunId: falls back to traceId/report.id when
+            // the REST connector never returned a native runId.
+            resolveJudgeRunId(report),
             buildJudgeAgentsHints(report, agentConfig?.traceServiceName)
           );
           await updateRunWithClient(client, report.id, {
@@ -1213,12 +1245,16 @@ function startTracePollingForReport(report: EvaluationReport, testCase: TestCase
             passFailStatus: judgment.passFailStatus,
             metrics: judgment.metrics,
             llmJudgeReasoning: judgment.llmJudgeReasoning,
-            // One matcher per expected outcome when available, aggregate otherwise.
-            matcherResults: buildJudgeMatcherEntries(judgment, {
-              claim: formatExpectedOutcomesAsClaim(testCase.expectedOutcomes),
-              model: judgeModelId,
-              expectedOutcomes: testCase.expectedOutcomes,
-            }),
+            // Set only by the agent (trace) judge provider -- see
+            // JudgeResponse.judgeMode / TestCaseRun.judgeMode.
+            ...(judgment.judgeMode ? { judgeMode: judgment.judgeMode } : {}),
+            // Unified judge surface (issue #230 follow-up).
+            matcherResults: [
+              buildJudgeMatcherEntry(judgment, {
+                claim: formatExpectedOutcomesAsClaim(testCase.expectedOutcomes),
+                model: judgeModelId,
+              }),
+            ],
             improvementStrategies: judgment.improvementStrategies,
             // Same fix as the storage-module path above — persist the
             // full judge sidecar (rawResponse, parsedMetrics, extraFields,
@@ -1300,6 +1336,7 @@ async function refreshBenchmarkRunStats(
 
     let passed = 0, failed = 0, pending = 0, errored = 0;
     const total = Object.keys(targetRun.results || {}).length;
+    const judgeFailureReasons: Array<string | undefined> = [];
 
     for (const rid of reportIds) {
       try {
@@ -1311,10 +1348,12 @@ async function refreshBenchmarkRunStats(
         } else if (ms === 'error') {
           // Evaluator failed to produce a verdict (issue #242).
           errored++;
+          judgeFailureReasons.push(extractJudgeFailureReason(report as any));
         } else if (report.passFailStatus === 'passed') {
           passed++;
         } else {
           failed++;
+          judgeFailureReasons.push(extractJudgeFailureReason(report as any));
         }
       } catch {
         pending++;
@@ -1322,8 +1361,12 @@ async function refreshBenchmarkRunStats(
     }
     pending += total - reportIds.length;
 
+    const judgeFailureSummary = computeJudgeFailureSummary(judgeFailureReasons, total);
     await storage.benchmarks.updateRun(benchmarkId, targetRun.id, {
       stats: { passed, failed, pending, errored, total },
+      // `null` (not omitted) so a stale summary is CLEARED once retry-judgement
+      // or a trace-poll verdict resolves the cases (codex_review finding).
+      judgeFailureSummary: judgeFailureSummary ?? null,
     } as any);
   } catch (err) {
     console.warn(`[BenchmarkRunner] Failed to refresh stats for benchmark ${benchmarkId}:`, err instanceof Error ? err.message : err);

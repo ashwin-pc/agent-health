@@ -23,7 +23,7 @@ import { tracePollingManager } from '@/services/traces/tracePoller';
 import { asyncRunStorage } from '@/services/storage';
 import { callBedrockJudge } from '@/services/evaluation';
 import {
-  buildJudgeMatcherEntries,
+  buildJudgeMatcherEntry,
   formatExpectedOutcomesAsClaim,
 } from '@/lib/matchers/judgeAccessor';
 import { buildEvaluatorErrorPatch } from '@/services/evaluation/evaluatorError';
@@ -115,12 +115,16 @@ export function ensureTracePollingForReport(
             passFailStatus: judgment.passFailStatus,
             metrics: judgment.metrics,
             llmJudgeReasoning: judgment.llmJudgeReasoning,
-            // One matcher per expected outcome when available, aggregate otherwise.
-            matcherResults: buildJudgeMatcherEntries(judgment, {
-              claim: formatExpectedOutcomesAsClaim(testCase.expectedOutcomes),
-              model: judgeModelId,
-              expectedOutcomes: testCase.expectedOutcomes,
-            }),
+            // Set only by the agent (trace) judge provider -- see
+            // JudgeResponse.judgeMode / TestCaseRun.judgeMode.
+            ...(judgment.judgeMode ? { judgeMode: judgment.judgeMode } : {}),
+            // Unified judge surface (issue #230 follow-up).
+            matcherResults: [
+              buildJudgeMatcherEntry(judgment, {
+                claim: formatExpectedOutcomesAsClaim(testCase.expectedOutcomes),
+                model: judgeModelId,
+              }),
+            ],
             improvementStrategies: judgment.improvementStrategies,
           });
 

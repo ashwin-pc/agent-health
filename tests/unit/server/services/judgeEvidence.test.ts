@@ -81,7 +81,7 @@ describe('judge evidence bundle', () => {
       await expect(fs.lstat(path.join(bundle.evidenceDir, 'spans.ndjson'))).rejects.toMatchObject({ code: 'ENOENT' });
 
       const tools = new Map<string, any>();
-      createEvidenceJudgeExtension(bundle.rootDir, { mounts: bundle.mounts })(
+      createEvidenceJudgeExtension(bundle.rootDir, { mounts: bundle.mounts, timeoutMs: 10_000 })(
         { registerTool: (tool: any) => tools.set(tool.name, tool) } as any
       );
       const result = await tools.get('bash').execute('1', { command: "jq -s '.[0].spanId' evidence/spans.ndjson" });
@@ -112,7 +112,6 @@ describe('judge evidence bundle', () => {
     await fs.writeFile(path.join(workspace, 'nested', 'real.txt'), 'real\n');
     await fs.writeFile(path.join(workspace, 'large.bin'), '');
     await fs.truncate(path.join(workspace, 'large.bin'), 32 * 1024 * 1024);
-    await fs.symlink('/etc/passwd', path.join(workspace, 'link'));
     (global as any).fetch = jest.fn().mockResolvedValue({ ok: true, json: async () => ({ spans: [], logs: [] }) });
     const bundle = await buildJudgeEvidence({ ...request, evidenceContext: { ...request.evidenceContext, workspaceDir: workspace } }, 'http://localhost:4001');
     try {
@@ -131,11 +130,12 @@ describe('judge evidence bundle', () => {
       expect(physicalEntries.some((entry) => entry.startsWith('workspace'))).toBe(false);
 
       const tools = new Map<string, any>();
-      createEvidenceJudgeExtension(bundle.rootDir, { mounts: bundle.mounts })(
+      createEvidenceJudgeExtension(bundle.rootDir, { mounts: bundle.mounts, timeoutMs: 10_000 })(
         { registerTool: (tool: any) => tools.set(tool.name, tool) } as any
       );
       expect((await tools.get('bash').execute('1', { command: 'cat evidence/workspace/nested/real.txt' })).content[0].text)
         .toContain('real');
+      await fs.symlink('/etc/passwd', path.join(workspace, 'link'));
       expect((await tools.get('bash').execute('2', { command: 'cat evidence/workspace/link' })).content[0].text)
         .toMatch(/symlinks are not allowed/);
       expect((await tools.get('bash').execute('3', { command: 'echo changed > evidence/workspace/nested/real.txt' })).content[0].text)

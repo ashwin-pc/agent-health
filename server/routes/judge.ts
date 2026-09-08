@@ -16,6 +16,7 @@ import { evaluateWithLiteLLM, parseLiteLLMError } from '@/server/services/litell
 import { evaluateWithClaudeCode, parseClaudeCodeError } from '@/server/services/claudeCodeJudgeService';
 import { evaluateWithPi, parsePiError } from '@/server/services/piJudgeService';
 import { evaluateWithPiAgenticTrace } from '@/server/services/piAgenticJudgeService';
+import { hasTraceCorrelation } from '@/services/traces/judgeAgentsHints';
 import { evaluateWithAgenticJudge, parseAgenticJudgeError } from '@/server/services/agenticJudgeService';
 import { loadConfigSync } from '@/lib/config/index';
 import serverConfig from '@/server/config';
@@ -466,7 +467,7 @@ router.post('/api/judge', async (req: Request, res: Response) => {
         });
       }
       let trustedAgentKey: string | undefined;
-      if (runId) {
+      if (runId && evidenceContext) {
         const storage = getStorageModule();
         const runRecord = await storage.evaluationRuns.getById(runId);
         const reportRecord = runRecord ? null : await storage.runs.getById(runId);
@@ -509,7 +510,8 @@ router.post('/api/judge', async (req: Request, res: Response) => {
             : undefined,
           keepEvidence: config.judge?.keepEvidence === true,
         },
-        evaluator
+        evaluator,
+        hasTraceCorrelation(runId, agents)
       );
       return res.json(result);
     }
