@@ -106,8 +106,8 @@ describe('restricted commands — golden behavior', () => {
     expect((await run('echo abc | cut -c 2-3')).stdout).toBe('bc\n');
     expect((await run("echo abc | tr 'a-c' 'A-C'")).stdout).toBe('ABC\n');
     expect((await run("echo banana | tr -d 'a'")).stdout).toBe('bnn\n');
-    expect((await run("echo apple apple | sed 's/apple/pear/g'")).stdout).toBe('pear pear\n');
-    expect((await run("sed -n 'p' evidence/words.txt")).stderr).toMatch(/only s\/pattern/);
+    expect((await run("sed -n '2,3p' evidence/words.txt")).stdout).toBe('apple\napple\n');
+    expect((await run("sed 's/apple/pear/g' evidence/words.txt")).stderr).toMatch(/regex is disabled/);
   });
 
   it('runs real jq-wasm and composes a useful evidence pipeline', async () => {
@@ -161,7 +161,7 @@ describe('confinement and failure semantics', () => {
     await fs.writeFile(path.join(workspace, 'nested', 'events.ndjson'), '{"kind":"tool","ok":true}\n');
     await fs.writeFile(path.join(workspace, 'notes.txt'), 'alpha\nneedle\n');
     await fs.writeFile(sibling, 'SECRET\n');
-    await fs.symlink(sibling, path.join(workspace, 'escape-link'));
+
     // A sparse file proves mount creation does not copy or apply evidence-size
     // limits; individual commands retain their normal bounded-input limits.
     await fs.writeFile(path.join(workspace, 'large.bin'), '');
@@ -186,6 +186,7 @@ describe('confinement and failure semantics', () => {
       expect((await mounted.execute('cat evidence/workspace/../sibling-secret.txt')).stderr).toMatch(/path escape rejected/);
       expect((await mounted.execute('cat evidence/sibling-secret.txt')).stderr).toMatch(/no such file/);
       expect((await mounted.execute(`cat ${sibling}`)).stderr).toMatch(/outside judgment directory/);
+      await fs.symlink(sibling, path.join(workspace, 'escape-link'));
       expect((await mounted.execute('cat evidence/workspace/escape-link')).stderr).toMatch(/symlinks are not allowed/);
       expect((await mounted.execute('echo changed > evidence/workspace/notes.txt')).stderr)
         .toMatch(/writes are allowed only under scratch/);
@@ -214,7 +215,7 @@ describe('confinement and failure semantics', () => {
       await fs.rm(allowed);
       await fs.symlink(sibling, allowed);
       const swapped = await mounted.execute('cat evidence/spans.ndjson');
-      expect(swapped.stderr).toMatch(/no longer the exact allowed canonical file/);
+      expect(swapped.stderr).toMatch(/no longer the exact allowed inode/);
       expect(swapped.stdout).not.toContain('SECRET');
     } finally {
       await fs.rm(traceDir, { recursive: true, force: true });
@@ -233,13 +234,31 @@ describe('confinement and failure semantics', () => {
     expect((await run('echo c > scratch/three')).stderr).toMatch(/quota exceeded/);
   });
 
-  it('rejects pathological regexes before matching while allowing normal patterns', async () => {
-    const normal = await bash.execute("grep 'app.*' evidence/words.txt");
-    expect(normal.exitCode).toBe(0);
+  it.each(['(a|b){1,10}{1,10}', '(a+)+', '(a|aa)+$'])(
+    'treats catastrophic grep/rg patterns as fixed strings: %s', async (pattern) => {
+      const started = Date.now();
+      for (const engine of ['grep', 'rg']) {
+        const result = await bash.execute(`${engine} '${pattern}' evidence/words.txt`);
+        expect(result.exitCode).toBe(1);
+      }
+      expect(Date.now() - started).toBeLessThan(500);
+    }
+  );
 
-    const pathological = await bash.execute("grep '(a+)+' evidence/words.txt");
-    expect(pathological.exitCode).toBe(2);
-    expect(pathological.stderr).toMatch(/nested quantifiers.*-F/);
+  it('rejects every regex flag and sed substitution structurally', async () => {
+    for (const command of ["grep -E '(a+)+' evidence/words.txt", "grep -P x evidence/words.txt", "rg -G x evidence/words.txt", "sed 's/(a+)+/x/' evidence/words.txt"]) {
+      expect((await bash.execute(command)).stderr).toMatch(/regex.*disabled|regex flags are disabled/);
+    }
+  });
+
+  it('rejects encoded traversal and hard-linked mounted files', async () => {
+    expect((await run('cat evidence/%2e%2e/secret')).stderr).toMatch(/path escape rejected/);
+    const outside = path.join(root, 'outside-file');
+    const alias = path.join(root, 'alias-file');
+    await fs.writeFile(outside, 'secret');
+    await fs.link(outside, alias);
+    await expect(RestrictedBash.create({ rootDir: root, mounts: [{ virtualPath: 'evidence/alias', sourcePaths: [alias] }] }))
+      .rejects.toThrow(/hard-linked/);
   });
 
   it('rejects oversized files before reading them into memory', async () => {

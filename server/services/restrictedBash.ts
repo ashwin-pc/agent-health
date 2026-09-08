@@ -6,12 +6,13 @@
 /**
  * A deliberately small, in-process shell used by the evidence judge.
  *
- * This is NOT a process launcher. It parses a fixed shell subset and implements
+ * This never launches operating-system processes. It parses a fixed shell subset and implements
  * every command below with Node APIs (plus jq-wasm). Paths are confined to one
  * judgment directory and writes are confined further to scratch/.
  */
 
 import * as fs from 'node:fs/promises';
+import { constants as fsConstants } from 'node:fs';
 import * as path from 'node:path';
 import { Worker } from 'node:worker_threads';
 
@@ -22,12 +23,11 @@ export const RESTRICTED_COMMANDS = [
 
 const AVAILABLE = RESTRICTED_COMMANDS.join(', ');
 const DEFAULT_OUTPUT_CAP = 50 * 1024;
-const DEFAULT_TIMEOUT_MS = 10_000;
+const DEFAULT_TIMEOUT_MS = 2_000;
 const DEFAULT_QUOTA_BYTES = 100 * 1024 * 1024;
 const DEFAULT_QUOTA_FILES = 500;
 const DEFAULT_MAX_FILE_BYTES = 10 * 1024 * 1024;
 const DEFAULT_MAX_INPUT_BYTES = 25 * 1024 * 1024;
-const MAX_REGEX_LENGTH = 512;
 
 export interface RestrictedBashMount {
   /** Virtual, root-relative read path (for example evidence/spans.ndjson). */
@@ -44,12 +44,14 @@ type FileMount = {
   virtualPath: string;
   virtualAbs: string;
   sourcePaths: readonly string[];
+  identities: ReadonlyMap<string, string>;
 };
 type DirectoryMount = {
   kind: 'directory';
   virtualPath: string;
   virtualAbs: string;
   sourceRoot: string;
+  identities: ReadonlyMap<string, string>;
 };
 type ResolvedMount = FileMount | DirectoryMount;
 type MountedPath = FileMount | (DirectoryMount & { sourcePath: string });
@@ -202,16 +204,6 @@ function splitLines(text: string): string[] {
 }
 function withFinalNewline(lines: string[]): string { return lines.length ? `${lines.join('\n')}\n` : ''; }
 function regexEscape(value: string): string { return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
-function validateRegex(pattern: string): void {
-  if (pattern.length > MAX_REGEX_LENGTH) {
-    throw new Error(`restricted bash: regex exceeds ${MAX_REGEX_LENGTH} characters; use a shorter expression or -F`);
-  }
-  // Reject the common catastrophic-backtracking shape: a quantified group
-  // containing another unbounded quantifier, e.g. (a+)+ or (.*)*.
-  if (/\((?:[^()\\]|\\.)*[*+](?:[^()\\]|\\.)*\)(?:[*+]|\{\d*,?\d*\})/.test(pattern)) {
-    throw new Error('restricted bash: regex has nested quantifiers; use -F or a bounded expression');
-  }
-}
 function shellUnescapeSet(value: string): string {
   return value.replace(/\\n/g, '\n').replace(/\\t/g, '\t').replace(/\\r/g, '\r').replace(/\\(.)/g, '$1');
 }
@@ -243,6 +235,27 @@ export class RestrictedBash {
     this.maxInputBytes = options.maxInputBytes ?? DEFAULT_MAX_INPUT_BYTES;
     this.onCommand = options.onCommand;
     this.mounts = mounts;
+  }
+
+  private static identity(stat: { dev: number | bigint; ino: number | bigint }): string {
+    return `${stat.dev}:${stat.ino}`;
+  }
+
+  private static async snapshot(root: string): Promise<ReadonlyMap<string, string>> {
+    const identities = new Map<string, string>();
+    const visit = async (candidate: string): Promise<void> => {
+      const stat = await fs.lstat(candidate);
+      if (stat.isSymbolicLink()) throw new Error(`restricted bash: symlinks are not allowed in mounts: ${candidate}`);
+      if (stat.isFile()) {
+        // Multiple directory entries for one inode make path-based policy ambiguous.
+        if (stat.nlink > 1) throw new Error(`restricted bash: hard-linked mount files are not allowed: ${candidate}`);
+        identities.set(await fs.realpath(candidate), RestrictedBash.identity(stat));
+      } else if (stat.isDirectory()) {
+        for (const entry of await fs.readdir(candidate)) await visit(path.join(candidate, entry));
+      } else throw new Error(`restricted bash: mount entries must be regular files or directories: ${candidate}`);
+    };
+    await visit(root);
+    return identities;
   }
 
   static async create(options: RestrictedBashOptions): Promise<RestrictedBash> {
@@ -280,20 +293,21 @@ export class RestrictedBash {
       if (sourceStats.length === 1 && sourceStats[0].stat?.isDirectory() && !sourceStats[0].stat?.isSymbolicLink()) {
         const sourceRoot = await fs.realpath(sourceStats[0].source);
         mounts.set(virtualAbs, {
-          kind: 'directory', virtualAbs, virtualPath: path.relative(rootDir, virtualAbs), sourceRoot,
+          kind: 'directory', virtualAbs, virtualPath: path.relative(rootDir, virtualAbs), sourceRoot, identities: await RestrictedBash.snapshot(sourceRoot),
         });
         continue;
       }
 
       const sourcePaths: string[] = [];
       for (const { source, stat } of sourceStats) {
+        if (stat?.isFile() && stat.nlink > 1) throw new Error(`restricted bash: hard-linked mount files are not allowed: ${source}`);
         if (!stat?.isFile() || stat.isSymbolicLink()) {
           throw new Error(`restricted bash: mount source must be regular non-symlink file(s), or one non-symlink directory: ${source}`);
         }
         sourcePaths.push(await fs.realpath(source));
       }
       mounts.set(virtualAbs, {
-        kind: 'file', virtualAbs, virtualPath: path.relative(rootDir, virtualAbs), sourcePaths,
+        kind: 'file', virtualAbs, virtualPath: path.relative(rootDir, virtualAbs), sourcePaths, identities: new Map(await Promise.all(sourcePaths.map(async source => [source, RestrictedBash.identity(await fs.stat(source))] as const))),
       });
     }
     return new RestrictedBash(options, rootDir, mounts);
@@ -309,7 +323,8 @@ export class RestrictedBash {
   }
 
   private rejectTraversal(input: string): void {
-    if (input.split(/[\\/]+/).includes('..')) throw new Error(`restricted bash: path escape rejected: ${input}`);
+    const decoded = input.replace(/%2e/gi, '.').replace(/%2f/gi, '/').replace(/%5c/gi, '\\');
+    if (decoded.split(/[\\/]+/).includes('..')) throw new Error(`restricted bash: path escape rejected: ${input}`);
   }
 
   /** Resolve exact file mounts or descendants of an explicitly mounted directory. */
@@ -336,8 +351,10 @@ export class RestrictedBash {
 
   private async validateFileMountSource(source: string): Promise<void> {
     const stat = await fs.lstat(source).catch(() => undefined);
-    if (!stat?.isFile() || stat.isSymbolicLink() || await fs.realpath(source).catch(() => undefined) !== source) {
-      throw new Error('restricted bash: mounted source is no longer the exact allowed canonical file');
+    const mount = [...this.mounts.values()].find((candidate): candidate is FileMount => candidate.kind === 'file' && candidate.sourcePaths.includes(source));
+    if (!stat?.isFile() || stat.isSymbolicLink() || stat.nlink > 1 || await fs.realpath(source).catch(() => undefined) !== source
+      || !mount || mount.identities.get(source) !== RestrictedBash.identity(stat)) {
+      throw new Error('restricted bash: mounted source is no longer the exact allowed inode');
     }
   }
 
@@ -352,6 +369,9 @@ export class RestrictedBash {
     const real = await fs.realpath(mount.sourcePath);
     if (!RestrictedBash.inside(mount.sourceRoot, real) || real !== path.resolve(mount.sourcePath)) {
       throw new Error(`restricted bash: mounted workspace path escapes its root: ${mount.virtualPath}`);
+    }
+    if (stat.isFile() && (stat.nlink > 1 || mount.identities.get(real) !== RestrictedBash.identity(stat))) {
+      throw new Error(`restricted bash: mounted workspace file is not an allowed snapshot inode: ${mount.virtualPath}`);
     }
     return real;
   }
@@ -382,7 +402,20 @@ export class RestrictedBash {
         throw new Error(`restricted bash: inputs exceed ${this.maxInputBytes} bytes; narrow the file set with find/head`);
       }
     }
-    return (await Promise.all(paths.map((source) => fs.readFile(source, 'utf8')))).join('');
+    return (await Promise.all(paths.map(async (source) => {
+      const handle = await fs.open(source, fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0));
+      try {
+        const opened = await handle.stat();
+        if (!opened.isFile()) throw new Error(`restricted bash: input is not a regular file: ${input}`);
+        if (mount?.kind === 'file' && mount.identities.get(source) !== RestrictedBash.identity(opened)) {
+          throw new Error('restricted bash: mounted source inode changed while opening');
+        }
+        if (mount?.kind === 'directory' && mount.identities.get(source) !== RestrictedBash.identity(opened)) {
+          throw new Error('restricted bash: mounted workspace inode changed while opening');
+        }
+        return await handle.readFile('utf8');
+      } finally { await handle.close(); }
+    }))).join('');
   }
 
   private async readPath(input: string): Promise<string> {
@@ -719,7 +752,7 @@ export class RestrictedBash {
   }
 
   private async grep(args: string[], stdin: string, rgMode: boolean): Promise<CommandResult> {
-    const opt = { insensitive: false, invert: false, count: false, numbers: false, files: false, fixed: false, recursive: rgMode, before: 0, after: 0, max: Infinity };
+    const opt = { insensitive: false, invert: false, count: false, numbers: false, files: false, fixed: true, recursive: rgMode, before: 0, after: 0, max: Infinity };
     const positional: string[] = [];
     const valueFlags: Record<string, keyof typeof opt> = { '-A': 'after', '-B': 'before', '-C': 'after', '-m': 'max' };
     for (let i = 0; i < args.length; i++) {
@@ -743,22 +776,22 @@ export class RestrictedBash {
           if (flag === 'i') opt.insensitive = true; else if (flag === 'v') opt.invert = true;
           else if (flag === 'c') opt.count = true; else if (flag === 'n') opt.numbers = true;
           else if (flag === 'l') opt.files = true; else if (flag === 'F') opt.fixed = true;
-          else if (flag === 'E') { /* JS regex already extended */ } else if (flag === 'r') opt.recursive = true;
+          else if (['E', 'G', 'P'].includes(flag)) throw new Error(`${rgMode ? 'rg' : 'grep'}: regex flags are disabled; use fixed strings (-F semantics)`);
+          else if (flag === 'r') opt.recursive = true;
           else throw new Error(`${rgMode ? 'rg' : 'grep'}: unsupported flag -${flag}`);
         }
       } else positional.push(arg);
     }
     const patternText = positional.shift();
     if (patternText === undefined) throw new Error(`${rgMode ? 'rg' : 'grep'}: missing pattern`);
-    if (!opt.fixed) validateRegex(patternText);
-    const pattern = new RegExp(opt.fixed ? regexEscape(patternText) : patternText, opt.insensitive ? 'i' : '');
+    const needle = opt.insensitive ? patternText.toLocaleLowerCase() : patternText;
     const files = await this.fileInputs(positional, stdin, opt.recursive);
     const multiple = files.filter((f) => f.name).length > 1 || opt.recursive;
     const output: string[] = [];
     let totalMatches = 0;
     for (const file of files) {
       const lines = splitLines(file.text);
-      const matched = lines.map((line) => opt.invert ? !pattern.test(line) : pattern.test(line));
+      const matched = lines.map((line) => { const yes = (opt.insensitive ? line.toLocaleLowerCase() : line).includes(needle); return opt.invert ? !yes : yes; });
       const indexes = matched.map((yes, index) => yes ? index : -1).filter((n) => n >= 0).slice(0, opt.max);
       totalMatches += indexes.length;
       if (opt.files) { if (indexes.length && file.name) output.push(file.name); continue; }
@@ -883,23 +916,14 @@ export class RestrictedBash {
   }
 
   private async sed(args: string[], stdin: string): Promise<CommandResult> {
-    if (args.length < 1) throw new Error('sed: missing expression');
-    const expression = args.shift()!;
-    if (!expression.startsWith('s') || expression.length < 4) throw new Error('sed: only s/pattern/replacement/flags is supported');
-    const delim = expression[1];
-    const parts: string[] = [];
-    let current = '';
-    for (let i = 2; i < expression.length; i++) {
-      if (expression[i] === '\\' && expression[i + 1] === delim) { current += delim; i++; }
-      else if (expression[i] === delim) { parts.push(current); current = ''; }
-      else current += expression[i];
-    }
-    parts.push(current);
-    if (parts.length !== 3 || /[^gi]/.test(parts[2])) throw new Error('sed: only s/pattern/replacement/[gi] is supported');
-    validateRegex(parts[0]);
-    const regex = new RegExp(parts[0], `${parts[2].includes('g') ? 'g' : ''}${parts[2].includes('i') ? 'i' : ''}`);
-    const files = await this.fileInputs(args, stdin);
-    return ok(files.map((f) => f.text.replace(regex, parts[1])).join(''));
+    if (args[0] !== '-n' || !args[1]) throw new Error("sed: regex is disabled; use sed -n 'N,Mp' for line ranges");
+    const match = args[1].match(/^(\d+)(?:,(\d+))?p$/);
+    if (!match) throw new Error("sed: only sed -n 'N,Mp' line ranges are supported; regex is disabled");
+    const first = Number(match[1]);
+    const last = Number(match[2] ?? match[1]);
+    if (first < 1 || last < first) throw new Error('sed: invalid line range');
+    const files = await this.fileInputs(args.slice(2), stdin);
+    return ok(withFinalNewline(splitLines(files.map((file) => file.text).join('')).slice(first - 1, last)));
   }
 
   private async jq(args: string[], stdin: string): Promise<CommandResult> {
@@ -911,8 +935,8 @@ export class RestrictedBash {
     const input = positional.length ? (await this.fileInputs(positional, stdin)).map((f) => f.text).join('\n') : stdin;
 
     // jq is real WebAssembly and a pathological filter can run without
-    // yielding to Node's event loop. Execute it in a worker THREAD (never a
-    // child process) so the deadline is enforceable and the computation can
+    // yielding to Node's event loop. Execute it in a worker THREAD (without creating an operating-system
+    // process) so the deadline is enforceable and the computation can
     // actually be terminated instead of merely racing a blocked promise.
     return await new Promise<CommandResult>((resolve) => {
       const worker = new Worker(`
