@@ -154,6 +154,12 @@ function completeAssessments(
  * All outcomes must be accounted for or the caller falls back to the single
  * reasoning block; partial/positional guesses would fabricate status marks.
  */
+function getLogLevelColor(level?: string): string {
+  if (level === 'ERROR') return 'text-red-600 dark:text-red-400';
+  if (level === 'WARN') return 'text-amber-600 dark:text-amber-400';
+  return 'text-muted-foreground';
+}
+
 export function parseOutcomeAssessments(reasoning: string, outcomeCount: number): OutcomeAssessment[] | null {
   if (!reasoning.trim() || outcomeCount <= 0) return null;
 
@@ -1602,11 +1608,7 @@ export const RunDetailsContent: React.FC<RunDetailsContentProps> = ({
                           <span className="text-xs text-muted-foreground whitespace-nowrap">
                             {new Date(log.timestamp).toLocaleTimeString()}
                           </span>
-                          <span className={`text-xs font-semibold ${
-                            log.level === 'ERROR' ? 'text-red-400' :
-                            log.level === 'WARN' ? 'text-yellow-400' :
-                            'text-muted-foreground'
-                          }`}>
+                          <span className={`text-xs font-semibold ${getLogLevelColor(log.level)}`}>
                             [{log.level || 'INFO'}]
                           </span>
                           <span className="text-sm flex-1 font-mono">{log.message}</span>
