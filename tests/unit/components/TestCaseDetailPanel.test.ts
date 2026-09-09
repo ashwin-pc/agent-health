@@ -13,13 +13,24 @@ import { describeFixturePayload, TestCaseDetailPanel } from '@/components/TestCa
 import type { TestCase } from '@/types';
 
 jest.mock('@/components/ui/markdown', () => ({
-  Markdown: ({ children }: { children: string }) => React.createElement(
-    'div',
-    null,
-    children.startsWith('**Authored**')
-      ? React.createElement('strong', null, 'Authored')
-      : children,
-  ),
+  Markdown: ({ children }: { children: string }) => {
+    const [heading, ...body] = children.split(/\n+/).filter(Boolean);
+    const bodyText = body.join(' ') || heading;
+    const bold = /\*\*([^*]+)\*\*/.exec(bodyText);
+    const inline = React.createElement(
+      'p',
+      null,
+      bold ? bodyText.slice(0, bold.index) : bodyText,
+      bold && React.createElement('strong', null, bold[1]),
+      bold ? bodyText.slice((bold.index || 0) + bold[0].length) : null,
+    );
+    return React.createElement(
+      React.Fragment,
+      null,
+      heading.startsWith('# ') ? React.createElement('h1', null, heading.slice(2)) : null,
+      inline,
+    );
+  },
 }));
 
 const dispositionTestCase = {
@@ -42,28 +53,6 @@ const dispositionTestCase = {
     { description: 'manifest', value: '**Authored** documentation', disposition: 'documentation' },
   ],
 } as TestCase;
-jest.mock('react-markdown', () => {
-  return function MockReactMarkdown({ children }: { children: string }) {
-    const [heading, ...body] = children.split(/\n+/).filter(Boolean);
-    const bodyText = body.join(' ');
-    const bold = /\*\*([^*]+)\*\*/.exec(bodyText);
-    return React.createElement(
-      React.Fragment,
-      null,
-      heading.startsWith('# ') ? React.createElement('h1', null, heading.slice(2)) : React.createElement('p', null, heading),
-      bodyText && React.createElement(
-        'p',
-        null,
-        bold ? bodyText.slice(0, bold.index) : bodyText,
-        bold && React.createElement('strong', null, bold[1]),
-        bold ? bodyText.slice((bold.index || 0) + bold[0].length) : null,
-      ),
-    );
-  };
-});
-
-jest.mock('remark-gfm', () => () => {});
-
 function makeTestCase(overrides: Partial<TestCase> = {}): TestCase {
   return {
     id: 'tc-fixture',
