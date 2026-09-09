@@ -39,7 +39,7 @@ afterAll(async () => {
 const run = (command: string) => bash.execute(command);
 
 describe('restricted parser', () => {
-  it('parses quoted args, pipelines, sequences, and redirects', () => {
+  it('parses quoted args, pipelines, sequences, redirects, and escaped characters', () => {
     expect(parseRestrictedCommand("grep -i 'hello world' evidence/a | sort && echo ok > scratch/out")).toEqual({
       first: [
         { argv: ['grep', '-i', 'hello world', 'evidence/a'], redirects: [] },
@@ -47,6 +47,8 @@ describe('restricted parser', () => {
       ],
       rest: [{ op: '&&', pipeline: [{ argv: ['echo', 'ok'], redirects: [{ kind: '>', path: 'scratch/out' }] }] }],
     });
+    expect(parseRestrictedCommand('echo "quoted \\"value\\"" plain\\ value').first[0].argv)
+      .toEqual(['echo', 'quoted "value"', 'plain value']);
   });
 
   it.each([
@@ -57,6 +59,7 @@ describe('restricted parser', () => {
     ['echo x &', /background/],
     ['cat evidence/*.json', /glob expansion/],
     ['echo "unterminated', /unterminated quote/],
+    ['echo trailing\\', /trailing escape/],
   ])('rejects unsupported syntax: %s', (command, message) => {
     expect(() => parseRestrictedCommand(command)).toThrow(message as RegExp);
   });
@@ -267,6 +270,55 @@ describe('confinement and failure semantics', () => {
       .rejects.toThrow(/hard-linked/);
   });
 
+  it('validates every mount declaration before exposing canonical evidence', async () => {
+    const source = path.join(root, 'evidence', 'words.txt');
+    const create = (...mounts: Array<{ virtualPath: string; sourcePaths: string[] }>) =>
+      RestrictedBash.create({ rootDir: root, mounts });
+
+    await expect(create({ virtualPath: '', sourcePaths: [source] })).rejects.toThrow(/invalid mount path/);
+    await expect(create({ virtualPath: 'scratch/trace', sourcePaths: [source] })).rejects.toThrow(/must be read-only/);
+    await expect(create(
+      { virtualPath: 'evidence/a', sourcePaths: [source] },
+      { virtualPath: 'evidence/a/nested', sourcePaths: [source] }
+    )).rejects.toThrow(/overlapping mount/);
+    await expect(create({ virtualPath: 'evidence/words.txt', sourcePaths: [source] })).rejects.toThrow(/shadows a physical entry/);
+    await expect(create({ virtualPath: 'missing/trace', sourcePaths: [source] })).rejects.toThrow(/mount parent/);
+    await expect(create({ virtualPath: 'evidence/empty', sourcePaths: [] })).rejects.toThrow(/has no sources/);
+    await expect(create({ virtualPath: 'evidence/directory-as-file', sourcePaths: [path.dirname(source), source] }))
+      .rejects.toThrow(/regular non-symlink file/);
+  });
+
+  it('keeps in-process execution unavailable outside the test environment', async () => {
+    const previous = process.env.NODE_ENV;
+    process.env.NODE_ENV = 'production';
+    try {
+      await expect(RestrictedBash.createForTesting({ rootDir: root })).rejects.toThrow(/only under the test environment/);
+    } finally {
+      process.env.NODE_ENV = previous;
+    }
+  });
+
+  it('reports invalid builtin options without escaping the interpreter', async () => {
+    const cases: Array<[string, RegExp]> = [
+      ['pwd extra', /too many arguments/],
+      ['ls -z evidence', /unsupported flag -z/],
+      ['find evidence -wat nope', /unsupported expression/],
+      ['grep -m nope apple evidence/words.txt', /requires a number/],
+      ['grep -q apple evidence/words.txt', /unsupported flag -q/],
+      ['grep', /missing pattern/],
+      ['head -n nope evidence/words.txt', /invalid count/],
+      ['wc -z evidence/words.txt', /unsupported flag -z/],
+      ['sort -z evidence/words.txt', /unsupported flag -z/],
+      ['uniq -z evidence/words.txt', /unsupported flag -z/],
+      ['cut evidence/words.txt', /specify exactly one/],
+      ['tr only-one-set', /expected tr/],
+    ];
+    for (const [command, error] of cases) {
+      const result = await run(command);
+      expect(result.exitCode).toBe(2);
+      expect(result.stderr).toMatch(error);
+    }
+  });
 
   it('rejects hardlinks within directory mounts both at snapshot and after mount', async () => {
     const workspace = await fs.mkdtemp(path.join(os.tmpdir(), 'restricted-hardlink-workspace-'));
