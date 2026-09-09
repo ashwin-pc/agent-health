@@ -4,14 +4,20 @@
  */
 
 import { createHash } from 'crypto';
-import { mkdtemp, mkdir, rm, writeFile } from 'fs/promises';
+import { mkdtemp, mkdir, rm, symlink, writeFile } from 'fs/promises';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import type { TestCase } from '@/types';
 import type { EvalResult, TestFixtures } from '@/lib/testCases/types';
 import { emptyTracesAccessor, runInSession } from '@/lib/matchers';
 import { expect as ahExpect } from '@/lib/matchers/expect';
-import { clearJudgeCache, judge } from '@/lib/testCases/judge';
+import { bindJudge, clearJudgeCache, judge } from '@/lib/testCases/judge';
+import {
+  expectedOutcomeText,
+  isDeclarativeExpectedOutcome,
+  judgedExpectedOutcomeTexts,
+  normalizeExpectedOutcomes,
+} from '@/lib/testCases/declarativeOutcomes';
 import {
   compareWorkspaceToManifest,
   compileDeclarativeTestCase,
@@ -165,5 +171,132 @@ describe('declarative case compiler', () => {
     expect(deriveMatcherSessionVerdict([
       { description: 'judge', pass: false, method: 'llm-judge', role: 'gate', errored: true },
     ])).toBe('errored');
+  });
+
+  it('records every batch outcome as skipped without calling the provider', async () => {
+    process.env.AH_SKIP_JUDGE = '1';
+    const compiled = compileDeclarativeTestCase(testCase({
+      expectedOutcomes: [
+        'required claim',
+        { outcome: 'observed claim', role: 'observe' },
+      ],
+    }));
+    const session = await runInSession(() => compiled(fixtures(result())));
+
+    expect(session.error).toBeUndefined();
+    expect(session.results).toEqual([
+      expect.objectContaining({ description: 'required claim (skipped)', pass: true, role: 'observe' }),
+      expect.objectContaining({ description: 'observed claim (skipped)', pass: true, role: 'observe' }),
+    ]);
+  });
+
+  it('falls back atomically when a provider returns malformed per-outcome data', async () => {
+    global.fetch = jest.fn(async () => ({
+      ok: true,
+      json: async () => ({
+        passFailStatus: 'passed',
+        metrics: { accuracy: 80 },
+        llmJudgeReasoning: 'aggregate fallback evidence',
+        outcomeResults: [{ outcome: 'wrong claim', pass: false, evidence: 'wrong row' }],
+      }),
+    })) as any;
+
+    const session = await runInSession(() => compileDeclarativeTestCase(testCase())(fixtures(result())));
+    expect(session.error).toBeUndefined();
+    expect(session.results).toEqual([
+      expect.objectContaining({
+        description: 'plain claim',
+        pass: true,
+        score: 0.8,
+        reasoning: 'aggregate fallback evidence',
+      }),
+    ]);
+  });
+
+  it('keeps batch semantics on a bound judge fixture', async () => {
+    global.fetch = jest.fn(async () => ({
+      ok: true,
+      json: async () => ({
+        passFailStatus: 'failed',
+        metrics: { accuracy: 0 },
+        llmJudgeReasoning: 'bound evidence',
+      }),
+    })) as any;
+    const bound = bindJudge({ model: 'judge-model', serverUrl: 'http://judge.example' });
+
+    const session = await runInSession(() => bound.batch(result(), [
+      { outcome: 'bound gate' },
+      { outcome: 'bound observation', role: 'observe' },
+    ]));
+    expect(session.error).toBeUndefined();
+    expect(session.results).toEqual([
+      expect.objectContaining({ description: 'bound gate', pass: false, role: 'gate' }),
+      expect.objectContaining({ description: 'bound observation', pass: false, role: 'observe' }),
+    ]);
+    expect(global.fetch).toHaveBeenCalledWith(
+      'http://judge.example/api/judge',
+      expect.objectContaining({ method: 'POST' }),
+    );
+  });
+
+  it('rejects missing compiler capabilities before producing a partial session', async () => {
+    const withoutAgent = fixtures(result());
+    withoutAgent.agent = undefined as any;
+    await expect(compileDeclarativeTestCase(testCase())(withoutAgent))
+      .rejects.toThrow(/requires the SDK agent fixture/);
+
+    const withoutBatch = fixtures(result());
+    withoutBatch.judge = jest.fn() as any;
+    await expect(compileDeclarativeTestCase(testCase())(withoutBatch))
+      .rejects.toThrow(/requires judge\.batch/);
+
+    const workspaceCase = testCase({
+      expectedOutcomes: [{ outcome: 'workspace exact', check: 'workspace-diff' }],
+      fixture: { payload: { manifest: { tree: [] } } },
+    });
+    await expect(compileDeclarativeTestCase(workspaceCase)(fixtures(result())))
+      .rejects.toThrow(/did not expose a final workspace directory/);
+    expect(() => compileDeclarativeTestCase(testCase({
+      expectedOutcomes: [{ outcome: 'workspace exact', check: 'workspace-diff' }],
+    }))).toThrow(/manifest\.tree is missing/);
+  });
+
+  it('rejects symbolic links while building a workspace manifest', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'ah-workspace-symlink-'));
+    try {
+      await writeFile(join(root, 'target.txt'), 'target');
+      await symlink('target.txt', join(root, 'link.txt'));
+      const compiled = compileDeclarativeTestCase(testCase({
+        expectedOutcomes: [{ outcome: 'workspace exact', check: 'workspace-diff' }],
+        fixture: { payload: { manifest: { tree: [] } } },
+      }));
+      await expect(compiled(fixtures(result({ workspaceDir: root }))))
+        .rejects.toThrow(/does not follow symbolic link/);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('normalizes declarative outcome forms and preserves the legacy read path', () => {
+    expect(expectedOutcomeText('  plain  ')).toBe('  plain  ');
+    expect(expectedOutcomeText({ outcome: 'object', role: 'observe' })).toBe('object');
+    expect(isDeclarativeExpectedOutcome('plain')).toBe(false);
+    expect(isDeclarativeExpectedOutcome({ outcome: 'object' })).toBe(true);
+    expect(normalizeExpectedOutcomes([
+      '  gate  ',
+      { outcome: ' observe ', role: 'observe' },
+      '   ',
+    ])).toEqual([
+      { outcome: 'gate', role: 'gate' },
+      { outcome: 'observe', role: 'observe' },
+    ]);
+    expect(judgedExpectedOutcomeTexts({
+      rootCauses: [' root ', 7],
+      requiredFacts: ['fact'],
+      ignored: 'not-an-array',
+    } as any)).toEqual(['root', 'fact']);
+    expect(() => normalizeExpectedOutcomes([
+      { outcome: 'trace claim', check: 'traces' } as any,
+    ])).toThrow(/reserved but not supported/);
   });
 });
