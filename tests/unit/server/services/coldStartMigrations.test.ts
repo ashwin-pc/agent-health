@@ -273,6 +273,37 @@ describe('migratePoisonedReportVerdicts', () => {
       traceStatus: 'unavailable',
     });
   });
+
+  it('records a page-read failure without aborting server startup', async () => {
+    const storage = {
+      runs: {
+        getAll: jest.fn().mockRejectedValue(new Error('reports unavailable')),
+        update: jest.fn(),
+      },
+    } as unknown as IStorageModule;
+
+    const stat = await migratePoisonedReportVerdicts(storage);
+    expect(stat).toMatchObject({ scanned: 0, updated: 0, errors: 1 });
+    expect(stat.notes).toEqual([expect.stringContaining('reports unavailable')]);
+  });
+
+  it('records one document update failure and continues with the page', async () => {
+    const failed = reportDoc({ id: 'failed-update' });
+    const updated = reportDoc({ id: 'updated' });
+    const storage = {
+      runs: {
+        getAll: jest.fn().mockResolvedValue({ items: [failed, updated], total: 2 }),
+        update: jest.fn(async (id: string) => {
+          if (id === 'failed-update') throw new Error('write denied');
+          return updated;
+        }),
+      },
+    } as unknown as IStorageModule;
+
+    const stat = await migratePoisonedReportVerdicts(storage);
+    expect(stat).toMatchObject({ scanned: 2, updated: 1, errors: 1 });
+    expect(stat.notes).toEqual([expect.stringContaining('update failed-update failed: write denied')]);
+  });
 });
 
 describe('runColdStartMigrations', () => {

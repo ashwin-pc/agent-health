@@ -506,6 +506,35 @@ describe('RunDetailsContent', () => {
       expect(screen.getByTestId('trajectory-view').getAttribute('data-highlighted-step')).toBe('2');
     });
 
+    it('opens a cited span in Traces and focuses it after on-demand loading', async () => {
+      const report = createReport({
+        passFailStatus: 'failed',
+        spans: mockSpans as any,
+        matcherResults: [{
+          description: 'Inspect the failing operation',
+          method: 'llm-judge',
+          pass: false,
+          score: 0,
+          reasoning: 'The failure is visible in [the database span](span:run-123:span-1).',
+        }],
+      });
+      mockGetReportById.mockResolvedValue(report);
+      mockGetTestCaseById.mockResolvedValue({
+        id: 'tc-1',
+        name: 'Span citation case',
+        expectedOutcomes: ['Inspect the failing operation'],
+      } as any);
+      mockFetchTracesForRun.mockResolvedValue({ spans: mockSpans, total: 1 } as any);
+
+      await renderAndWait(report);
+      fireEvent.click(screen.getByRole('button', { name: 'the database span' }));
+
+      await waitFor(() => {
+        expect(screen.getByRole('tab', { name: /Traces/ }).getAttribute('data-state')).toBe('active');
+        expect(mockFetchTracesForRun).toHaveBeenCalled();
+      });
+    });
+
     it('shows no per-outcome marks when the prose does not explicitly assess every outcome', async () => {
       const report = createReport({
         passFailStatus: 'failed',
