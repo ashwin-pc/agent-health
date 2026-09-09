@@ -47,7 +47,13 @@ export const RUN_SUMMARY_FIELDS = [
   'tags',
 ] as const;
 
-const RUN_SUMMARY_FIELD_SET = new Set<string>(RUN_SUMMARY_FIELDS);
+// Explicit batch projections may request a few larger fields that do not
+// belong in every list row. Keep them projectable without making them part of
+// the default RUN_SUMMARY_FIELDS payload.
+const RUN_PROJECTABLE_FIELD_SET = new Set<string>([
+  ...RUN_SUMMARY_FIELDS,
+  'llmJudgeReasoning',
+]);
 const MATCHER_REASONING_MAX_CHARS = 500;
 const MATCHER_TEXT_MAX_CHARS = 1_000;
 
@@ -82,7 +88,7 @@ function summarizeMatcherResults(value: unknown): unknown {
 export function getRunSummaryFields(requested?: readonly string[]): string[] {
   if (!requested?.length) return [...RUN_SUMMARY_FIELDS];
   return ['id', ...requested.filter((field, index) =>
-    field !== 'id' && RUN_SUMMARY_FIELD_SET.has(field) && requested.indexOf(field) === index
+    field !== 'id' && RUN_PROJECTABLE_FIELD_SET.has(field) && requested.indexOf(field) === index
   )];
 }
 
@@ -179,6 +185,7 @@ export function toEvaluationRunSummary(run: EvaluationRun): EvaluationRun {
     benchmarkId,
     benchmarkVersion,
     imageDigest,
+    judgeFailureSummary,
   } = run;
 
   return {
@@ -204,5 +211,6 @@ export function toEvaluationRunSummary(run: EvaluationRun): EvaluationRun {
     benchmarkId,
     benchmarkVersion,
     imageDigest,
+    judgeFailureSummary,
   };
 }

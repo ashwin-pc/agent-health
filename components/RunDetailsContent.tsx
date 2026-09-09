@@ -167,6 +167,12 @@ export const RunDetailsContent: React.FC<RunDetailsContentProps> = ({
       : {
           ...current,
           ...fresh,
+          // `core` detail responses intentionally omit heavyweight payloads,
+          // but toTestCaseRun normalizes an omitted trajectory to `[]`. Do not
+          // let that projection placeholder erase a full trajectory already
+          // supplied by the parent while the background core refresh lands.
+          trajectory: fresh.trajectory.length > 0 ? fresh.trajectory : current.trajectory,
+          rawEvents: fresh.rawEvents ?? current.rawEvents,
           llmJudgeResponse: current.llmJudgeResponse || fresh.llmJudgeResponse
             ? { ...current.llmJudgeResponse, ...fresh.llmJudgeResponse }
             : undefined,

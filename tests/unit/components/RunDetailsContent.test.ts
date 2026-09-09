@@ -121,7 +121,12 @@ jest.mock('react-router-dom', () => ({
 }));
 
 jest.mock('@/components/TrajectoryView', () => ({
-  TrajectoryView: () => React.createElement('div', { 'data-testid': 'trajectory-view' }),
+  TrajectoryView: ({ steps }: { steps: Array<{ content?: string }> }) =>
+    React.createElement(
+      'div',
+      { 'data-testid': 'trajectory-view' },
+      steps.map(step => step.content).filter(Boolean).join(' '),
+    ),
 }));
 
 jest.mock('@/components/RawEventsPanel', () => ({
@@ -563,6 +568,22 @@ describe('RunDetailsContent', () => {
   });
 
   describe('lazy report sections', () => {
+    it('does not let a core projection erase an already-loaded trajectory', async () => {
+      const full = createReport({
+        trajectory: [{ type: 'response', content: 'Already loaded output' } as any],
+      });
+      const core = createReport({ trajectory: [], rawEvents: undefined });
+      mockGetReportById.mockResolvedValue(core);
+
+      await renderAndWait(full);
+
+      await waitFor(() => {
+        expect(screen.getByTestId('trajectory-view').textContent).toContain('Already loaded output');
+      });
+      expect(mockGetReportById).toHaveBeenCalledWith('report-1', 'core');
+      expect(mockGetReportById).not.toHaveBeenCalledWith('report-1', 'trajectory');
+    });
+
     it('loads core and the visible output first, then raw events when opened', async () => {
       const core = createReport({ trajectory: [], rawEvents: undefined });
       const trajectory = createReport({

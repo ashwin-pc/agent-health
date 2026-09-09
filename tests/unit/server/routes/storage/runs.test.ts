@@ -297,7 +297,10 @@ describe('Runs Storage Routes', () => {
         llmJudgeReasoning: 'reasoning',
       });
 
-      const { req, res } = createMocks({}, {}, { ids: 'run-a', fields: 'status,passFailStatus, metricsStatus,missingField' });
+      const { req, res } = createMocks({}, {}, {
+        ids: 'run-a',
+        fields: 'status,passFailStatus, metricsStatus,llmJudgeReasoning,missingField',
+      });
       const handler = getRouteHandler(runsRoutes, 'get', '/api/storage/runs');
 
       await handler(req, res);
@@ -308,6 +311,7 @@ describe('Runs Storage Routes', () => {
         status: 'completed',
         passFailStatus: 'passed',
         metricsStatus: 'ready',
+        llmJudgeReasoning: 'reasoning',
       });
     });
 
