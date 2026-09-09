@@ -4,11 +4,10 @@
  */
 
 /**
- * Unit tests for the agent trace judge's pure helpers. The full
- * `evaluateWithPiAgenticTrace` path drives the in-process pi SDK
- * (`createAgentSession`) + a live model, so it's covered by e2e validation;
- * here we test the deterministic helpers and the tool wiring (see
- * traceJudgeTools.test.ts) that don't need a model.
+ * Unit tests for the agent trace judge's pure helpers and SDK orchestration.
+ * The `evaluateWithPiAgenticTrace` tests use a deterministic SDK boundary;
+ * live-model behavior remains covered by e2e validation. Tool implementation
+ * details have their own focused suites (for example traceJudgeTools.test.ts).
  */
 
 const mockBuildEvaluationPrompt = jest.fn(() => 'evaluation prompt');

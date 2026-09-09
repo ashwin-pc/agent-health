@@ -76,12 +76,19 @@ describe('restricted commands — golden behavior', () => {
     expect((await run('grep apple evidence/words.txt && echo found')).stdout).toBe('apple\napple\nfound\n');
   });
 
-  it('ls and find (-name/-type/-maxdepth)', async () => {
+  it('ls and find (-name/-type/-maxdepth) across files and recursive directories', async () => {
+    await fs.writeFile(path.join(root, 'evidence', '.hidden'), 'hidden');
     const ls = await run('ls evidence');
     expect(ls.stdout).toContain('data.json');
     expect(ls.stdout).toContain('nested/');
+    expect(ls.stdout).not.toContain('.hidden');
+    expect((await run('ls -a evidence')).stdout).toContain('.hidden');
+    expect((await run('ls -R evidence')).stdout).toContain('evidence/nested:');
+    expect((await run('ls evidence/words.txt')).stdout).toBe('evidence/words.txt\n');
+    expect((await run('ls evidence evidence/nested')).stdout).toContain('evidence:');
     const find = await run("find evidence -maxdepth 2 -type f -name '*.log'");
     expect(find.stdout).toBe('evidence/nested/note.log\n');
+    expect((await run('find evidence/words.txt -type f')).stdout).toBe('evidence/words.txt\n');
   });
 
   it('grep/rg flags, recursion, context, count, files, fixed and max', async () => {
@@ -90,6 +97,7 @@ describe('restricted commands — golden behavior', () => {
     expect((await run('grep -c apple evidence/words.txt')).stdout).toBe('2\n');
     expect((await run('grep -l needle evidence/nested/note.log')).stdout).toBe('evidence/nested/note.log\n');
     expect((await run('grep -n -C 1 needle evidence/nested/note.log')).stdout).toBe('1:before\n2:needle\n3:after\n');
+    expect((await run('grep -n -C1 needle evidence/nested/note.log')).stdout).toBe('1:before\n2:needle\n3:after\n');
     expect((await run('grep -F "a,3" evidence/table.txt')).stdout).toBe('a,3\n');
     expect((await run('rg -r needle evidence')).stdout).toContain('evidence/nested/note.log:needle');
   });
@@ -151,6 +159,8 @@ describe('confinement and failure semantics', () => {
         mounts: [{ virtualPath: 'evidence/spans.ndjson', sourcePaths: [source1, source2] }],
       });
       expect((await mounted.execute('ls evidence')).stdout).toContain('spans.ndjson');
+      expect((await mounted.execute('ls evidence/spans.ndjson')).stdout).toBe('evidence/spans.ndjson\n');
+      expect((await mounted.execute('ls -l evidence/spans.ndjson')).stdout).toMatch(/-r--r--r--\s+\d+ spans\.ndjson/);
       expect((await mounted.execute("jq -s 'map(.durationMs) | add' evidence/spans.ndjson")).stdout.trim()).toBe('7');
       expect((await mounted.execute('find evidence -maxdepth 1 -type f')).stdout).toContain('evidence/spans.ndjson');
       // The virtual entry has no inode in the judgment tmpdir: the resolver,
@@ -303,6 +313,7 @@ describe('confinement and failure semantics', () => {
       ['pwd extra', /too many arguments/],
       ['ls -z evidence', /unsupported flag -z/],
       ['find evidence -wat nope', /unsupported expression/],
+      ['find evidence -name', /requires a value/],
       ['grep -m nope apple evidence/words.txt', /requires a number/],
       ['grep -q apple evidence/words.txt', /unsupported flag -q/],
       ['grep', /missing pattern/],
@@ -332,6 +343,18 @@ describe('confinement and failure semantics', () => {
     await fs.link(file, path.join(workspace, 'late-alias.txt'));
     expect((await mounted.execute('cat evidence/workspace/allowed.txt')).stderr).toMatch(/snapshot inode/);
     await fs.rm(workspace, { recursive: true, force: true });
+  });
+
+  it('accounts for nested scratch files when enforcing quotas', async () => {
+    await fs.mkdir(path.join(root, 'scratch', 'nested'));
+    await fs.writeFile(path.join(root, 'scratch', 'nested', 'existing.txt'), '12345');
+    const limited = await RestrictedBash.createForTesting({ rootDir: root, quotaBytes: 8 });
+    expect((await limited.execute('echo 1234 > scratch/new.txt')).stderr).toMatch(/quota exceeded/);
+  });
+
+  it('returns immediately when configured with a zero command timeout', async () => {
+    const limited = await RestrictedBash.createForTesting({ rootDir: root, timeoutMs: 0 });
+    expect((await limited.execute('echo never')).stderr).toMatch(/timed out after 0ms/);
   });
 
   it('rejects oversized files before reading them into memory', async () => {
