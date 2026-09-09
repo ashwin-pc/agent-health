@@ -103,7 +103,11 @@ export const TestCaseEditor: React.FC<TestCaseEditorProps> = ({
         setLabels(full.labels || []);
         setInitialPrompt(full.initialPrompt || '');
         setContext(full.context || []);
-        setExpectedOutcomes(full.expectedOutcomes && full.expectedOutcomes.length > 0 ? full.expectedOutcomes : ['']);
+        setExpectedOutcomes(
+          full.expectedOutcomes && full.expectedOutcomes.length > 0
+            ? full.expectedOutcomes.map(expectedOutcomeText)
+            : [''],
+        );
         setIsLoadingFullTestCase(false);
       })
       .catch(err => {
