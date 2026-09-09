@@ -14,7 +14,7 @@ let bash: RestrictedBash;
 beforeAll(async () => {
   root = await fs.mkdtemp(path.join(os.tmpdir(), 'restricted-bash-test-'));
   await fs.mkdir(path.join(root, 'scratch'));
-  bash = await RestrictedBash.create({ rootDir: root, timeoutMs: 5000, quotaBytes: 100, quotaFiles: 2 });
+  bash = await RestrictedBash.createForTesting({ rootDir: root, timeoutMs: 5000, quotaBytes: 100, quotaFiles: 2 });
 });
 
 beforeEach(async () => {
@@ -143,7 +143,7 @@ describe('confinement and failure semantics', () => {
     await fs.writeFile(source2, '{"spanId":"s2","durationMs":4}\n');
     await fs.writeFile(sibling, '{"spanId":"SECRET"}\n');
     try {
-      const mounted = await RestrictedBash.create({
+      const mounted = await RestrictedBash.createForTesting({
         rootDir: root,
         mounts: [{ virtualPath: 'evidence/spans.ndjson', sourcePaths: [source1, source2] }],
       });
@@ -173,7 +173,7 @@ describe('confinement and failure semantics', () => {
     await fs.writeFile(path.join(workspace, 'large.bin'), '');
     await fs.truncate(path.join(workspace, 'large.bin'), 32 * 1024 * 1024);
     try {
-      const mounted = await RestrictedBash.create({
+      const mounted = await RestrictedBash.createForTesting({
         rootDir: root,
         mounts: [{ virtualPath: 'evidence/workspace', sourcePaths: [workspace] }],
         maxFileBytes: 32,
@@ -209,7 +209,7 @@ describe('confinement and failure semantics', () => {
     await fs.writeFile(allowed, '{"spanId":"allowed"}\n');
     await fs.writeFile(sibling, '{"spanId":"SECRET"}\n');
     try {
-      const mounted = await RestrictedBash.create({
+      const mounted = await RestrictedBash.createForTesting({
         rootDir: root,
         mounts: [{ virtualPath: 'evidence/spans.ndjson', sourcePaths: [allowed] }],
       });
@@ -276,7 +276,7 @@ describe('confinement and failure semantics', () => {
     await expect(RestrictedBash.create({ rootDir: root, mounts: [{ virtualPath: 'evidence/workspace', sourcePaths: [workspace] }] }))
       .rejects.toThrow(/hard-linked/);
     await fs.unlink(path.join(workspace, 'alias.txt'));
-    const mounted = await RestrictedBash.create({ rootDir: root, mounts: [{ virtualPath: 'evidence/workspace', sourcePaths: [workspace] }] });
+    const mounted = await RestrictedBash.createForTesting({ rootDir: root, mounts: [{ virtualPath: 'evidence/workspace', sourcePaths: [workspace] }] });
     await fs.link(file, path.join(workspace, 'late-alias.txt'));
     expect((await mounted.execute('cat evidence/workspace/allowed.txt')).stderr).toMatch(/snapshot inode/);
     await fs.rm(workspace, { recursive: true, force: true });
@@ -284,7 +284,7 @@ describe('confinement and failure semantics', () => {
 
   it('rejects oversized files before reading them into memory', async () => {
     await fs.writeFile(path.join(root, 'large.txt'), 'x'.repeat(33));
-    const limited = await RestrictedBash.create({ rootDir: root, maxFileBytes: 32, maxInputBytes: 64 });
+    const limited = await RestrictedBash.createForTesting({ rootDir: root, maxFileBytes: 32, maxInputBytes: 64 });
     const result = await limited.execute('cat large.txt');
     expect(result.exitCode).toBe(2);
     expect(result.stderr).toMatch(/per-file limit 32.*narrow or split/);
@@ -293,7 +293,7 @@ describe('confinement and failure semantics', () => {
   it('rejects an oversized aggregate input set', async () => {
     await fs.writeFile(path.join(root, 'one.txt'), '1'.repeat(24));
     await fs.writeFile(path.join(root, 'two.txt'), '2'.repeat(24));
-    const limited = await RestrictedBash.create({ rootDir: root, timeoutMs: 5000, maxFileBytes: 32, maxInputBytes: 40 });
+    const limited = await RestrictedBash.createForTesting({ rootDir: root, timeoutMs: 5000, maxFileBytes: 32, maxInputBytes: 40 });
     const result = await limited.execute('cat one.txt two.txt');
     expect(result.exitCode).toBe(2);
     expect(result.stderr).toMatch(/inputs exceed 40 bytes.*find\/head/);
@@ -354,14 +354,14 @@ describe('confinement and failure semantics', () => {
   });
 
   it('enforces command-count and cumulative judgment budgets', async () => {
-    const countLimited = await RestrictedBash.create({ rootDir: root, maxCommands: 2 });
+    const countLimited = await RestrictedBash.createForTesting({ rootDir: root, maxCommands: 2 });
     expect((await countLimited.execute('echo one')).exitCode).toBe(0);
     expect((await countLimited.execute('echo two')).exitCode).toBe(0);
     const refused = await countLimited.execute('echo three');
     expect(refused.stderr).toMatch(/command budget exhausted/);
     expect(refused.breach).toBe('command-count');
 
-    const timeLimited = await RestrictedBash.create({ rootDir: root, maxTotalMs: 0 });
+    const timeLimited = await RestrictedBash.createForTesting({ rootDir: root, maxTotalMs: 0 });
     const timed = await timeLimited.execute('echo never');
     expect(timed.stderr).toMatch(/time budget exhausted/);
     expect(timed.breach).toBe('total-time');
@@ -370,7 +370,7 @@ describe('confinement and failure semantics', () => {
   it('reports unknown commands, cd, and output truncation instructively', async () => {
     expect((await run('python3 -V')).text).toMatch(/python3: command not found.*available: jq|available: cat/);
     expect((await run('cd evidence')).stderr).toMatch(/cwd is fixed/);
-    const capped = await RestrictedBash.create({ rootDir: root, outputCapBytes: 80 });
+    const capped = await RestrictedBash.createForTesting({ rootDir: root, outputCapBytes: 80 });
     expect((await capped.execute('cat evidence/words.txt evidence/words.txt evidence/words.txt evidence/words.txt')).text)
       .toMatch(/output truncated.*narrow the query/);
   });

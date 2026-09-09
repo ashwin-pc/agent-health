@@ -238,6 +238,7 @@ export class RestrictedBash {
   private readonly onCommand?: (command: string) => void;
   private readonly onWorkerExit?: () => void;
   private readonly mounts: ReadonlyMap<string, ResolvedMount>;
+  private executeInProcessForTests = false;
 
   private constructor(
     options: RestrictedBashOptions,
@@ -334,6 +335,20 @@ export class RestrictedBash {
       });
     }
     return new RestrictedBash(options, rootDir, mounts);
+  }
+
+  /**
+   * Coverage-only execution mode for unit tests. Production always uses the
+   * preemptible worker path; keeping the command interpreter in-process here
+   * lets Jest instrument the same builtin implementations workers execute.
+   */
+  static async createForTesting(options: RestrictedBashOptions): Promise<RestrictedBash> {
+    if (process.env.NODE_ENV !== 'test') {
+      throw new Error('restricted bash: in-process execution is available only under the test environment');
+    }
+    const instance = await RestrictedBash.create(options);
+    instance.executeInProcessForTests = true;
+    return instance;
   }
 
   private static inside(root: string, candidate: string): boolean {
@@ -524,41 +539,42 @@ export class RestrictedBash {
     let worker: Worker | undefined;
     try {
       const id = ++this.requestSequence;
-      const result = await new Promise<CommandResult>((resolve, reject) => {
-        void this.getCommandWorker().then((readyWorker) => {
-          worker = readyWorker;
-          // Worker module loading is initialization, not command execution.
-          // Arm the hard command deadline only after the worker reports ready.
-          timer = setTimeout(() => {
-            timedOut = true;
-            const active = this.commandWorker;
-            this.commandWorker = undefined;
-            this.workerReady = undefined;
-            if (active) void active.terminate().then(() => {
-              this.onWorkerExit?.();
-              resolve(fail(`restricted bash: command timed out after ${remainingMs}ms`, 2));
-            });
-            else resolve(fail(`restricted bash: command timed out after ${remainingMs}ms`, 2));
-          }, remainingMs);
-          const onMessage = (message: any) => {
-            if (message?.id !== id) return;
-            readyWorker.off('message', onMessage);
-            resolve(message.result);
-          };
-          readyWorker.on('message', onMessage);
-          readyWorker.once('error', reject);
-          readyWorker.once('exit', () => {
-            if (this.commandWorker === readyWorker) {
+      const result = this.executeInProcessForTests
+        ? await this.executeParsed(parsed)
+        : await new Promise<CommandResult>((resolve, reject) => {
+          void this.getCommandWorker().then((readyWorker) => {
+            worker = readyWorker;
+            // Worker module loading is initialization, not command execution.
+            // Arm the hard command deadline only after the worker reports ready.
+            timer = setTimeout(() => {
+              timedOut = true;
+              const active = this.commandWorker;
               this.commandWorker = undefined;
               this.workerReady = undefined;
-            }
-
+              if (active) void active.terminate().then(() => {
+                this.onWorkerExit?.();
+                resolve(fail(`restricted bash: command timed out after ${remainingMs}ms`, 2));
+              });
+              else resolve(fail(`restricted bash: command timed out after ${remainingMs}ms`, 2));
+            }, remainingMs);
+            const onMessage = (message: any) => {
+              if (message?.id !== id) return;
+              readyWorker.off('message', onMessage);
+              resolve(message.result);
+            };
+            readyWorker.on('message', onMessage);
+            readyWorker.once('error', reject);
+            readyWorker.once('exit', () => {
+              if (this.commandWorker === readyWorker) {
+                this.commandWorker = undefined;
+                this.workerReady = undefined;
+              }
+            });
+            readyWorker.postMessage({ id, parsed });
+          }, (error) => {
+            if (!timedOut) reject(error);
           });
-          readyWorker.postMessage({ id, parsed });
-        }, (error) => {
-          if (!timedOut) reject(error);
         });
-      });
       const capped = this.capOutput(result.stdout, result.stderr);
       const breach = timedOut ? 'timeout' as const : Buffer.byteLength(result.stdout + result.stderr) > this.outputCapBytes ? 'output' as const : undefined;
       return { ...result, ...capped, text: this.render(capped.stdout, capped.stderr, result.exitCode), ...(breach ? { breach } : {}) };
