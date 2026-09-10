@@ -17,6 +17,7 @@ import { TestDataTracker, uniqueTestName } from '../helpers/testDataTracker';
 
 const VIEWPORT_WIDTH = 375;
 const LONG_BENCHMARK_PREFIX = 'Mobile readability benchmark with an intentionally long name';
+const LONG_RUN_PREFIX = 'CLI Run - mobile-readability-baseline-with-a-long-descriptive-name';
 const AGENTS = [
   'mobile-agent-alpha-with-readable-name',
   'mobile-agent-beta-with-readable-name',
@@ -56,7 +57,7 @@ async function seedMobileData(request: APIRequestContext, tracker: TestDataTrack
   expect(benchmarkName.length).toBeGreaterThanOrEqual(40);
   const now = Date.now();
   const benchmarkRunId = `mobile-gate-benchmark-run-${stamp}`;
-  const benchmarkRunName = `Mobile overview run ${stamp}`;
+  const benchmarkRunName = `${LONG_RUN_PREFIX} - alpha - ${stamp}`;
   const benchmarkRuns = [
     {
       id: benchmarkRunId,
@@ -70,7 +71,7 @@ async function seedMobileData(request: APIRequestContext, tracker: TestDataTrack
     },
     {
       id: `mobile-gate-benchmark-run-beta-${stamp}`,
-      name: `Mobile beta run ${stamp}`,
+      name: `${LONG_RUN_PREFIX} - beta - ${stamp}`,
       agentKey: AGENTS[1],
       modelId: MODEL_ID,
       createdAt: new Date(now - 60_000).toISOString(),
@@ -80,7 +81,7 @@ async function seedMobileData(request: APIRequestContext, tracker: TestDataTrack
     },
     {
       id: `mobile-gate-benchmark-run-gamma-${stamp}`,
-      name: `Mobile gamma run ${stamp}`,
+      name: `${LONG_RUN_PREFIX} - gamma - ${stamp}`,
       agentKey: AGENTS[2],
       modelId: MODEL_ID,
       createdAt: new Date(now - 120_000).toISOString(),
@@ -89,6 +90,7 @@ async function seedMobileData(request: APIRequestContext, tracker: TestDataTrack
       stats: { passed: 3, failed: 0, pending: 0, total: 3 },
     },
   ];
+  for (const run of benchmarkRuns) expect(run.name.length).toBeGreaterThanOrEqual(60);
   const benchmarkResponse = await request.post('/api/storage/benchmarks', {
     data: {
       name: benchmarkName,
@@ -247,6 +249,35 @@ test.describe('required mobile readability gate', () => {
     await expect(recentRow.getByTestId('recent-run-time')).not.toHaveText('');
     await expectInsideViewport(recentRow);
 
+    await page.setViewportSize({ width: 1440, height: 900 });
+    const desktopRecentRows = page.locator('[data-testid="recent-run-row"]');
+    const desktopRowCount = await desktopRecentRows.count();
+    expect(desktopRowCount).toBeGreaterThanOrEqual(3);
+    const desktopRowBoxes: Array<{ top: number; bottom: number; contentBottom: number }> = [];
+    for (let index = 0; index < desktopRowCount; index++) {
+      const row = desktopRecentRows.nth(index);
+      const [rowBox, nameBox, benchmarkBox] = await Promise.all([
+        row.boundingBox(),
+        row.getByTestId('recent-run-name').boundingBox(),
+        row.getByTestId('recent-run-benchmark').boundingBox(),
+      ]);
+      expect(rowBox, `desktop recent row ${index} should have geometry`).not.toBeNull();
+      expect(nameBox, `desktop recent row ${index} name should have geometry`).not.toBeNull();
+      expect(benchmarkBox, `desktop recent row ${index} benchmark should have geometry`).not.toBeNull();
+      expect(rowBox!.height, `desktop recent row ${index} must stay compact`).toBeLessThanOrEqual(28);
+      desktopRowBoxes.push({
+        top: rowBox!.y,
+        bottom: rowBox!.y + rowBox!.height,
+        contentBottom: Math.max(nameBox!.y + nameBox!.height, benchmarkBox!.y + benchmarkBox!.height),
+      });
+    }
+    for (let index = 0; index < desktopRowBoxes.length - 1; index++) {
+      expect(desktopRowBoxes[index].bottom, `desktop recent row ${index} must not overlap row ${index + 1}`).toBeLessThanOrEqual(desktopRowBoxes[index + 1].top + 0.5);
+      expect(desktopRowBoxes[index].contentBottom, `desktop recent row ${index} content must not bleed into row ${index + 1}`).toBeLessThanOrEqual(desktopRowBoxes[index + 1].top + 0.5);
+    }
+    expect(desktopRowBoxes.at(-1)!.contentBottom, 'last desktop recent row content must fit its row').toBeLessThanOrEqual(desktopRowBoxes.at(-1)!.bottom + 0.5);
+
+    await page.setViewportSize({ width: 375, height: 812 });
     const runsAction = page.getByTestId('stats-runs');
     await expectInsideViewport(runsAction);
     await runsAction.click();

@@ -54,7 +54,9 @@ describe('mobile readability component contracts', () => {
     render(React.createElement(TooltipProvider, null, React.createElement(RecentRow, { row, onClick: jest.fn() })));
 
     expect(screen.getByTestId('recent-run-name').textContent).toBe('A long evaluation run');
-    expect(screen.getByTestId('recent-run-name').className).toContain('block sm:inline-block');
+    expect(screen.getByTestId('recent-run-name').className).toContain('block');
+    expect(screen.getByTestId('recent-run-name').className).not.toContain('sm:inline-block');
+    expect(screen.getByTestId('recent-run-name').parentElement?.className).toEqual(expect.stringContaining('sm:flex sm:items-center sm:overflow-hidden sm:whitespace-nowrap'));
     expect(screen.getByTestId('recent-run-benchmark').textContent).toBe('A long benchmark name');
     expect(screen.getByTestId('recent-run-agent').textContent).toBe('Readable mobile agent');
     expect(screen.getByTestId('recent-run-model').textContent).toBe('mobile-model');

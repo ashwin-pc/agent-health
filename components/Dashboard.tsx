@@ -280,10 +280,10 @@ export const RecentRow: React.FC<RecentRowProps> = ({ row, onClick }) => {
       className="group mx-3 mb-2 grid w-[calc(100%-1.5rem)] min-w-0 grid-cols-[14px_minmax(0,1fr)_14px] items-start gap-x-2 gap-y-2 rounded-md border bg-muted/10 p-2.5 text-left text-[11px] transition-colors hover:bg-muted/50 sm:mx-0 sm:mb-0 sm:h-6 sm:w-full sm:min-w-[720px] sm:grid-cols-[14px_minmax(0,1.6fr)_minmax(0,1fr)_minmax(0,1fr)_130px_80px_14px] sm:items-center sm:gap-3 sm:rounded-none sm:border-0 sm:border-b sm:bg-transparent sm:px-3 sm:py-0 sm:last:border-b-0"
     >
       <span className="mt-0.5 sm:mt-0"><StatusIcon row={row} /></span>
-      <div className="min-w-0">
-        <TruncText testId="recent-run-name" text={row.run.name} className="block sm:inline-block break-words text-xs font-medium leading-tight sm:truncate sm:text-[11px]" />
-        <span className="hidden text-muted-foreground sm:inline"> · </span>
-        <TruncText testId="recent-run-benchmark" text={row.benchmarkName} className="block sm:inline-block mt-0.5 break-words text-[10px] leading-tight text-muted-foreground sm:mt-0 sm:truncate" />
+      <div className="min-w-0 sm:flex sm:items-center sm:overflow-hidden sm:whitespace-nowrap">
+        <TruncText testId="recent-run-name" text={row.run.name} className="block break-words text-xs font-medium leading-tight sm:min-w-0 sm:truncate sm:text-[11px]" />
+        <span className="hidden shrink-0 text-muted-foreground sm:inline"> · </span>
+        <TruncText testId="recent-run-benchmark" text={row.benchmarkName} className="mt-0.5 block break-words text-[10px] leading-tight text-muted-foreground sm:mt-0 sm:min-w-0 sm:truncate" />
       </div>
 
       <div className="col-start-2 row-start-2 grid min-w-0 grid-cols-[minmax(0,1fr)_minmax(0,1fr)] gap-x-3 sm:contents">
