@@ -12,7 +12,7 @@
  */
 
 import { createHash } from "node:crypto";
-import { cpSync, mkdtempSync, readdirSync, readFileSync } from "node:fs";
+import { cpSync, mkdtempSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, relative, resolve, sep } from "node:path";
 
@@ -123,6 +123,21 @@ function fixtureTree(root: string, dir = root): FixtureTreeEntry[] {
         path: relative(root, path).split(sep).join("/"),
         sha256: createHash("sha256").update(readFileSync(path)).digest("hex"),
       });
+    } else if (entry.isSymbolicLink()) {
+      // Fixture skills may be links to shared repository content. Hash the
+      // resolved bytes under the link's fixture-relative path, matching the
+      // fixture envelope builder, and materialize them via cpSync dereference.
+      const target = statSync(path);
+      if (target.isDirectory()) {
+        result.push(...fixtureTree(root, path));
+      } else if (target.isFile()) {
+        result.push({
+          path: relative(root, path).split(sep).join("/"),
+          sha256: createHash("sha256").update(readFileSync(path)).digest("hex"),
+        });
+      } else {
+        throw new Error(`Fixture symlink has an unsupported target: ${path}`);
+      }
     } else {
       throw new Error(`Fixture contains an unsupported non-file entry: ${path}`);
     }
