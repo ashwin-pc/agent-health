@@ -499,6 +499,12 @@ export interface TestCaseRun {
    * propagate W3C context or tag our `agent_health.run.id`.
    */
   sessionId?: string;
+  /**
+   * Complete opaque metadata returned by the connector for this invocation.
+   * Connector-specific fields (for example pi-web harvest settlement details)
+   * are preserved for audit/debugging without becoming report schema fields.
+   */
+  connectorMetadata?: Record<string, unknown>;
   logs?: OpenSearchLog[]; // OpenSearch logs for the run (master version)
   rawEvents?: any[]; // Raw AG UI events for debugging
   connectorProtocol?: ConnectorProtocol; // Protocol used to execute this run (for trajectory parsing)

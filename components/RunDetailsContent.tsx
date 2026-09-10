@@ -784,6 +784,14 @@ export const RunDetailsContent: React.FC<RunDetailsContentProps> = ({
   const overviewMatcherEntries = !perOutcomeJudgeEntries && codeEntries.length === 0 && judgeEntries.length === 1
     ? []
     : allMatcherEntries;
+  const connectorMetadata = liveReport.connectorMetadata;
+  const settlementStatus = connectorMetadata?.settlementStatus as Record<string, unknown> | undefined;
+  const childSessions = connectorMetadata?.childSessions;
+  const showHarvest = connectorMetadata !== undefined && (
+    settlementStatus !== undefined ||
+    connectorMetadata.settledTimeout !== undefined ||
+    Array.isArray(childSessions)
+  );
 
   return (
     <div className={`flex flex-col h-full ${className}`}>
@@ -797,6 +805,17 @@ export const RunDetailsContent: React.FC<RunDetailsContentProps> = ({
             Report ID: <span className="font-mono">{report.id}</span>
           </p>
         </div>
+        )}
+
+        {showHarvest && (
+          <div data-testid="harvest-summary" className="mb-3 flex flex-wrap items-center gap-x-2 text-xs text-muted-foreground">
+            <span className="font-medium text-foreground">Harvest</span>
+            <span>settled {settlementStatus?.settled === true ? 'yes' : 'no'}</span>
+            <span aria-hidden="true">·</span>
+            <span>settledTimeout {connectorMetadata?.settledTimeout === true ? 'yes' : 'no'}</span>
+            <span aria-hidden="true">·</span>
+            <span>child sessions {Array.isArray(childSessions) ? childSessions.length : 0}</span>
+          </div>
         )}
 
         {/* Trace Mode: Waiting for traces / running judge banner */}

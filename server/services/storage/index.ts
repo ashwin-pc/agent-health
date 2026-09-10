@@ -211,6 +211,7 @@ export async function saveReportWithClient(
     passFailStatus: report.passFailStatus,
     traceId: report.runId,
     sessionId: report.sessionId,
+    connectorMetadata: report.connectorMetadata,
     tags: [],
     actualOutcomes: [],
     llmJudgeReasoning: report.llmJudgeReasoning,

@@ -510,6 +510,7 @@ export async function runEvaluationWithConnector(
   let rawEvents: any[] = [];
   let agentRunId: string | null = null;
   let agentSessionId: string | undefined;
+  let connectorMetadata: Record<string, any> | undefined;
 
   debug('Eval', 'Config:', { agent: agent.name, model: modelId, testCase: testCase.id });
 
@@ -530,6 +531,7 @@ export async function runEvaluationWithConnector(
     fullTrajectory = invocation.trajectory;
     agentRunId = invocation.runId;
     agentSessionId = invocation.metadata?.sessionId ?? undefined;
+    connectorMetadata = invocation.metadata;
     rawEvents = invocation.rawEvents;
 
     debug('Eval', 'Trajectory captured:', fullTrajectory.length, 'steps');
@@ -560,6 +562,7 @@ export async function runEvaluationWithConnector(
         improvementStrategies: [],
         runId: agentRunId || undefined,
         sessionId: agentSessionId || undefined,
+        ...(connectorMetadata !== undefined ? { connectorMetadata } : {}),
         rawEvents,
         connectorProtocol: connector.type as ConnectorProtocol,
         performanceMetrics: {
@@ -588,6 +591,7 @@ export async function runEvaluationWithConnector(
         improvementStrategies: [],
         runId: agentRunId || undefined,
         sessionId: agentSessionId || undefined,
+        ...(connectorMetadata !== undefined ? { connectorMetadata } : {}),
         rawEvents,
         connectorProtocol: connector.type as ConnectorProtocol,
         performanceMetrics: {
@@ -679,6 +683,7 @@ export async function runEvaluationWithConnector(
         improvementStrategies: [],
         runId: agentRunId || undefined,
         sessionId: agentSessionId || undefined,
+        ...(connectorMetadata !== undefined ? { connectorMetadata } : {}),
         rawEvents,
         connectorProtocol: connector.type as ConnectorProtocol,
         performanceMetrics: {
@@ -736,6 +741,7 @@ export async function runEvaluationWithConnector(
       traceStatus: 'not_configured',
       runId: agentRunId || undefined,
       sessionId: agentSessionId || undefined,
+      ...(connectorMetadata !== undefined ? { connectorMetadata } : {}),
       rawEvents,
       connectorProtocol: connector.type as ConnectorProtocol,
       performanceMetrics: {
@@ -796,6 +802,7 @@ export async function runEvaluationWithConnector(
       llmJudgeReasoning: `Evaluation failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
       improvementStrategies: [],
       traceStatus: agent.useTraces ? 'unavailable' : 'not_configured',
+      ...(connectorMetadata !== undefined ? { connectorMetadata } : {}),
       rawEvents,
       connectorProtocol: connectorType,
     };

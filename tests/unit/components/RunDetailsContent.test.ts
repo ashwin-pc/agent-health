@@ -366,6 +366,31 @@ describe('RunDetailsContent', () => {
     });
   });
 
+  describe('connector harvest summary', () => {
+    it('renders pi-web settlement metadata as a compact Harvest line', async () => {
+      const report = createReport({
+        connectorMetadata: {
+          settlementStatus: { settled: true },
+          settledTimeout: false,
+          childSessions: ['child-1', 'child-2'],
+          workspaceDir: '/tmp/workspace',
+        },
+      });
+
+      await renderAndWait(report);
+
+      expect(screen.getByTestId('harvest-summary').textContent).toBe(
+        'Harvestsettled yes·settledTimeout no·child sessions 2',
+      );
+    });
+
+    it('leaves reports without harvest metadata unchanged', async () => {
+      await renderAndWait(createReport());
+
+      expect(screen.queryByTestId('harvest-summary')).toBeNull();
+    });
+  });
+
   describe('overview tab', () => {
     it('is first and default-selected with the judge verdict, score, and outcome breakdown', async () => {
       const report = createReport({

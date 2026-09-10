@@ -171,6 +171,7 @@ function toTestCaseRun(stored: StorageRun): TestCaseRun {
     // `report.runId`) used the wrong Strategy-B correlator for those agents.
     traceId: (stored as any).traceId,
     sessionId: (stored as any).sessionId,
+    connectorMetadata: storedAny.connectorMetadata as Record<string, unknown> | undefined,
     rawEvents: stored.rawEvents as any[] | undefined,
     logs: (stored.logs || storedAny.openSearchLogs || []) as OpenSearchLog[],
     improvementStrategies: stored.improvementStrategies as any[] | undefined,
@@ -237,6 +238,7 @@ function toStorageFormat(report: EvaluationReport): Omit<StorageRun, 'id' | 'cre
   if (report.traceStatus !== undefined) (base as any).traceStatus = report.traceStatus;
   if (report.metricsStatus !== undefined) base.metricsStatus = report.metricsStatus;
   if ((report as any).sessionId !== undefined) (base as any).sessionId = (report as any).sessionId;
+  if (report.connectorMetadata !== undefined) base.connectorMetadata = report.connectorMetadata;
   // Judge inputs: the read mapper (toTestCaseRun) and the server-side save
   // path (server/services/storage/index.ts) both carry evaluatorId +
   // judgeModelId, but this client-side write mapper silently dropped them —
@@ -447,6 +449,7 @@ class AsyncRunStorage {
     if (updates.logs !== undefined) storageUpdates.logs = updates.logs;
     if (updates.runId !== undefined) storageUpdates.traceId = updates.runId;
     if ((updates as any).sessionId !== undefined) (storageUpdates as any).sessionId = (updates as any).sessionId;
+    if (updates.connectorMetadata !== undefined) storageUpdates.connectorMetadata = updates.connectorMetadata;
     if (updates.improvementStrategies !== undefined) storageUpdates.improvementStrategies = updates.improvementStrategies;
     if (updates.matcherResults !== undefined) storageUpdates.matcherResults = updates.matcherResults;
     if (updates.llmJudgeResponse !== undefined) storageUpdates.llmJudgeResponse = updates.llmJudgeResponse;

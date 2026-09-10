@@ -134,6 +134,24 @@ describe('AsyncRunStorage', () => {
       );
     });
 
+    it('persists opaque connector metadata through the OpenSearch write mapper', async () => {
+      mockOsRuns.create.mockResolvedValue(createMockStorageRun('run-metadata'));
+      const report = {
+        ...createMockReport(),
+        connectorMetadata: {
+          settlementStatus: { settled: true },
+          settledTimeout: false,
+          childSessions: ['child-1'],
+        },
+      };
+
+      await asyncRunStorage.saveReport(report);
+
+      expect(mockOsRuns.create).toHaveBeenCalledWith(expect.objectContaining({
+        connectorMetadata: report.connectorMetadata,
+      }));
+    });
+
     it('persists verdict, timing, identity, and trace metadata on create', async () => {
       mockOsRuns.create.mockResolvedValue(createMockStorageRun('run-rich'));
       const report = {
@@ -331,6 +349,18 @@ describe('AsyncRunStorage', () => {
       const result = await asyncRunStorage.getReportById('run-1');
 
       expect(result?.sessionId).toBe('sess-read');
+    });
+
+    it('reads back opaque connector metadata', async () => {
+      const connectorMetadata = { settledTimeout: true, childSessions: ['child-1'] };
+      mockOsRuns.getById.mockResolvedValue({
+        ...createMockStorageRun('run-1'),
+        connectorMetadata,
+      } as any);
+
+      const result = await asyncRunStorage.getReportById('run-1');
+
+      expect(result?.connectorMetadata).toEqual(connectorMetadata);
     });
 
     it('maps judgeModelId from storage so recovery judges with the configured model', async () => {
