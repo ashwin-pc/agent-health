@@ -360,6 +360,15 @@ export class PiWebConnector implements AgentConnector {
       await api("POST", "/api/sessions/delete", { sessionId });
     }
 
+    // An empty harvest is not a valid successful agent result. Rejecting here
+    // lets the runner persist an errored report rather than judging an empty
+    // trajectory and producing an unexplained null verdict.
+    if (trajectory.length === 0) {
+      throw new Error(
+        `pi-web session ${sessionId} settled without any harvestable trajectory steps`,
+      );
+    }
+
     return {
       trajectory,
       runId: sessionId,

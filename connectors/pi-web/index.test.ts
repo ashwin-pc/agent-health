@@ -89,6 +89,28 @@ describe('PiWebConnector', () => {
     }));
   });
 
+  it('rejects an empty harvest so the runner records an errored report', async () => {
+    jest.spyOn(global, 'fetch').mockImplementation(async (input) => {
+      const path = new URL(String(input)).pathname;
+      if (path === '/api/new-chat') return jsonResponse({ sessionId: 'session-empty' });
+      if (path === '/api/sessions/session-empty/status') {
+        return jsonResponse({ sessionId: 'session-empty', state: 'idle', settled: true });
+      }
+      if (path === '/api/messages') return jsonResponse({ messages: [] });
+      return jsonResponse({ ok: true });
+    });
+
+    await expect(new PiWebConnector().execute(
+      'http://pi-web.example',
+      {
+        testCase,
+        modelId: 'model',
+        connectorConfig: { timeoutMs: 100, pollIntervalMs: 1, settleMs: 0 },
+      },
+      { type: 'none' },
+    )).rejects.toThrow('settled without any harvestable trajectory steps');
+  });
+
   it('rejects an envelope whose filesystem fixture fails integrity verification', async () => {
     const fixturesDir = mkdtempSync(join(tmpdir(), 'agent-health-pi-web-fixtures-'));
     mkdirSync(join(fixturesDir, 'workspace'));
