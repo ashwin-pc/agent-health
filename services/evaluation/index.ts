@@ -313,6 +313,8 @@ export interface RunEvaluationWithConnectorOptions {
   judgeModelId?: string;
   /** When true, skip the LLM judge (caller will handle evaluation) */
   skipJudge?: boolean;
+  /** Workspace/environment overlays for this resolved treatment. */
+  overlays?: import('@/services/connectors/types').TreatmentOverlays;
 }
 
 /**
@@ -526,6 +528,7 @@ export async function runEvaluationWithConnector(
       registry: connectorRegistry,
       onStep,
       onRawEvent,
+      overlays: options.overlays,
     });
     const connector = invocation.connector;
     const agentDurationMs = invocation.agentDurationMs;

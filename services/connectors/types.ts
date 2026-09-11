@@ -232,6 +232,8 @@ export interface AgentConfigWithConnector {
   connectorType?: ConnectorProtocol;
 
   /** Connector-specific configuration */
+  /** Connector settings. Workspace connectors may set `skillsDirectory` to
+   * the directory whose named children are copied for treatment skill overlays. */
   connectorConfig?: SubprocessConfig | Record<string, any>;
 
   /** Authentication configuration */

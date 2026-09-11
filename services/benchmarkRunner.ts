@@ -413,7 +413,7 @@ export async function executeRun(
               const doInvoke = () => invokeAgent(agentConfig, bedrockModelId, invocationTestCase, {
                 registry: connectorRegistry,
                 ...(opts?.env ? { env: opts.env } : {}),
-                ...(run.treatment?.config.overlays ? { overlays: run.treatment.config.overlays as any } : {}),
+                ...(run.treatment?.config.overlays ? { overlays: run.treatment.config.overlays } : {}),
               });
               const inv = caseSpanContext
                 ? await context.with(caseSpanContext, doInvoke)
@@ -608,7 +608,7 @@ export async function executeRun(
                 registry: connectorRegistry,
                 evaluatorId: run.evaluatorId,
                 skipJudge: false,
-                ...(run.treatment?.config.overlays ? { overlays: run.treatment.config.overlays as any } : {}),
+                ...(run.treatment?.config.overlays ? { overlays: run.treatment.config.overlays } : {}),
                 // Forward the run-level judge model so the judge call uses what
                 // the customer picked in the run config dialog / CLI / API — not
                 // the agent's own model. Without this the benchmark-execute path
@@ -932,7 +932,7 @@ export async function runSingleUseCase(
       // customer picked in the run config dialog / CLI / API — not the
       // agent's own model. See {@link RunEvaluationWithConnectorOptions.judgeModelId}.
       judgeModelId: run.judgeModelId,
-      ...(run.treatment?.config.overlays ? { overlays: run.treatment.config.overlays as any } : {}),
+      ...(run.treatment?.config.overlays ? { overlays: run.treatment.config.overlays } : {}),
     }
   );
   const report = caseSpanContext
