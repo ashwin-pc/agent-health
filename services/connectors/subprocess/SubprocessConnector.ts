@@ -156,7 +156,7 @@ export class SubprocessConnector<
     const workspace = temporaryWorkspace || fixtureWorkspace;
     const config: ResolvedSubprocessConfig = {
       ...resolvedConfig,
-      workingDir: workspace,
+      workingDir: temporaryWorkspace || resolvedConfig.workingDir,
       env: { ...(resolvedConfig.env || {}), ...(request.overlays?.env || {}) },
     };
 

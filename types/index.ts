@@ -1399,7 +1399,10 @@ export interface TestCaseComparisonRow {
 // Derived type for creating new benchmark runs - stays in sync with BenchmarkRun
 export type RunConfigInput = Pick<BenchmarkRun,
   'name' | 'description' | 'agentKey' | 'modelId' | 'judgeModelId' | 'agentEndpoint' | 'headers' | 'concurrency' | 'evaluatorId' | 'treatment' | 'trialId'
->;
+> & {
+  /** Unresolved CLI declaration; the server is the sole treatment hash authority. */
+  treatmentConfig?: { label?: string; config: Record<string, unknown> };
+};
 
 // ============ Server/API Types ============
 

@@ -31,6 +31,7 @@ import { getCustomAgents } from '../../services/customAgentStore.js';
 import { extractJudgeFailureReason, computeJudgeFailureSummary } from '../../../lib/judgeFailureSummary.js';
 import { connectorRegistry } from '../../../services/connectors/server.js';
 import { resolveTreatment } from '../../../services/treatmentResolver.js';
+import { createTreatment } from '../../../lib/treatment.js';
 
 /**
  * Normalize benchmark data for legacy documents without version fields.
@@ -1129,8 +1130,10 @@ router.post('/api/storage/benchmarks/:id/execute', async (req: Request, res: Res
     });
 
     // Create new run with 'running' status and version tracking
+    const { treatmentConfig, ...persistedRunConfig } = runConfig;
     const run: BenchmarkRun = {
-      ...runConfig,
+      ...persistedRunConfig,
+      ...(treatmentConfig ? { treatment: createTreatment(treatmentConfig.config, treatmentConfig.label) } : {}),
       id: generateId('run'),
       createdAt: new Date().toISOString(),
       status: 'running',

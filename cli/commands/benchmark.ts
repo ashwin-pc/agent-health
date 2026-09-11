@@ -31,7 +31,7 @@ import { existsSync, statSync } from 'fs';
 import { isCodeFile, detectSourceLanguage } from '@/lib/testCases/loader.js';
 import { createBenchmarkDoctorCommand } from '@/cli/commands/benchmarkDoctor.js';
 import { computeBenchmarkRepairPlan, applyRepairPlan, computeVersionLinkRepairPlan } from '@/cli/utils/benchmarkDoctor.js';
-import { createTreatment, createTrialId, type Treatment } from '@/lib/treatment.js';
+import { createTrialIds } from '@/lib/treatment.js';
 
 interface BenchmarkOptions {
   agent: string[];
@@ -175,7 +175,7 @@ async function runBenchmarkForAgent(
   concurrency?: number,
   evaluatorId?: string,
   judgeModelId?: string,
-  treatment?: Treatment,
+  treatmentConfig?: { label?: string; config: Record<string, unknown> },
   trialId?: string
 ): Promise<AgentResults> {
   const results: AgentResults = {
@@ -202,7 +202,7 @@ async function runBenchmarkForAgent(
         ...(evaluatorId ? { evaluatorId } : {}),
         // Forward customer-supplied judge model id alongside agent model.
         ...(judgeModelId ? { judgeModelId } : {}),
-        ...(treatment ? { treatment } : {}),
+        ...(treatmentConfig ? { treatmentConfig } : {}),
         ...(trialId ? { trialId } : {}),
       },
       (event: BenchmarkExecutionEvent) => {
@@ -1269,18 +1269,13 @@ export function createBenchmarkCommand(): Command {
           for (const agent of agents) {
             const modelId = resolveAgentModel(agent, getDefaultModel(config));
             const declared = parseTreatmentConfig(options.treatmentConfig);
-            const treatment = createTreatment({
-              agent: { key: agent.key, endpoint: agent.endpoint },
-              modelId,
-              connector: agent.connectorType || 'agui-streaming',
-              ...declared,
-            }, options.treatment);
+            const treatmentConfig = { label: options.treatment, config: declared };
             const trialCount = Math.max(1, parseInt(options.trials, 10) || 1);
-            for (let trial = 0; trial < trialCount; trial++) {
+            for (const trialId of createTrialIds(trialCount)) {
               const results = await runBenchmarkForAgent(
                 api, agent, modelId, benchmark, options.verbose || false,
                 concurrency, options.evaluator, options.judgeModel,
-                treatment, createTrialId()
+                treatmentConfig, trialId
               );
               // Annotate the result so the summary can attribute it to the right benchmark
               (results as any).benchmark = benchmark;

@@ -51,7 +51,7 @@ import { RunConfigForExecution } from '@/components/BenchmarkEditor';
 import { BenchmarkEditor } from '@/components/BenchmarkEditor';
 import { BenchmarkCasesTab, CaseHeatStrip } from '@/components/evals3/BenchmarkCasesTab';
 import { getRecentCompletedRuns } from '@/lib/benchmarkCaseReview';
-import { treatmentGroupCount } from '@/lib/treatmentGrouping';
+import { groupRunsByTreatment, trialNumber } from '@/lib/treatmentGrouping';
 import type { EvaluationReport } from '@/types';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -292,6 +292,12 @@ export const BenchmarkRunsPage2: React.FC = () => {
   const filteredRuns = useMemo(
     () => filterRunsByVersion(allMergedRuns, runVersionFilter),
     [allMergedRuns, runVersionFilter]
+  );
+
+  const treatmentGroups = useMemo(() => groupRunsByTreatment(filteredRuns), [filteredRuns]);
+  const renderedRuns = useMemo(
+    () => treatmentGroups.length > 1 ? treatmentGroups.flatMap(group => group.runs) : filteredRuns,
+    [treatmentGroups, filteredRuns],
   );
 
   const recentCompletedRuns = useMemo(
@@ -651,16 +657,12 @@ export const BenchmarkRunsPage2: React.FC = () => {
                 </CardContent>
               </Card>
             ) : (
-              filteredRuns.map((run, index) => {
+              renderedRuns.map((run, index) => {
                 const stats = getRunStats(run);
-                const grouped = treatmentGroupCount(filteredRuns) > 1;
+                const grouped = treatmentGroups.length > 1;
                 const treatmentKey = run.treatment?.configHash || '__default__';
-                const previousKey = index > 0 ? (filteredRuns[index - 1].treatment?.configHash || '__default__') : undefined;
-                const treatmentRuns = grouped ? filteredRuns.filter(candidate => (candidate.treatment?.configHash || '__default__') === treatmentKey) : [];
-                const treatmentStats = treatmentRuns.reduce((sum, candidate) => {
-                  const current = getRunStats(candidate);
-                  return { passed: sum.passed + current.passed, total: sum.total + current.total };
-                }, { passed: 0, total: 0 });
+                const group = treatmentGroups.find(candidate => candidate.key === treatmentKey)!;
+                const previousKey = index > 0 ? (renderedRuns[index - 1].treatment?.configHash || '__default__') : undefined;
                 const isLatestRun = index === 0 && runVersionFilter === 'all';
                 const isSelected = selectedRunIds.includes(run.id);
 
@@ -669,7 +671,7 @@ export const BenchmarkRunsPage2: React.FC = () => {
                   {grouped && previousKey !== treatmentKey && (
                     <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border bg-muted/30 px-3 py-2" data-testid="treatment-group">
                       <div className="min-w-0"><span className="font-semibold">{run.treatment?.label || 'Default'}</span>{run.treatment && <span className="ml-2 text-xs text-muted-foreground" title={run.treatment.configHash}>{run.treatment.configHash.slice(0, 8)}</span>}</div>
-                      <div className="flex items-center gap-2 text-xs"><span>{treatmentStats.total ? Math.round(treatmentStats.passed / treatmentStats.total * 100) : 0}% pass</span><span>{treatmentRuns.length} trial{treatmentRuns.length === 1 ? '' : 's'}</span><div className="flex gap-0.5" aria-label="Treatment heat strip">{treatmentRuns.map(trial => { const s = getRunStats(trial); return <span key={trial.id} className={`h-2 w-4 rounded-sm ${s.total && s.passed === s.total ? 'bg-green-500' : 'bg-red-500'}`} />; })}</div></div>
+                      <div className="flex items-center gap-2 text-xs"><span>{group.total ? Math.round(group.passed / group.total * 100) : 0}% pass</span><span>{group.runs.length} trial{group.runs.length === 1 ? '' : 's'}</span><div className="flex gap-0.5" aria-label="Treatment heat strip">{group.runs.map(trial => { const s = getRunStats(trial); const color = s.total > 0 && s.passed === s.total ? 'bg-green-500' : s.passed > 0 ? 'bg-amber-500' : 'bg-red-500'; return <span key={trial.id} title={`${s.passed}/${s.total} passed`} className={`h-2 w-4 rounded-sm ${color}`} />; })}</div></div>
                     </div>
                   )}
                   <Card
@@ -696,7 +698,7 @@ export const BenchmarkRunsPage2: React.FC = () => {
                           <div className="flex-1 min-w-0">
                             <div className="flex items-center gap-2 mb-1 flex-wrap">
                               <h3 className="font-semibold">{run.name}</h3>
-                              {grouped && run.trialId && <Badge variant="secondary" className="text-[10px]" title={run.trialId}>Trial {treatmentRuns.findIndex(candidate => candidate.id === run.id) + 1}</Badge>}
+                              {grouped && run.trialId && <Badge variant="secondary" className="text-[10px]" title={run.trialId}>Trial {trialNumber(group, run)}</Badge>}
                               {getEffectiveRunStatus(run) === 'running' && (
                                 <Badge className="text-xs bg-blue-100 text-blue-700 border-blue-300 dark:bg-blue-500/20 dark:text-blue-400 dark:border-blue-500/30 animate-pulse">
                                   <Loader2 size={12} className="mr-1 animate-spin" /> Running

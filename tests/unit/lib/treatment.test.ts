@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { canonicalJson, createTreatment, treatmentHash } from '../../../lib/treatment';
+import { canonicalJson, createTreatment, createTrialIds, treatmentHash } from '../../../lib/treatment';
 
 describe('treatment identity', () => {
   it('canonicalizes object keys recursively while preserving arrays', () => {
@@ -19,5 +19,12 @@ describe('treatment identity', () => {
     expect(createTreatment(left).id).toBe(createTreatment(right).id);
     expect(treatmentHash({ a: 1, b: undefined })).toBe(treatmentHash({ a: 1 }));
     expect(treatmentHash({ a: 1 })).not.toBe(treatmentHash({ a: 2 }));
+  });
+
+  it('creates N distinct trials sharing one treatment hash', () => {
+    const treatment = createTreatment({ model: 'm', environment: {} });
+    const runs = createTrialIds(3).map(trialId => ({ trialId, treatment }));
+    expect(new Set(runs.map(run => run.trialId)).size).toBe(3);
+    expect(new Set(runs.map(run => run.treatment.configHash))).toEqual(new Set([treatment.configHash]));
   });
 });

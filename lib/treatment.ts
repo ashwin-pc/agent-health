@@ -43,3 +43,7 @@ export function createTreatment(config: Record<string, unknown>, label?: string)
 export function createTrialId(): string {
   return `trial-${randomUUID()}`;
 }
+
+export function createTrialIds(count: number): string[] {
+  return Array.from({ length: Math.max(1, count) }, () => createTrialId());
+}
