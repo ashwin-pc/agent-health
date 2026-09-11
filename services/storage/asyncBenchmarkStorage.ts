@@ -97,6 +97,8 @@ function toBenchmarkRun(stored: StorageBenchmarkRunConfig): BenchmarkRun {
     // older docs is already correctly typed without a cast.
     judgeModelId: stored.judgeModelId,
     evaluatorId: stored.evaluatorId,
+    treatment: (stored as any).treatment,
+    trialId: (stored as any).trialId,
     headers: stored.headers,
     benchmarkVersion: (stored as any).benchmarkVersion ?? 1,
     testCaseSnapshots: (stored as any).testCaseSnapshots ?? [],
