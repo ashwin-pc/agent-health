@@ -361,6 +361,8 @@ export interface InvokeAgentOptions {
    * already honours). Sourced from the SDK's `AgentRunOptions.env`.
    */
   env?: Record<string, string>;
+  /** Treatment overlays passed directly to workspace-materializing connectors. */
+  overlays?: import('@/services/connectors/types').TreatmentOverlays;
 }
 
 /**
@@ -398,12 +400,11 @@ export async function invokeAgent(
       : baseConnectorConfig;
 
   // Build connector request
-  const treatmentOverlays = mergedConnectorConfig?.__treatmentOverlays;
   let request: ConnectorRequest = {
     testCase,
     modelId,
     connectorConfig: mergedConnectorConfig,
-    ...(treatmentOverlays ? { overlays: treatmentOverlays } : {}),
+    ...(options.overlays ? { overlays: options.overlays } : {}),
   };
 
   // Build auth from agent config

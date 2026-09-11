@@ -104,6 +104,19 @@ describe('AsyncRunStorage', () => {
       expect(result.status).toBe('completed');
     });
 
+    it('round-trips treatment/trial and preserves legacy absence', async () => {
+      const treatment = { id: 'treatment-abc', label: 'skill', configHash: 'a'.repeat(64), config: { overlays: { skills: ['design-doc'] } } };
+      mockOsRuns.create.mockImplementation(async (doc: any) => ({ ...createMockStorageRun('treated'), ...doc }));
+      const result = await asyncRunStorage.saveReport({ ...createMockReport(), treatment, trialId: 'trial-1' });
+      expect(mockOsRuns.create).toHaveBeenCalledWith(expect.objectContaining({ treatment, trialId: 'trial-1' }));
+      expect(result).toMatchObject({ treatment, trialId: 'trial-1' });
+
+      mockOsRuns.create.mockResolvedValue(createMockStorageRun('legacy'));
+      const legacy = await asyncRunStorage.saveReport(createMockReport());
+      expect(legacy.treatment).toBeUndefined();
+      expect(legacy.trialId).toBeUndefined();
+    });
+
     it('includes experiment context when provided', async () => {
       const mockStorageRun = createMockStorageRun('run-exp');
       mockOsRuns.create.mockResolvedValue(mockStorageRun);

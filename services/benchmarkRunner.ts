@@ -166,10 +166,7 @@ function buildAgentConfigForRun(run: BenchmarkRun): AgentConfig {
       ...baseAgent.headers,
       ...run.headers,
     },
-    connectorConfig: {
-      ...(baseAgent.connectorConfig || {}),
-      ...(run.treatment?.config.overlays ? { __treatmentOverlays: run.treatment.config.overlays } : {}),
-    },
+    connectorConfig: baseAgent.connectorConfig,
   };
 }
 
@@ -416,6 +413,7 @@ export async function executeRun(
               const doInvoke = () => invokeAgent(agentConfig, bedrockModelId, invocationTestCase, {
                 registry: connectorRegistry,
                 ...(opts?.env ? { env: opts.env } : {}),
+                ...(run.treatment?.config.overlays ? { overlays: run.treatment.config.overlays as any } : {}),
               });
               const inv = caseSpanContext
                 ? await context.with(caseSpanContext, doInvoke)
@@ -610,6 +608,7 @@ export async function executeRun(
                 registry: connectorRegistry,
                 evaluatorId: run.evaluatorId,
                 skipJudge: false,
+                ...(run.treatment?.config.overlays ? { overlays: run.treatment.config.overlays as any } : {}),
                 // Forward the run-level judge model so the judge call uses what
                 // the customer picked in the run config dialog / CLI / API — not
                 // the agent's own model. Without this the benchmark-execute path
@@ -933,6 +932,7 @@ export async function runSingleUseCase(
       // customer picked in the run config dialog / CLI / API — not the
       // agent's own model. See {@link RunEvaluationWithConnectorOptions.judgeModelId}.
       judgeModelId: run.judgeModelId,
+      ...(run.treatment?.config.overlays ? { overlays: run.treatment.config.overlays as any } : {}),
     }
   );
   const report = caseSpanContext
@@ -950,6 +950,8 @@ export async function runSingleUseCase(
   // running the AES Oncall test case with `useTraces: true` + the
   // agent (trace) judge.
   (report as any).evaluatorId = (report as any).evaluatorId ?? run.evaluatorId;
+  (report as any).treatment = run.treatment;
+  (report as any).trialId = run.trialId;
   // Eval test_case span traceId — Strategy A correlator for the trace poller.
   (report as any).traceId = (report as any).traceId ?? caseSpan?.spanContext().traceId;
 
@@ -985,6 +987,8 @@ export async function runSingleUseCase(
       // no evaluatorId — and the trace-mode polled judge then reads it
       // off the report and falls back to the default. Belt-and-braces.
       evaluatorId: run.evaluatorId,
+      treatment: run.treatment,
+      trialId: run.trialId,
       llmJudgeReasoning: report.llmJudgeReasoning,
       metrics: report.metrics,
       trajectory: report.trajectory,

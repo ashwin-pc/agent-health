@@ -17,5 +17,7 @@ describe('treatment identity', () => {
     expect(treatmentHash(left)).toMatch(/^[a-f0-9]{64}$/);
     expect(treatmentHash(left)).toBe(treatmentHash(right));
     expect(createTreatment(left).id).toBe(createTreatment(right).id);
+    expect(treatmentHash({ a: 1, b: undefined })).toBe(treatmentHash({ a: 1 }));
+    expect(treatmentHash({ a: 1 })).not.toBe(treatmentHash({ a: 2 }));
   });
 });
