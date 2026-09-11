@@ -136,6 +136,13 @@ export function getIndexMappings(): IndexMappings {
               error: { type: 'text' },
               agentEndpoint: { type: 'keyword' },
               concurrency: { type: 'long' },
+              treatment: {
+                properties: {
+                  id: { type: 'keyword' }, label: { type: 'keyword' },
+                  configHash: { type: 'keyword' }, config: { type: 'object', enabled: false },
+                },
+              },
+              trialId: { type: 'keyword' },
               benchmarkVersion: { type: 'integer' },
               results: { type: 'object', enabled: false },
               testCaseSnapshots: { type: 'object', enabled: false },
@@ -170,6 +177,15 @@ export function getIndexMappings(): IndexMappings {
           createdAt: { type: 'date' },
           status: { type: 'keyword' },
           passFailStatus: { type: 'keyword' },
+          treatment: {
+            properties: {
+              id: { type: 'keyword' },
+              label: { type: 'keyword' },
+              configHash: { type: 'keyword' },
+              config: { type: 'object', enabled: false },
+            },
+          },
+          trialId: { type: 'keyword' },
           traceId: { type: 'keyword' },
           sessionId: { type: 'keyword' },
           tags: { type: 'keyword' },

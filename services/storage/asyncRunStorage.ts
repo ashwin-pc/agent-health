@@ -124,6 +124,8 @@ function toTestCaseRun(stored: StorageRun): TestCaseRun {
     status: stored.status,
     passFailStatus: stored.passFailStatus as 'passed' | 'failed' | undefined,
     evaluatorId: stored.evaluatorId,
+    treatment: stored.treatment,
+    trialId: stored.trialId,
     trajectory: (stored.trajectory || []) as TrajectoryStep[],
     // Preserve every metric the judge emitted, not just the four legacy keys.
     // Custom evaluators (and even system evaluators other than RCA Default)
@@ -206,6 +208,8 @@ function toStorageFormat(report: EvaluationReport): Omit<StorageRun, 'id' | 'cre
     iteration: 1, // Default to 1, can be overridden
     status: report.status,
     passFailStatus: report.passFailStatus,
+    treatment: report.treatment,
+    trialId: report.trialId,
     traceId: report.runId,
     tags: [],
     actualOutcomes: [],

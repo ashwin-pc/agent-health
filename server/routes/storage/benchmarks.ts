@@ -29,6 +29,8 @@ import { computeImageDigest, buildImageDoc } from '../../../lib/benchmarkImage.j
 import { loadConfigSync } from '../../../lib/config/index.js';
 import { getCustomAgents } from '../../services/customAgentStore.js';
 import { extractJudgeFailureReason, computeJudgeFailureSummary } from '../../../lib/judgeFailureSummary.js';
+import { connectorRegistry } from '../../../services/connectors/server.js';
+import { createTreatment } from '../../../lib/treatment.js';
 
 /**
  * Normalize benchmark data for legacy documents without version fields.
@@ -1153,6 +1155,32 @@ router.post('/api/storage/benchmarks/:id/execute', async (req: Request, res: Res
       fullTestCases = allFull.items.filter(tc => requested.has(tc.id));
     } catch (err: any) {
       console.warn(`[StorageAPI] Full test-case fetch failed (non-fatal, image digest/SDK re-materialization skipped): ${err.message}`);
+    }
+
+    // Resolve treatment identity from the actual agent plus the connector's
+    // report of the environment it will materialize. The caller's config is
+    // declaration input; this stored snapshot is the resolved identity.
+    if (run.treatment) {
+      const config = loadConfigSync();
+      const agent = [...config.agents, ...getCustomAgents()].find(a => a.key === run.agentKey);
+      if (agent) {
+        const connector = connectorRegistry.getForAgent(agent as any);
+        const overlays = run.treatment.config.overlays as any;
+        const environment = await connector.describeEnvironment?.({
+          testCase: fullTestCases[0] || ({ initialPrompt: '' } as TestCase),
+          modelId: run.modelId,
+          connectorConfig: agent.connectorConfig,
+          overlays,
+        });
+        const resolvedConfig = {
+          ...run.treatment.config,
+          agent: { key: agent.key, endpoint: run.agentEndpoint || agent.endpoint },
+          modelId: run.modelId,
+          connector: agent.connectorType || connector.type,
+          environment: environment || {},
+        };
+        run.treatment = createTreatment(resolvedConfig, run.treatment.label);
+      }
     }
 
     // Stamp the content digest of this run's evaluation conditions and

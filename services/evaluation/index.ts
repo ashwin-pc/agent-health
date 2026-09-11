@@ -398,10 +398,12 @@ export async function invokeAgent(
       : baseConnectorConfig;
 
   // Build connector request
+  const treatmentOverlays = mergedConnectorConfig?.__treatmentOverlays;
   let request: ConnectorRequest = {
     testCase,
     modelId,
     connectorConfig: mergedConnectorConfig,
+    ...(treatmentOverlays ? { overlays: treatmentOverlays } : {}),
   };
 
   // Build auth from agent config

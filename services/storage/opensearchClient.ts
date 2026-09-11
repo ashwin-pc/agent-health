@@ -148,6 +148,8 @@ export interface StorageRun {
   createdAt: string;
   status: 'running' | 'completed' | 'failed';
   passFailStatus?: 'passed' | 'failed';
+  treatment?: import('@/lib/treatment').Treatment;
+  trialId?: string;
   traceId?: string;
   tags?: string[];
   actualOutcomes?: unknown[];

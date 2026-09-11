@@ -31,6 +31,7 @@ import { existsSync, statSync } from 'fs';
 import { isCodeFile, detectSourceLanguage } from '@/lib/testCases/loader.js';
 import { createBenchmarkDoctorCommand } from '@/cli/commands/benchmarkDoctor.js';
 import { computeBenchmarkRepairPlan, applyRepairPlan, computeVersionLinkRepairPlan } from '@/cli/utils/benchmarkDoctor.js';
+import { createTreatment, createTrialId, type Treatment } from '@/lib/treatment.js';
 
 interface BenchmarkOptions {
   agent: string[];
@@ -50,6 +51,9 @@ interface BenchmarkOptions {
   testCase?: string[];
   label?: string[];
   concurrency: string;
+  treatment?: string;
+  treatmentConfig?: string;
+  trials: string;
 }
 
 interface AgentResults {
@@ -170,7 +174,9 @@ async function runBenchmarkForAgent(
   verbose: boolean,
   concurrency?: number,
   evaluatorId?: string,
-  judgeModelId?: string
+  judgeModelId?: string,
+  treatment?: Treatment,
+  trialId?: string
 ): Promise<AgentResults> {
   const results: AgentResults = {
     agent,
@@ -196,6 +202,8 @@ async function runBenchmarkForAgent(
         ...(evaluatorId ? { evaluatorId } : {}),
         // Forward customer-supplied judge model id alongside agent model.
         ...(judgeModelId ? { judgeModelId } : {}),
+        ...(treatment ? { treatment } : {}),
+        ...(trialId ? { trialId } : {}),
       },
       (event: BenchmarkExecutionEvent) => {
         if (event.type === 'started') {
@@ -783,6 +791,16 @@ async function runUnifiedMode(
   cleanup!();
 }
 
+export function parseTreatmentConfig(value?: string): Record<string, unknown> {
+  if (!value) return {};
+  const raw = existsSync(value) && statSync(value).isFile() ? readFileSync(value, 'utf8') : value;
+  const parsed: unknown = JSON.parse(raw);
+  if (!parsed || Array.isArray(parsed) || typeof parsed !== 'object') {
+    throw new Error('--treatment-config must be a JSON object or a file containing one');
+  }
+  return parsed as Record<string, unknown>;
+}
+
 export function createBenchmarkCommand(): Command {
   const command = new Command('benchmark')
     .description('Run a benchmark against one or more agents')
@@ -824,6 +842,9 @@ export function createBenchmarkCommand(): Command {
     .option('--export <path>', 'Export results to file')
     .option('--format <type>', 'Report format for --export: json (default), html, pdf', 'json')
     .option('-c, --concurrency <n>', 'Number of test cases to run in parallel (default: 1)', '1')
+    .option('--treatment <label>', 'Optional treatment label (defaults to first 8 hash characters)')
+    .option('--treatment-config <json|file>', 'Treatment configuration JSON object or JSON file')
+    .option('--trials <n>', 'Number of complete benchmark passes', '1')
     .option('-v, --verbose', 'Show detailed output')
     .option('--stop-server', 'Stop the server after benchmark completes (default: keep running)')
     .option('--agent-path <path>', 'Path to the agent repository to use as judge grounding context (or set AH_AGENT_PATH)')
@@ -1247,19 +1268,24 @@ export function createBenchmarkCommand(): Command {
           totalTestCasesAcrossBenchmarks += benchmark.testCaseIds.length;
           for (const agent of agents) {
             const modelId = resolveAgentModel(agent, getDefaultModel(config));
-            const results = await runBenchmarkForAgent(
-              api,
-              agent,
+            const declared = parseTreatmentConfig(options.treatmentConfig);
+            const treatment = createTreatment({
+              agent: { key: agent.key, endpoint: agent.endpoint },
               modelId,
-              benchmark,
-              options.verbose || false,
-              concurrency,
-              options.evaluator,
-              options.judgeModel
-            );
-            // Annotate the result so the summary can attribute it to the right benchmark
-            (results as any).benchmark = benchmark;
-            allResults.push(results);
+              connector: agent.connectorType || 'agui-streaming',
+              ...declared,
+            }, options.treatment);
+            const trialCount = Math.max(1, parseInt(options.trials, 10) || 1);
+            for (let trial = 0; trial < trialCount; trial++) {
+              const results = await runBenchmarkForAgent(
+                api, agent, modelId, benchmark, options.verbose || false,
+                concurrency, options.evaluator, options.judgeModel,
+                treatment, createTrialId()
+              );
+              // Annotate the result so the summary can attribute it to the right benchmark
+              (results as any).benchmark = benchmark;
+              allResults.push(results);
+            }
           }
         }
 

@@ -4,6 +4,9 @@
  */
 
 import type { Node, Edge } from '@xyflow/react';
+import type { Treatment } from '@/lib/treatment';
+
+export type { Treatment } from '@/lib/treatment';
 
 // Shared type for difficulty levels
 export type Difficulty = 'Easy' | 'Medium' | 'Hard';
@@ -435,6 +438,8 @@ export interface TestCaseRun {
   testCaseVersion?: number;          // Which version was run (optional for backwards compatibility)
   experimentId?: string;             // ID of the benchmark (field name preserved for storage compatibility)
   experimentRunId?: string;          // ID of the benchmark run (field name preserved for storage compatibility)
+  treatment?: Treatment;              // Immutable resolved agent/environment configuration
+  trialId?: string;                   // One complete benchmark pass under the treatment
 
   // Execution context
   agentName: string;
@@ -1053,6 +1058,8 @@ export interface BenchmarkRun {
   evaluatorId?: string;            // Evaluator to use for judging (optional, defaults to RCA Default)
   headers?: Record<string, string>; // Custom headers
   concurrency?: number;              // Parallel test case execution limit (1 = sequential, default)
+  treatment?: Treatment;              // Shared treatment snapshot for every case in this pass
+  trialId?: string;                   // Unique complete-pass identity
 
   // Version tracking (for reproducibility)
   benchmarkVersion?: number;       // Which benchmark version was executed (undefined = legacy data)
@@ -1391,7 +1398,7 @@ export interface TestCaseComparisonRow {
 
 // Derived type for creating new benchmark runs - stays in sync with BenchmarkRun
 export type RunConfigInput = Pick<BenchmarkRun,
-  'name' | 'description' | 'agentKey' | 'modelId' | 'judgeModelId' | 'agentEndpoint' | 'headers' | 'concurrency' | 'evaluatorId'
+  'name' | 'description' | 'agentKey' | 'modelId' | 'judgeModelId' | 'agentEndpoint' | 'headers' | 'concurrency' | 'evaluatorId' | 'treatment' | 'trialId'
 >;
 
 // ============ Server/API Types ============

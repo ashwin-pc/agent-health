@@ -166,6 +166,10 @@ function buildAgentConfigForRun(run: BenchmarkRun): AgentConfig {
       ...baseAgent.headers,
       ...run.headers,
     },
+    connectorConfig: {
+      ...(baseAgent.connectorConfig || {}),
+      ...(run.treatment?.config.overlays ? { __treatmentOverlays: run.treatment.config.overlays } : {}),
+    },
   };
 }
 
@@ -627,6 +631,8 @@ export async function executeRun(
           // them. Mirrors the same stamp in runSingleUseCase.
           (report as any).judgeModelId = (report as any).judgeModelId ?? run.judgeModelId;
           (report as any).evaluatorId = (report as any).evaluatorId ?? run.evaluatorId;
+          (report as any).treatment = run.treatment;
+          (report as any).trialId = run.trialId;
           // Eval test_case span traceId — Strategy A correlator for the trace
           // poller (see evaluationRunner for details).
           (report as any).traceId = (report as any).traceId ?? caseSpan?.spanContext().traceId;
@@ -849,6 +855,8 @@ async function saveReportWithModule(storage: IStorageModule, report: any): Promi
     // from the run-level cx input (BenchmarkRun.judgeModelId).
     judgeModelId: report.judgeModelId,
     evaluatorId: report.evaluatorId,
+    treatment: report.treatment,
+    trialId: report.trialId,
     status: report.status,
     passFailStatus: report.passFailStatus,
     // Real W3C OTel trace id when we have it (extracted from polled spans),

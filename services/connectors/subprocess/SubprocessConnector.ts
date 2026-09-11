@@ -9,6 +9,8 @@
  */
 
 import { spawn, ChildProcess } from 'child_process';
+import { mkdirSync, writeFileSync } from 'fs';
+import { resolve, sep } from 'path';
 import { ToolCallStatus } from '@/types';
 import type { TrajectoryStep } from '@/types';
 import { BaseConnector } from '@/services/connectors/base/BaseConnector';
@@ -93,6 +95,20 @@ export class SubprocessConnector<
   /**
    * Build input for the subprocess
    */
+  describeEnvironment(request: ConnectorRequest): Record<string, unknown> {
+    const config = this.resolveExecutionConfig(request);
+    return {
+      connector: this.type,
+      command: config.command,
+      workingDir: config.workingDir || process.cwd(),
+      skills: request.overlays?.skills || [],
+      overlaysApplied: {
+        files: Object.keys(request.overlays?.files || {}).sort(),
+        env: Object.keys(request.overlays?.env || {}).sort(),
+      },
+    };
+  }
+
   buildPayload(request: ConnectorRequest): string {
     // Build a simple prompt string for CLI tools
     let prompt = request.testCase.initialPrompt;
@@ -132,7 +148,23 @@ export class SubprocessConnector<
     // previous mutate-then-restore-in-`finally` pattern only held because no
     // `await` sat between the write and the synchronous reads; it silently
     // broke the moment a callback read `this.config` after the first await.)
-    const config = this.resolveExecutionConfig(request);
+    const resolvedConfig = this.resolveExecutionConfig(request);
+    const config: ResolvedSubprocessConfig = {
+      ...resolvedConfig,
+      env: { ...(resolvedConfig.env || {}), ...(request.overlays?.env || {}) },
+    };
+
+    // Materialize declared files over the pinned workspace. Reject traversal:
+    // overlays may only address descendants of the effective working directory.
+    const workspace = resolve(config.workingDir || process.cwd());
+    for (const [relativePath, contents] of Object.entries(request.overlays?.files || {})) {
+      const target = resolve(workspace, relativePath);
+      if (target !== workspace && !target.startsWith(`${workspace}${sep}`)) {
+        throw new Error(`Treatment overlay escapes workspace: ${relativePath}`);
+      }
+      mkdirSync(resolve(target, '..'), { recursive: true });
+      writeFileSync(target, contents, 'utf8');
+    }
 
     const command = endpoint || config.command;
     const args = config.args || [];
