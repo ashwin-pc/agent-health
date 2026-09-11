@@ -231,6 +231,30 @@ describe('BenchmarkRunsPage2 — associated (non-embedded) eval-runs merge (bug 
     expect(card.querySelector('[title="Delete run"]')).toBeTruthy();
   });
 
+  it('renders treatment groups, trial badges, and one heat cell per trial', async () => {
+    const treatment = (hash: string, label: string) => ({ id: `t-${hash}`, configHash: hash, label, config: {} });
+    mockGetById.mockResolvedValue(makeBenchmark({ runs: [
+      makeEmbeddedRun({ id: 'a2', name: 'A2', createdAt: '2026-04-01', treatment: treatment('aaa', 'Alpha'), trialId: 'ta2' }),
+      makeEmbeddedRun({ id: 'b2', name: 'B2', createdAt: '2026-03-01', treatment: treatment('bbb', 'Beta'), trialId: 'tb2' }),
+      makeEmbeddedRun({ id: 'a1', name: 'A1', createdAt: '2026-02-01', treatment: treatment('aaa', 'Alpha'), trialId: 'ta1' }),
+    ] }));
+    await renderPage();
+    const headers = await screen.findAllByTestId('treatment-group');
+    expect(headers).toHaveLength(2);
+    expect(headers[0].textContent).toContain('Alpha');
+    expect(headers[0].textContent).toContain('2 trials');
+    expect(headers[0].querySelectorAll('[title$="passed"]')).toHaveLength(2);
+    expect(screen.getAllByText('Trial 1')).toHaveLength(2);
+    expect(screen.getByText('Trial 2')).toBeTruthy();
+  });
+
+  it('preserves the legacy ungrouped rendering for one treatment', async () => {
+    mockGetById.mockResolvedValue(makeBenchmark());
+    await renderPage();
+    expect(screen.queryByTestId('treatment-group')).toBeNull();
+    expect(screen.queryByText(/^Trial /)).toBeNull();
+  });
+
   it('is resilient to the evaluation-runs fetch failing (embedded runs still render)', async () => {
     mockGetById.mockResolvedValue(makeBenchmark());
     mockListEvaluationRuns.mockRejectedValue(new Error('network error'));
