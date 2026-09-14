@@ -9,6 +9,10 @@
  */
 
 import { spawn, ChildProcess } from 'child_process';
+import { cpSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'fs';
+import { resolve, sep } from 'path';
+import { tmpdir } from 'os';
+import { createHash } from 'crypto';
 import { ToolCallStatus } from '@/types';
 import type { TrajectoryStep } from '@/types';
 import { BaseConnector } from '@/connectors/base';
@@ -93,6 +97,18 @@ export class SubprocessConnector<
   /**
    * Build input for the subprocess
    */
+  describeEnvironment(request: ConnectorRequest): Record<string, unknown> {
+    const digest = (value: string) => createHash('sha256').update(value).digest('hex');
+    return {
+      connector: this.type,
+      skills: [...(request.overlays?.skills || [])].sort(),
+      overlaysApplied: {
+        files: Object.fromEntries(Object.entries(request.overlays?.files || {}).sort(([a], [b]) => a.localeCompare(b)).map(([key, value]) => [key, digest(value)])),
+        env: Object.fromEntries(Object.entries(request.overlays?.env || {}).sort(([a], [b]) => a.localeCompare(b)).map(([key, value]) => [key, digest(value)])),
+      },
+    };
+  }
+
   buildPayload(request: ConnectorRequest): string {
     // Build a simple prompt string for CLI tools
     let prompt = request.testCase.initialPrompt;
@@ -132,7 +148,38 @@ export class SubprocessConnector<
     // previous mutate-then-restore-in-`finally` pattern only held because no
     // `await` sat between the write and the synchronous reads; it silently
     // broke the moment a callback read `this.config` after the first await.)
-    const config = this.resolveExecutionConfig(request);
+    const resolvedConfig = this.resolveExecutionConfig(request);
+    const fixtureWorkspace = resolve(resolvedConfig.workingDir || process.cwd());
+    const hasWorkspaceOverlay = Object.keys(request.overlays?.files || {}).length > 0 || (request.overlays?.skills?.length || 0) > 0;
+    const temporaryWorkspace = hasWorkspaceOverlay ? mkdtempSync(resolve(tmpdir(), 'agent-health-treatment-')) : undefined;
+    if (temporaryWorkspace) cpSync(fixtureWorkspace, temporaryWorkspace, { recursive: true });
+    const workspace = temporaryWorkspace || fixtureWorkspace;
+    const config: ResolvedSubprocessConfig = {
+      ...resolvedConfig,
+      workingDir: temporaryWorkspace || resolvedConfig.workingDir,
+      env: { ...(resolvedConfig.env || {}), ...(request.overlays?.env || {}) },
+    };
+
+    // Materialize declared files over an isolated copy of the pinned fixture.
+    // Overlay paths may only address descendants of that workspace.
+    for (const [relativePath, contents] of Object.entries(request.overlays?.files || {})) {
+      const target = resolve(workspace, relativePath);
+      if (target !== workspace && !target.startsWith(`${workspace}${sep}`)) {
+        throw new Error(`Treatment overlay escapes workspace: ${relativePath}`);
+      }
+      mkdirSync(resolve(target, '..'), { recursive: true });
+      writeFileSync(target, contents, 'utf8');
+    }
+    const skillsDirectory = request.connectorConfig?.skillsDirectory as string | undefined;
+    for (const skill of request.overlays?.skills || []) {
+      if (!/^[a-zA-Z0-9._-]+$/.test(skill)) throw new Error(`Invalid treatment skill name: ${skill}`);
+      if (!skillsDirectory) throw new Error('Treatment skills require connectorConfig.skillsDirectory');
+      const source = resolve(skillsDirectory, skill);
+      if (!existsSync(source)) throw new Error(`Treatment skill not found: ${skill}`);
+      const target = resolve(workspace, '.agent-health', 'skills', skill);
+      mkdirSync(resolve(target, '..'), { recursive: true });
+      cpSync(source, target, { recursive: true });
+    }
 
     const command = endpoint || config.command;
     const args = config.args || [];
@@ -169,7 +216,7 @@ export class SubprocessConnector<
       AGENT_EVAL_RUN_ID: runId,
     };
 
-    return new Promise((resolve, reject) => {
+    return new Promise<ConnectorResponse>((resolve, reject) => {
       const trajectory: TrajectoryStep[] = [];
       const rawOutput: Array<{ type: string; data: string; timestamp: number }> = [];
       let stdout = '';
@@ -339,8 +386,10 @@ export class SubprocessConnector<
 
         reject(new Error(errorMsg));
       });
+    }).finally(() => {
+      if (temporaryWorkspace) rmSync(temporaryWorkspace, { recursive: true, force: true });
+      this.debug('========== execute() COMPLETED ==========');
     });
-    this.debug('========== execute() COMPLETED ==========');
   }
 
   /**

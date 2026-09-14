@@ -12,7 +12,7 @@
  */
 
 import { createHash } from "node:crypto";
-import { cpSync, mkdtempSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { cpSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, relative, resolve, sep } from "node:path";
 
@@ -37,6 +37,8 @@ export type PiWebConnectorConfig = {
   keepSession?: boolean;
   /** Directory containing fixture envelope refs (defaults to <cwd>/fixtures). */
   fixturesDir?: string;
+  /** Named treatment skills are resolved beneath this directory. */
+  skillsDirectory?: string;
 };
 
 type SettlementStatus = {
@@ -162,6 +164,36 @@ export class PiWebConnector implements AgentConnector {
   readonly name = "pi-web Session";
   readonly supportsStreaming = false;
 
+  describeEnvironment(request: ConnectorRequest): Record<string, unknown> {
+    const config = (request.connectorConfig ?? {}) as PiWebConnectorConfig;
+    if (Object.keys(request.overlays?.env || {}).length > 0) {
+      throw new Error("pi-web treatment env overlays are unsupported by the session API");
+    }
+    const skills = [...(request.overlays?.skills || [])].sort();
+    const skillIntegrity = Object.fromEntries(skills.map(skill => {
+      if (!/^[a-zA-Z0-9][a-zA-Z0-9._-]*$/.test(skill)) {
+        throw new Error(`Invalid treatment skill name: ${skill}`);
+      }
+      if (!config.skillsDirectory) throw new Error("Treatment skills require connectorConfig.skillsDirectory");
+      const source = resolve(config.skillsDirectory, skill);
+      // Fail before creating a session if a named skill is absent or invalid.
+      if (!statSync(join(source, "SKILL.md")).isFile()) throw new Error(`Treatment skill not found: ${skill}`);
+      return [skill, filesystemFixtureIntegrity(source)];
+    }));
+    return {
+      connector: this.type,
+      model: config.model || null,
+      skills,
+      skillIntegrity,
+      skillLocation: ".pi/skills",
+      overlaysApplied: {
+        files: Object.fromEntries(Object.entries(request.overlays?.files || {})
+          .sort(([a], [b]) => a.localeCompare(b))
+          .map(([key, value]) => [key, createHash("sha256").update(value).digest("hex")])),
+      },
+    };
+  }
+
   buildPayload(request: ConnectorRequest): { message: string } {
     const context = Array.isArray(request.testCase.context)
       ? request.testCase.context.filter(
@@ -190,6 +222,7 @@ export class PiWebConnector implements AgentConnector {
     onRawEvent?: ConnectorRawEventCallback,
   ): Promise<ConnectorResponse> {
     const config = (request.connectorConfig ?? {}) as PiWebConnectorConfig;
+    const environment = this.describeEnvironment(request);
     const token = config.token || auth.token || process.env.PI_WEB_TOKEN;
     const timeoutMs = Number(config.timeoutMs ?? DEFAULT_TIMEOUT_MS);
     const pollIntervalMs = Number(config.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS);
@@ -253,6 +286,29 @@ export class PiWebConnector implements AgentConnector {
       cwd = fixtureTempPath;
     } else {
       console.info("[pi-web connector] no fixture configured");
+    }
+
+    const hasWorkspaceOverlay = (request.overlays?.skills?.length || 0) > 0
+      || Object.keys(request.overlays?.files || {}).length > 0;
+    if (hasWorkspaceOverlay && !fixtureTempPath) {
+      fixtureTempPath = mkdtempSync(join(tmpdir(), "pi-web-treatment-"));
+      cpSync(cwd, fixtureTempPath, { recursive: true, dereference: true });
+      cwd = fixtureTempPath;
+    }
+    // The pinned fixture digest above excludes treatments. Apply only to the
+    // per-session materialized copy; never mutate the source fixture or cwd.
+    for (const [relativePath, contents] of Object.entries(request.overlays?.files || {})) {
+      const target = resolve(cwd, relativePath);
+      if (!target.startsWith(`${resolve(cwd)}${sep}`)) {
+        throw new Error(`Treatment overlay escapes workspace: ${relativePath}`);
+      }
+      mkdirSync(resolve(target, ".."), { recursive: true });
+      writeFileSync(target, contents, "utf8");
+    }
+    for (const skill of request.overlays?.skills || []) {
+      const target = join(cwd, ".pi", "skills", skill);
+      mkdirSync(resolve(target, ".."), { recursive: true });
+      cpSync(resolve(config.skillsDirectory!, skill), target, { recursive: true, dereference: true });
     }
 
     const record = (kind: string, data: unknown): void => {
@@ -391,6 +447,7 @@ export class PiWebConnector implements AgentConnector {
       metadata: {
         sessionId,
         sessionName,
+        environment,
         timedOut,
         keepSession,
         workspaceDir: cwd,

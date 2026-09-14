@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PiWebConnector } from './index';
@@ -23,7 +23,64 @@ function jsonResponse(data: unknown): Response {
 }
 
 describe('PiWebConnector', () => {
-  afterEach(() => jest.restoreAllMocks());
+  const temporaryPaths: string[] = [];
+  afterEach(() => {
+    jest.restoreAllMocks();
+    temporaryPaths.splice(0).forEach(path => rmSync(path, { recursive: true, force: true }));
+  });
+
+  it('materializes named skills in isolated pi workspaces without changing the fixture', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'agent-health-pi-web-overlay-'));
+    temporaryPaths.push(root);
+    const fixturesDir = join(root, 'fixtures');
+    const skillsDirectory = join(root, 'skills');
+    mkdirSync(join(fixturesDir, 'bare'), { recursive: true });
+    mkdirSync(join(skillsDirectory, 'design-doc'), { recursive: true });
+    writeFileSync(join(fixturesDir, 'bare', 'source.txt'), 'pinned');
+    writeFileSync(join(skillsDirectory, 'design-doc', 'SKILL.md'), 'design skill bytes');
+    jest.spyOn(global, 'fetch').mockImplementation(async (input) => {
+      const path = new URL(String(input)).pathname;
+      if (path === '/api/new-chat') return jsonResponse({ sessionId: 'session-overlay' });
+      if (path.endsWith('/status')) return jsonResponse({ settled: true });
+      if (path === '/api/messages') return jsonResponse({ messages: [{ role: 'assistant', text: 'done' }] });
+      return jsonResponse({ ok: true });
+    });
+    const request = {
+      testCase: { ...testCase, context: [{ description: 'fixture', value: 'bare', disposition: 'connector' }] },
+      modelId: 'model',
+      connectorConfig: { fixturesDir, skillsDirectory, settleMs: 0 },
+    };
+    const connector = new PiWebConnector();
+    for (const skills of [[], ['design-doc']]) {
+      const result = await connector.execute('http://pi-web.example', {
+        ...request, overlays: { skills, files: { 'extra.txt': 'overlay' } },
+      }, { type: 'none' });
+      const workspace = result.metadata!.workspaceDir;
+      temporaryPaths.push(workspace);
+      expect(readFileSync(join(workspace, 'source.txt'), 'utf8')).toBe('pinned');
+      expect(readFileSync(join(workspace, 'extra.txt'), 'utf8')).toBe('overlay');
+      expect(existsSync(join(workspace, '.pi/skills/design-doc/SKILL.md'))).toBe(skills.length > 0);
+      expect(result.metadata!.environment.skills).toEqual(skills);
+      if (skills.length) expect(readFileSync(join(workspace, '.pi/skills/design-doc/SKILL.md'), 'utf8')).toBe('design skill bytes');
+    }
+    expect(existsSync(join(fixturesDir, 'bare', '.pi'))).toBe(false);
+    expect(existsSync(join(fixturesDir, 'bare', 'extra.txt'))).toBe(false);
+    const withSkill = { ...request, overlays: { skills: ['design-doc'] } };
+    const before = connector.describeEnvironment(withSkill);
+    expect(connector.describeEnvironment(withSkill)).toEqual(before);
+    writeFileSync(join(skillsDirectory, 'design-doc', 'SKILL.md'), 'changed bytes');
+    expect(connector.describeEnvironment(withSkill)).not.toEqual(before);
+  });
+
+  it('rejects unsupported env and invalid skills instead of silently ignoring treatments', () => {
+    const connector = new PiWebConnector();
+    expect(() => connector.describeEnvironment({ testCase, modelId: 'model', overlays: { env: { MODE: 'test' } } }))
+      .toThrow('env overlays are unsupported');
+    expect(() => connector.describeEnvironment({ testCase, modelId: 'model', overlays: { skills: ['../escape'] } }))
+      .toThrow('Invalid treatment skill name');
+    expect(() => connector.describeEnvironment({ testCase, modelId: 'model', overlays: { skills: ['design-doc'] } }))
+      .toThrow('skillsDirectory');
+  });
 
   it('builds prompts from prompt-disposition context only', () => {
     const connector = new PiWebConnector();
@@ -113,6 +170,7 @@ describe('PiWebConnector', () => {
 
   it('rejects an envelope whose filesystem fixture fails integrity verification', async () => {
     const fixturesDir = mkdtempSync(join(tmpdir(), 'agent-health-pi-web-fixtures-'));
+    temporaryPaths.push(fixturesDir);
     mkdirSync(join(fixturesDir, 'workspace'));
     writeFileSync(join(fixturesDir, 'workspace', 'file.txt'), 'actual');
 

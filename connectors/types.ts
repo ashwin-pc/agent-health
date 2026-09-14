@@ -5,6 +5,16 @@
 
 import type { TestCase, TrajectoryStep, AgentHooks } from '@/types';
 
+export interface ConnectorEnvironmentReport {
+  [key: string]: unknown;
+}
+
+export interface TreatmentOverlays {
+  skills?: string[];
+  files?: Record<string, string>;
+  env?: Record<string, string>;
+}
+
 // ============ Connector Protocol Types ============
 
 /**
@@ -87,6 +97,8 @@ export interface ConnectorRequest {
    * Threaded from agent.connectorConfig at evaluation time.
    */
   connectorConfig?: Record<string, any>;
+  /** Workspace/environment changes applied on top of the pinned fixture. */
+  overlays?: TreatmentOverlays;
 }
 
 /**
@@ -179,6 +191,9 @@ export interface AgentConnector {
    */
   healthCheck?(endpoint: string, auth: ConnectorAuth): Promise<boolean>;
 
+  /** Describe the environment this connector will materialize for this request. */
+  describeEnvironment?(request: ConnectorRequest): Promise<ConnectorEnvironmentReport> | ConnectorEnvironmentReport;
+
   /**
    * Optional trace-context propagation strategy. Defaults provided by each
    * connector class; users may override per-agent via `connectorConfig.traceContext`.
@@ -231,6 +246,8 @@ export interface AgentConfigWithConnector {
   connectorType?: ConnectorProtocol;
 
   /** Connector-specific configuration */
+  /** Connector settings. Workspace connectors may set `skillsDirectory` to
+   * the directory whose named children are copied for treatment skill overlays. */
   connectorConfig?: SubprocessConfig | Record<string, any>;
 
   /** Authentication configuration */
