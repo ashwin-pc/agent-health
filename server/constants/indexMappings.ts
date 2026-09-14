@@ -121,6 +121,14 @@ export function getIndexMappings(): IndexMappings {
           // `results.put()` partial updates and `docType.keyword` term
           // queries both continued to work unchanged.
           results: { type: 'object', enabled: false },
+          // First-class evaluation runs share this index with benchmarks.
+          treatment: {
+            properties: {
+              id: { type: 'keyword' }, label: { type: 'keyword' },
+              configHash: { type: 'keyword' }, config: { type: 'object', enabled: false },
+            },
+          },
+          trialId: { type: 'keyword' },
           runs: {
             type: 'nested',
             properties: {

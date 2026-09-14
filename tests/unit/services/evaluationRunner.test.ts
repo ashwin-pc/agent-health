@@ -148,6 +148,17 @@ describe('evaluationRunner', () => {
   });
 
   describe('executeEvaluationRun', () => {
+    it('applies treatment overlays and stamps placeholder and completed reports', async () => {
+      const treatment = { id: 'treatment-test', label: 'skill', configHash: 'a'.repeat(64), config: { overlays: { skills: ['design-doc'] } } };
+      const run = makeRun({ treatment, trialId: 'trial-one' });
+      const storage = makeStorageModule();
+      await executeEvaluationRun(run, [makeTestCase('tc-1')], { storageModule: storage, onProgress: jest.fn() });
+      expect(mockRunEvaluation).toHaveBeenCalledWith(expect.anything(), expect.anything(), expect.anything(), expect.anything(),
+        expect.objectContaining({ overlays: { skills: ['design-doc'] } }));
+      expect(storage.runs.create).toHaveBeenCalledWith(expect.objectContaining({ treatment, trialId: 'trial-one' }));
+      expect(storage.runs.update).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ treatment, trialId: 'trial-one' }));
+    });
+
     it('should execute all test cases and return completed run with stats', async () => {
       const testCases = [makeTestCase('tc-1'), makeTestCase('tc-2')];
       const run = makeRun();

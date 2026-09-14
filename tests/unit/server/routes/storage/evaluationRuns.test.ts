@@ -64,6 +64,13 @@ jest.mock('@/server/services/customAgentStore', () => ({
   getCustomAgents: jest.fn().mockReturnValue([]),
 }));
 
+jest.mock('@/services/connectors/server', () => ({
+  connectorRegistry: { getForAgent: jest.fn().mockReturnValue({
+    type: 'mock',
+    describeEnvironment: (request: any) => ({ skills: request.overlays?.skills || [] }),
+  }) },
+}));
+
 jest.mock('@/lib/resolveAgentModel', () => ({
   resolveAgentModel: jest.fn().mockReturnValue('resolved-model'),
 }));
@@ -165,6 +172,38 @@ describe('Evaluation Runs API', () => {
   });
 
   describe('POST /api/storage/evaluation-runs', () => {
+    it('resolves and persists treatments on the storage-neutral run and benchmark projection', async () => {
+      require('@/lib/config/index').loadConfigSync.mockReturnValue({ agents: [{ key: 'agent-1', endpoint: 'http://agent', connectorType: 'mock' }] });
+      mockBenchmarksGetById.mockResolvedValue({ id: 'bench-1', testCaseIds: ['tc-1'] });
+      await request(app).post('/api/storage/evaluation-runs').send({
+        sources: [{ type: 'benchmark', benchmarkId: 'bench-1' }], agentKey: 'agent-1', benchmarkId: 'bench-1',
+        treatmentConfig: { label: 'skill', config: { overlays: { skills: ['design-doc'] } } }, trialId: 'trial-one',
+      }).expect(200);
+      const created = mockEvaluationRunsCreate.mock.calls[0][0];
+      expect(created.trialId).toBe('trial-one');
+      expect(created.treatment).toEqual(expect.objectContaining({ label: 'skill', configHash: expect.stringMatching(/^[a-f0-9]{64}$/) }));
+      expect(created.treatment.config).toEqual(expect.objectContaining({
+        modelId: 'resolved-model', overlays: { skills: ['design-doc'] }, environment: { skills: ['design-doc'] },
+      }));
+      expect(mockExecuteEvaluationRun).toHaveBeenCalledWith(expect.objectContaining({ treatment: created.treatment, trialId: 'trial-one' }), expect.anything(), expect.anything());
+      expect(mockBenchmarksAddRun).toHaveBeenCalledWith('bench-1', expect.objectContaining({ treatment: created.treatment, trialId: 'trial-one' }));
+    });
+
+    it('rejects malformed treatment metadata before opening the execution stream', async () => {
+      await request(app).post('/api/storage/evaluation-runs').send({ treatmentConfig: { config: [] } }).expect(400);
+      await request(app).post('/api/storage/evaluation-runs').send({ trialId: '' }).expect(400);
+      expect(mockEvaluationRunsCreate).not.toHaveBeenCalled();
+    });
+
+    it('fails loudly rather than executing an unresolved treatment', async () => {
+      require('@/lib/config/index').loadConfigSync.mockReturnValue({ agents: [] });
+      const response = await request(app).post('/api/storage/evaluation-runs').send({
+        sources: [{ type: 'test-case', testCaseId: 'tc-1' }], agentKey: 'missing', treatmentConfig: { config: {} },
+      }).expect(200);
+      expect(response.text).toContain('Treatment resolution failed');
+      expect(mockEvaluationRunsCreate).not.toHaveBeenCalled();
+      expect(mockExecuteEvaluationRun).not.toHaveBeenCalled();
+    });
     const body = { sources: [{ testCaseId: 'tc-1' }], agentKey: 'mock-agent' };
 
     it('400s when sources is missing/empty or agentKey is missing', async () => {

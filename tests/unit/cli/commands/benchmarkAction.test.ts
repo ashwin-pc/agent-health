@@ -113,6 +113,7 @@ type MockApiClient = {
   executeBenchmark: jest.Mock;
   findBenchmark: jest.Mock;
   getReportById: jest.Mock;
+  getEvaluationRun: jest.Mock;
   listTestCases: jest.Mock;
 };
 
@@ -177,6 +178,7 @@ function makeApiClient(overrides: Partial<MockApiClient> = {}): MockApiClient {
     executeBenchmark: jest.fn(),
     findBenchmark: jest.fn(),
     getReportById: jest.fn(),
+    getEvaluationRun: jest.fn(),
     listTestCases: jest.fn(),
     ...overrides,
   };
@@ -594,6 +596,30 @@ describe('Benchmark Command - Real Module Coverage', () => {
       expect(joinedConsoleOutput(logSpy)).toContain('TABLE');
       expect(currentApi.findBenchmark).toHaveBeenCalledWith('Existing Benchmark');
       expect(cleanupSpy).toHaveBeenCalled();
+    });
+
+    it('runs named treatment trials through the storage-neutral API with distinct trial ids', async () => {
+      currentApi.findBenchmark.mockResolvedValue(makeBenchmark());
+      currentApi.getEvaluationRun.mockResolvedValue({ id: 'eval-1', status: 'completed', results: { 'tc-1': { status: 'completed', reportId: 'report-1' } } });
+      const events = 'data: {"runId":"eval-1","testCases":[{"id":"tc-1"}]}\n\ndata: {"status":"completed"}\n\n';
+      global.fetch = jest.fn().mockImplementation(async () => ({
+        ok: true,
+        body: { getReader: () => ({ read: jest.fn()
+          .mockResolvedValueOnce({ done: false, value: Buffer.from(events) })
+          .mockResolvedValue({ done: true }) }) },
+      }));
+      await runBenchmarkCommand(['-n', 'Benchmark One', '-a', 'demo-agent', '--treatment', 'skill',
+        '--treatment-config', '{"overlays":{"skills":["design-doc"]}}', '--trials', '2']);
+      const calls = (global.fetch as jest.Mock).mock.calls;
+      expect(calls).toHaveLength(2);
+      expect(calls.map(([url]) => url)).toEqual(Array(2).fill('http://localhost:4001/api/storage/evaluation-runs'));
+      const payloads = calls.map(([, init]) => JSON.parse(init.body));
+      expect(new Set(payloads.map(body => body.trialId)).size).toBe(2);
+      for (const body of payloads) {
+        expect(body.sources).toEqual([{ type: 'benchmark', benchmarkId: 'bench-1' }]);
+        expect(body.treatmentConfig).toEqual({ label: 'skill', config: { overlays: { skills: ['design-doc'] } } });
+      }
+      expect(currentApi.executeBenchmark).not.toHaveBeenCalled();
     });
 
     it('exits with a helpful error when the server is already running and no source is specified', async () => {

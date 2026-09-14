@@ -298,6 +298,8 @@ export async function executeEvaluationRun(
             // Group the run under its parent EvaluationRun so the
             // experimentContext lookup in RunDetailsPage works.
             experimentRunId: run.id,
+            ...(run.treatment ? { treatment: run.treatment } : {}),
+            ...(run.trialId ? { trialId: run.trialId } : {}),
             experimentId: run.benchmarkId,
             // Empty fixtures — will be populated when the agent + judge
             // complete and we update this same doc.
@@ -411,6 +413,7 @@ export async function executeEvaluationRun(
               };
               const doInvoke = () => invokeAgent(agentConfig, bedrockModelId, invocationTestCase, {
                 registry: connectorRegistry,
+                ...(run.treatment?.config.overlays ? { overlays: run.treatment.config.overlays } : {}),
                 ...(options?.env ? { env: options.env } : {}),
               });
               // Wrap in the eval span's context so connectors propagate W3C
@@ -642,6 +645,7 @@ export async function executeEvaluationRun(
               () => {}, // No debug callback needed
               {
                 registry: connectorRegistry,
+                ...(run.treatment?.config.overlays ? { overlays: run.treatment.config.overlays } : {}),
                 evaluatorId: run.evaluatorId,
                 // Forward run-level judge model so the SDK runs match the
                 // UI/CLI "separate agent vs judge model" contract. Persisted
@@ -690,6 +694,8 @@ export async function executeEvaluationRun(
           (report as any).judgeModelId = (report as any).judgeModelId ?? run.judgeModelId;
           (report as any).experimentRunId = (report as any).experimentRunId ?? run.id;
           (report as any).experimentId = (report as any).experimentId ?? run.benchmarkId;
+          report.treatment = run.treatment;
+          report.trialId = run.trialId;
           let savedReport: EvaluationReport;
           if (placeholderRunId) {
             // Mirror saveReportWithModule's update shape: pass the report

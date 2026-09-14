@@ -511,7 +511,8 @@ async function runUnifiedMode(
   config: ResolvedConfig,
   serverConfig: any,
   isCI: boolean,
-  fileArray: string[]
+  fileArray: string[],
+  trialId?: string,
 ): Promise<void> {
   // Build sources from flags
   const sources: TestCaseSource[] = [];
@@ -655,6 +656,10 @@ async function runUnifiedMode(
         concurrency,
         benchmarkId,
         trigger: 'cli',
+        ...(trialId ? {
+          trialId,
+          treatmentConfig: { label: options.treatment, config: parseTreatmentConfig(options.treatmentConfig) },
+        } : {}),
       }),
     });
 
@@ -869,9 +874,19 @@ export function createBenchmarkCommand(): Command {
         (options.label && options.label.length > 0) ||
         fileArray.length > 1;
 
-      if (hasNewFlags || hasCodeFile || (fileArray.length > 0 && (options.dir?.length || options.testCase?.length || options.label?.length))) {
-        // Unified evaluation-run mode — delegate to new API
-        await runUnifiedMode(options, config, serverConfig, isCI, fileArray);
+      const hasTreatmentOptions = options.treatment !== undefined || options.treatmentConfig !== undefined
+        || Math.max(1, parseInt(options.trials, 10) || 1) > 1;
+      if (hasTreatmentOptions || hasNewFlags || hasCodeFile || (fileArray.length > 0 && (options.dir?.length || options.testCase?.length || options.label?.length))) {
+        // Treatment runs use the storage-neutral API, including file-backed
+        // servers. The legacy benchmark execute endpoint requires OpenSearch.
+        if (hasTreatmentOptions) {
+          parseTreatmentConfig(options.treatmentConfig); // Reject malformed config before starting any trial.
+          for (const trialId of createTrialIds(Math.max(1, parseInt(options.trials, 10) || 1))) {
+            await runUnifiedMode(options, config, serverConfig, isCI, fileArray, trialId);
+          }
+        } else {
+          await runUnifiedMode(options, config, serverConfig, isCI, fileArray);
+        }
         return;
       }
 

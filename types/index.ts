@@ -1218,6 +1218,11 @@ export interface EvaluationRun {
   headers?: Record<string, string>;
   concurrency?: number;
 
+  /** Resolved agent/environment configuration shared by every case in this pass. */
+  treatment?: Treatment;
+  /** Unique identity for this complete pass, independent of treatment hash. */
+  trialId?: string;
+
   // Provenance — where did the test cases come from?
   sources: TestCaseSource[];
   trigger: 'ui' | 'cli' | 'api' | 'schedule';

@@ -9,6 +9,9 @@ Inspired by [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)
 
 ## [Unreleased]
 
+### Fixed — file-mode treatment execution
+- Treatment CLI flags now use the storage-neutral evaluation-runs API, including named benchmarks on file-backed servers. Each trial forwards its declaration, resolves the connector environment server-side, applies overlays, and persists treatment/trial provenance on the evaluation run, every report, and the benchmark projection. Malformed or unresolvable declarations fail loudly. A real-route/subprocess/file-storage integration test covers two arms with two trials each.
+
 ### Fixed — report treatment provenance
 - Report details now show treatment label, abbreviated config hash and trial identity, full-value tooltips, and a collapsed opaque JSON config disclosure. The wrapping strip is also visible in the compact case inspector; legacy reports without treatments are unchanged.
 

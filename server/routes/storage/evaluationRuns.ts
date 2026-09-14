@@ -27,6 +27,9 @@ import {
 import { loadConfigSync } from '../../../lib/config/index.js';
 import { getCustomAgents } from '../../services/customAgentStore.js';
 import { resolveAgentModel } from '../../../lib/resolveAgentModel.js';
+import { connectorRegistry } from '../../../services/connectors/server.js';
+import { resolveTreatment } from '../../../services/treatmentResolver.js';
+import { createTreatment } from '../../../lib/treatment.js';
 import { computeImageDigest, buildImageDoc } from '../../../lib/benchmarkImage.js';
 import { validateRunNameUpdate } from '../../../lib/runName.js';
 
@@ -154,7 +157,16 @@ router.get('/api/storage/evaluation-runs/:id', async (req: Request, res: Respons
 // POST /api/storage/evaluation-runs - Create and execute an evaluation run (SSE streaming)
 router.post('/api/storage/evaluation-runs', async (req: Request, res: Response) => {
   try {
-    const { sources, agentKey, modelId, judgeModelId, name, description, evaluatorId, concurrency, benchmarkId, trigger, agentEndpoint, headers } = req.body;
+    const { sources, agentKey, modelId, judgeModelId, name, description, evaluatorId, concurrency, benchmarkId, trigger, agentEndpoint, headers, treatmentConfig, trialId } = req.body;
+
+    if (treatmentConfig !== undefined && (!treatmentConfig || typeof treatmentConfig !== 'object'
+      || Array.isArray(treatmentConfig) || !treatmentConfig.config || typeof treatmentConfig.config !== 'object'
+      || Array.isArray(treatmentConfig.config))) {
+      return res.status(400).json({ error: 'treatmentConfig must contain a config object' });
+    }
+    if (trialId !== undefined && (typeof trialId !== 'string' || !trialId.trim())) {
+      return res.status(400).json({ error: 'trialId must be a non-empty string' });
+    }
 
     // Validate required fields
     if (!sources || !Array.isArray(sources) || sources.length === 0) {
@@ -250,8 +262,28 @@ router.post('/api/storage/evaluation-runs', async (req: Request, res: Response) 
       resolvedModelId = resolveAgentModel(allAgents.find(a => a.key === agentKey), modelId);
     } catch { /* loadConfigSync or anything else — keep fallback */ }
 
+    // Resolve against the same effective agent/model that execution uses.
+    // Do not silently accept a declaration if its environment cannot resolve.
+    let treatment: EvaluationRun['treatment'];
+    if (treatmentConfig !== undefined) {
+      try {
+        const cfg = loadConfigSync();
+        const agent = [...cfg.agents, ...getCustomAgents()].find(a => a.key === agentKey);
+        if (!agent) throw new Error(`Agent not found for treatment: ${agentKey}`);
+        const effectiveAgent = { ...agent, endpoint: agentEndpoint || agent.endpoint };
+        treatment = await resolveTreatment(createTreatment(treatmentConfig.config, treatmentConfig.label),
+          effectiveAgent, connectorRegistry.getForAgent(effectiveAgent as any), resolvedModelId, testCases[0]);
+      } catch (error: any) {
+        sendSSE(res, 'error', { error: `Treatment resolution failed: ${error.message}` });
+        res.end();
+        return;
+      }
+    }
+
     const run: any = {
       id: runId,
+      ...(treatment ? { treatment } : {}),
+      ...(trialId ? { trialId } : {}),
       name: name || `Evaluation Run ${new Date().toLocaleDateString()}`,
       description,
       sources: resolved.sources,
@@ -330,6 +362,8 @@ router.post('/api/storage/evaluation-runs', async (req: Request, res: Response) 
           id: run.id, name: run.name, createdAt: run.createdAt, completedAt,
           status: finalStatus, agentKey: run.agentKey, modelId: run.modelId,
           judgeModelId: run.judgeModelId, results: completedRun.results, stats: completedRun.stats,
+          ...(run.treatment ? { treatment: run.treatment } : {}),
+          ...(run.trialId ? { trialId: run.trialId } : {}),
           ...(completedRun.judgeFailureSummary ? { judgeFailureSummary: completedRun.judgeFailureSummary } : {}),
           ...(run.description ? { description: run.description } : {}),
           ...(run.evaluatorId ? { evaluatorId: run.evaluatorId } : {}),
