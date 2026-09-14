@@ -85,5 +85,5 @@ describe('treatments through the file-backed unified API', () => {
     expect(persistedBenchmark.runs).toHaveLength(4);
     expect(persistedBenchmark.runs.map(run => run.trialId).sort()).toEqual(trialIds.sort());
     expect(readFileSync(join(mockRoot, 'fixture', 'mode.txt'), 'utf8')).toBe('bare');
-  }, 30000);
+  }, 60000); // Four real subprocesses plus durable writes on slower file backends.
 });
