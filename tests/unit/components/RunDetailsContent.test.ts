@@ -231,6 +231,30 @@ describe('RunDetailsContent', () => {
     mockCalcTimeRange.mockReturnValue({ startTime: 0, endTime: 0, duration: 0 });
   });
 
+  describe('treatment provenance', () => {
+    it('renders nothing for legacy reports without a treatment', async () => {
+      await renderAndWait(createReport());
+      expect(screen.queryByRole('region', { name: 'Treatment provenance' })).toBeNull();
+      expect(screen.queryByTestId('treatment-config')).toBeNull();
+    });
+
+    it.each([false, true])('shows identity and collapsed opaque config (hideMetrics=%s)', async (hideMetrics) => {
+      const configHash = 'a91f4baa' + '0'.repeat(56);
+      const trialId = 'trial-123456789';
+      const config = { overlays: { skills: ['design-doc'] }, environment: { skills: ['design-doc'] } };
+      await renderAndWait(createReport({ treatment: { id: `treatment-${configHash}`, label: 'design-doc-skill', configHash, config }, trialId }), { hideMetrics });
+      const section = screen.getByRole('region', { name: 'Treatment provenance' });
+      expect(section.textContent).toContain('Treatment: design-doc-skill · cfg a91f4baa · trial 12345678');
+      expect(screen.getByTitle(configHash).textContent).toBe('cfg a91f4baa');
+      expect(screen.getByTitle(trialId).textContent).toBe('trial 12345678');
+      const disclosure = screen.getByText('config').closest('details')!;
+      expect(disclosure.open).toBe(false);
+      fireEvent.click(screen.getByText('config'));
+      expect(disclosure.open).toBe(true);
+      expect(screen.getByTestId('treatment-config').textContent).toBe(JSON.stringify(config, null, 2));
+    });
+  });
+
   describe('pending banner messaging', () => {
     it('should show "Waiting for traces" when metricsStatus is pending and no spans loaded', async () => {
       const report = createReport({ metricsStatus: 'pending' });

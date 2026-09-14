@@ -475,6 +475,21 @@ export const RunDetailsContent: React.FC<RunDetailsContentProps> = ({
 
   return (
     <div className={`flex flex-col h-full ${className}`}>
+      {liveReport.treatment && (
+        <section aria-label="Treatment provenance" className="flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-1 border-b bg-card px-4 py-2 text-xs">
+          <p className="min-w-0 break-words">
+            Treatment: <strong>{liveReport.treatment.label || liveReport.treatment.configHash.slice(0, 8)}</strong>
+            {' · '}<span title={liveReport.treatment.configHash}>cfg {liveReport.treatment.configHash.slice(0, 8)}</span>
+            {' · '}<span title={liveReport.trialId}>trial {liveReport.trialId?.replace(/^trial-/, '').slice(0, 8) || '—'}</span>
+          </p>
+          <details key={liveReport.id} className="min-w-0 max-w-full open:w-full">
+            <summary className="w-fit cursor-pointer text-muted-foreground underline">config</summary>
+            <pre data-testid="treatment-config" className="mt-2 max-h-64 max-w-full overflow-auto whitespace-pre-wrap break-all rounded bg-muted p-2">
+              {JSON.stringify(liveReport.treatment.config, null, 2)}
+            </pre>
+          </details>
+        </section>
+      )}
       {/* Header — hidden entirely when used inside TestCaseInspectorPanel */}
       {!hideMetrics && (
       <div className="bg-card border-b p-4">

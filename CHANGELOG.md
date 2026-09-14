@@ -9,6 +9,9 @@ Inspired by [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)
 
 ## [Unreleased]
 
+### Fixed — report treatment provenance
+- Report details now show treatment label, abbreviated config hash and trial identity, full-value tooltips, and a collapsed opaque JSON config disclosure. The wrapping strip is also visible in the compact case inspector; legacy reports without treatments are unchanged.
+
 ### Added
 - **First-class benchmark treatments and trials** ([lib/treatment.ts](lib/treatment.ts), [services/connectors/types.ts](services/connectors/types.ts)): benchmark runs capture a canonical SHA-256 identity for resolved agent/environment configuration, connector-reported materialization details, opaque overlay configuration, and a fresh trial identity; subprocess connectors apply declared file/environment overlays safely and resolve named skill overlays from the agent's `connectorConfig.skillsDirectory`. The CLI adds `--treatment`, `--treatment-config`, and `--trials`.
 - **Hover preview of a test case's input prompt on the comparison page** ([components/comparison/TestCasePromptHoverCard.tsx](components/comparison/TestCasePromptHoverCard.tsx) (new), [services/comparison/testCasePromptCache.ts](services/comparison/testCasePromptCache.ts) (new), [hooks/useTestCasePromptPreview.ts](hooks/useTestCasePromptPreview.ts) (new), [components/comparison/UseCaseComparisonTable.tsx](components/comparison/UseCaseComparisonTable.tsx), [components/comparison/UseCaseExpandedRow.tsx](components/comparison/UseCaseExpandedRow.tsx), [components/comparison/sections/TaskSection.tsx](components/comparison/sections/TaskSection.tsx)): every test-case hyperlink on `/compare` (the case row's name link, and the expanded row's "View full test case" link) now shows the test case's name, category/difficulty badges, and a ~12-line clamped preview of its INITIAL PROMPT on hover or keyboard focus — "what was actually asked" without navigating away.
