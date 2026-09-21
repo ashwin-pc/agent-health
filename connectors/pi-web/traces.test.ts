@@ -42,7 +42,7 @@ it('builds a deterministic root, model turns and deduplicated tool calls from ha
     if (span !== spans[0]) expect(span.parentSpanId).toBe(spans[0].spanId);
   }
   expect(attrs(spans[1])).toMatchObject({ 'gen_ai.operation.name': 'chat', 'gen_ai.request.model': 'claude-sonnet',
-    'gen_ai.usage.input_tokens': 12, 'gen_ai.usage.output_tokens': 30 });
+    'gen_ai.usage.input_tokens': 112, 'gen_ai.usage.output_tokens': 30 });
   expect(attrs(spans[2])['agent_health.tool.args_summary']).toHaveLength(500);
   expect(spans[2].status).toEqual({ code: 2, message: 'denied' });
   expect(spans[2].startTimeUnixNano).toBe('1700000000400000000');

@@ -95,7 +95,10 @@ export function piWebEventsToOtlp(rawEvents: unknown[], options: TraceOptions) {
     add(`message:${index}`, `chat ${model || 'pi-web'}`, 'chat', from, chatEnd, {
       'gen_ai.request.model': model,
       'gen_ai.system': raw.provider,
-      'gen_ai.usage.input_tokens': typeof usage.input === 'number' ? usage.input : undefined,
+      // Pi reports uncached input separately; OTel input_tokens includes cache.
+      'gen_ai.usage.input_tokens': typeof usage.input === 'number'
+        ? usage.input + (typeof usage.cacheRead === 'number' ? usage.cacheRead : 0)
+          + (typeof usage.cacheWrite === 'number' ? usage.cacheWrite : 0) : undefined,
       'gen_ai.usage.output_tokens': typeof usage.output === 'number' ? usage.output : undefined,
       'gen_ai.usage.cache_read.input_tokens': typeof usage.cacheRead === 'number' ? usage.cacheRead : undefined,
       'gen_ai.usage.cache_creation.input_tokens': typeof usage.cacheWrite === 'number' ? usage.cacheWrite : undefined,
