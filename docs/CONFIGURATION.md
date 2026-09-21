@@ -139,6 +139,29 @@ This means you can start using Agent Health immediately without setting up OpenS
 
 ## Environment Variables
 
+### Local Trace Retention (Optional)
+
+`AH_TRACE_RETENTION_HOURS` sets retention for the file trace store. It is disabled
+by default: unset, invalid, zero, or negative values keep traces indefinitely.
+For a one-day local demo, start the receiver with:
+
+```bash
+AH_TRACE_RETENTION_HOURS=24 agent-health serve
+```
+
+At server startup and once per hour, the store deletes regular `.json` and
+`.ndjson` files in its traces directory whose **modification time** is older
+than the configured number of hours. It logs deletion and failure counts,
+skips symlinks, directories and temporary files, and never touches run reports
+or other data directories. `AGENT_HEALTH_DATA_DIR` also controls the root used
+for retention. Restart the server after changing the setting.
+
+This is a file-level TTL, not a span-level TTL. Writing to an active session's
+file refreshes its mtime and retains all spans in that file. Cleanup can lag
+by up to one hour. It does not configure OpenSearch index retention. File
+stores sharing a directory inside one server coordinate writes with cleanup;
+multiple server processes should not share a file data directory.
+
 ### AWS Credentials
 
 Required for Claude Code agent and Bedrock judge.

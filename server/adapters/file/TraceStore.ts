@@ -11,9 +11,9 @@
  * the file observability backend — runtime data, gitignored, parallel to
  * `.agent-health/data/runs/` etc. (see docs/CONFIGURATION.md → "Where things live").
  *
- * Retention: **keep forever**. Nothing is auto-evicted; customers delete files
- * themselves (and graduate to an OpenSearch observability cluster when local
- * storage grows). Writes are atomic (tmp + rename) and merge/dedupe by spanId.
+ * Retention is disabled by default. AH_TRACE_RETENTION_HOURS opts into file
+ * eviction by mtime at startup and hourly. Writes are atomic (tmp + rename)
+ * and merge/dedupe by spanId.
  */
 
 import { promises as fs } from 'fs';
@@ -21,6 +21,7 @@ import * as path from 'path';
 import { createHash } from 'crypto';
 import type { Span } from '../../../types/index.js';
 import { projectDataDir } from '../../../lib/config/statePaths.js';
+import { startTraceRetention, withTraceDirectoryLock } from './traceRetention.js';
 
 /** Resolve the traces data directory (overridable for tests via AGENT_HEALTH_DATA_DIR). */
 export function resolveTracesDir(baseDir?: string): string {
@@ -42,6 +43,7 @@ export class TraceStore {
 
   constructor(baseDir?: string) {
     this.dir = resolveTracesDir(baseDir);
+    startTraceRetention(this.dir);
   }
 
   get directory(): string {
@@ -55,6 +57,10 @@ export class TraceStore {
   /** Append spans, grouped by traceId, merging+deduping by spanId. Atomic per trace. */
   async writeSpans(spans: Span[]): Promise<void> {
     if (!spans.length) return;
+    await withTraceDirectoryLock(this.dir, () => this.writeSpansLocked(spans));
+  }
+
+  private async writeSpansLocked(spans: Span[]): Promise<void> {
     await fs.mkdir(this.dir, { recursive: true });
 
     const byTrace = new Map<string, Span[]>();

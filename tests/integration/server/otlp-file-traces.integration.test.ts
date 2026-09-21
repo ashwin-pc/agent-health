@@ -19,6 +19,7 @@ import * as os from 'os';
 import * as path from 'path';
 import otlpReceiverRoutes from '@/server/routes/otlpReceiver';
 import tracesRoutes from '@/server/routes/traces';
+import { stopTraceRetention } from '@/server/adapters/file/traceRetention';
 
 const TRACE_ID = 'aaaa0000bbbb1111cccc2222dddd3333';
 
@@ -97,6 +98,27 @@ describe('OTLP file-trace round-trip (integration)', () => {
     const res = await request(app).post('/api/traces').send({ runIds: ['run-xyz'] }).expect(200);
     expect(res.body.backend).toBe('file');
     expect(res.body.spans.some((s: any) => s.spanId === 'cafe000000000001')).toBe(true);
+  });
+
+  it('expires stale files on store startup without losing freshly ingested spans', async () => {
+    const traceDir = path.join(dir, 'traces');
+    await fs.mkdir(traceDir, { recursive: true });
+    const stale = path.join(traceDir, 'stale.ndjson');
+    await fs.writeFile(stale, '{}\n');
+    const old = new Date(Date.now() - 25 * 3_600_000);
+    await fs.utimes(stale, old, old);
+    const original = process.env.AH_TRACE_RETENTION_HOURS;
+    process.env.AH_TRACE_RETENTION_HOURS = '24';
+    try {
+      await request(app).post('/v1/traces').send(otlpPayload()).expect(200);
+      await expect(fs.stat(stale)).rejects.toMatchObject({ code: 'ENOENT' });
+      const res = await request(app).post('/api/traces').send({ traceId: TRACE_ID }).expect(200);
+      expect(res.body.spans.some((span: any) => span.spanId === '1111222233334444')).toBe(true);
+    } finally {
+      await stopTraceRetention(traceDir);
+      if (original === undefined) delete process.env.AH_TRACE_RETENTION_HOURS;
+      else process.env.AH_TRACE_RETENTION_HOURS = original;
+    }
   });
 
   it('reports the file backend on /api/traces/health', async () => {

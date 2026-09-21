@@ -16,6 +16,8 @@ import { getStorageConfigFromFile, getObservabilityConfigFromFile, getStorageCon
 import { findObservioRoot, spawnObservioAgent, OBSERVIO_DEFAULT_PORT, resetObservioPort, isPortFree, setObservioPort, waitForObservioReady, killObservioAgent } from './services/observioAgent.js';
 import { validateAwsCredentials } from './services/tracesService.js';
 import { resumePendingTracePollsSafely } from './services/traceRecoveryOnBoot.js';
+import { resolveTracesDir } from './adapters/file/TraceStore.js';
+import { startTraceRetention, stopTraceRetention } from './adapters/file/traceRetention.js';
 import { recoverOrphanBenchmarkRunsSafely } from './services/benchmarkRunRecoveryOnBoot.js';
 import { getStorageModule } from './adapters/index.js';
 
@@ -107,6 +109,8 @@ async function tryStartObservioAgent(): Promise<void> {
 
 async function startServer() {
   const app = await createApp();
+  const tracesDir = resolveTracesDir();
+  startTraceRetention(tracesDir);
 
   // Start observio FIRST so we know its port before serving requests
   await tryStartObservioAgent();
@@ -178,6 +182,7 @@ async function startServer() {
         // Graceful shutdown — stop background timers, kill child processes, drain connections
         const shutdown = (signal: string) => {
           console.log(`\n  Received ${signal}, shutting down gracefully...`);
+          void stopTraceRetention(tracesDir);
           // Stop the observio sample agent if we spawned it
           if (observioChild && !observioChild.killed) {
             console.log('  Stopping observio sample agent...');
