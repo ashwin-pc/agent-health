@@ -306,6 +306,39 @@ describe('Benchmark Command - Real Module Coverage', () => {
     rmSync(tempDir, { recursive: true, force: true });
   });
 
+  describe('unified result summary and exit status', () => {
+    const originalExitCode = process.exitCode;
+    afterEach(() => { process.exitCode = originalExitCode; });
+
+    it.each([
+      ['passed', 'passed', 1, 0, 0, 0],
+      ['failed gate', 'failed', 0, 1, 0, 1],
+      ['missing verdict', undefined, 0, 0, 1, 1],
+    ])('prints and exits honestly for a %s case', async (_name, verdict, passed, failed, errored, exitCode) => {
+      process.exitCode = 0;
+      const bytes = new TextEncoder().encode(
+        'data: {"runId":"eval-summary","testCases":[{"id":"tc-1"}]}\n\n'
+        + 'data: {"status":"completed"}\n\n',
+      );
+      const read = jest.fn().mockResolvedValueOnce({ done: false, value: bytes }).mockResolvedValue({ done: true });
+      global.fetch = jest.fn().mockResolvedValue({ ok: true, body: { getReader: () => ({ read }) } });
+      Object.assign(currentApi, { getEvaluationRun: jest.fn().mockResolvedValue({
+        id: 'eval-summary', status: 'completed', testCaseSnapshots: [{ id: 'tc-1' }],
+        results: { 'tc-1': { status: 'completed', passFailStatus: verdict } },
+      }) });
+
+      await runBenchmarkCommand(['-t', 'tc-1', '-a', 'demo-agent']);
+
+      const output = joinedConsoleOutput(logSpy);
+      expect(output).toContain(`Passed: ${passed}`);
+      expect(output).toContain(`Failed: ${failed}`);
+      expect(output).toContain(`Errored: ${errored}`);
+      expect(process.exitCode).toBe(exitCode);
+      expect(cleanupSpy).toHaveBeenCalledTimes(1);
+      expect(exitSpy).not.toHaveBeenCalled();
+    });
+  });
+
   describe('exported helpers', () => {
     it('detects json files and code eval files as file paths', () => {
       expect(isFilePath('suite.json')).toBe(true);

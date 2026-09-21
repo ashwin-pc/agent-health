@@ -22,7 +22,7 @@ import { resolveAgentModel } from '@/lib/resolveAgentModel.js';
 import { ensureServer, createServerCleanup, isServerRunning, type EnsureServerResult } from '@/cli/utils/serverLifecycle.js';
 import { applyAgentPathOption } from '@/cli/utils/agentPathOption.js';
 import { ApiClient, ServerError, type BenchmarkExecutionEvent } from '@/cli/utils/apiClient.js';
-import { resolveUnifiedRunOutcome } from '@/cli/utils/evaluationRunOutcome.js';
+import { resolveUnifiedRunOutcome, summarizeUnifiedRunResults } from '@/cli/utils/evaluationRunOutcome.js';
 import { validateTestCasesArrayJson, type ValidatedTestCaseInput } from '@/lib/testCaseValidation.js';
 import { calculateRunStats, getReportIdsFromRun } from '@/lib/runStats.js';
 import { formatJson, formatMarkdownTable, parseOutputFormat, OUTPUT_FORMAT_DESCRIPTION, type OutputFormat } from '@/cli/utils/formatOutput.js';
@@ -755,14 +755,18 @@ async function runUnifiedMode(
     spinner.succeed(`Evaluation run completed (${outcome.doneCount}/${totalTestCases} test cases)`);
 
     if (run) {
-      const passed = Object.values(run.results || {}).filter((r: any) => r.status === 'completed').length;
-      const failed = Object.values(run.results || {}).filter((r: any) => r.status === 'failed').length;
+      const summary = summarizeUnifiedRunResults(run, totalTestCases);
 
       console.log('');
       console.log(chalk.bold('  Results:'));
-      console.log(`    ${chalk.green('✓ Passed:')} ${passed}`);
-      console.log(`    ${chalk.red('✗ Failed:')} ${failed}`);
-      console.log(`    ${chalk.gray('Total:')} ${totalTestCases}`);
+      console.log(`    ${chalk.green('✓ Passed:')} ${summary.passed}`);
+      console.log(`    ${chalk.red('✗ Failed:')} ${summary.failed}`);
+      console.log(`    ${chalk.yellow('⚠ Errored:')} ${summary.errored}`);
+      if (summary.notRun) console.log(`    ${chalk.gray('Not run:')} ${summary.notRun}`);
+      if (summary.pending) console.log(`    ${chalk.gray('Pending:')} ${summary.pending}`);
+      console.log(`    ${chalk.gray('Total:')} ${summary.total}`);
+      // Preserve a prior failure across trials and let cleanup/output finish.
+      if (summary.exitCode !== 0) process.exitCode = summary.exitCode;
       if (benchmarkId) {
         console.log('');
         console.log(chalk.cyan('  View results:'));

@@ -11,6 +11,21 @@
  */
 
 import type { EvaluationRun } from '@/types/index.js';
+import { bucketRunResults } from '@/lib/runStats.js';
+
+/** Completion is a lifecycle state, not a passing verdict. Reuse UI bucketing. */
+export function summarizeUnifiedRunResults(run: EvaluationRun, plannedTotal = 0) {
+  const stats = bucketRunResults(
+    run.results,
+    Math.max(plannedTotal, run.testCaseSnapshots?.length ?? 0),
+    run.status,
+  );
+  // Missing and unexecuted cases cannot make a CI run green either.
+  const exitCode = run.status !== 'completed' || stats.total === 0
+    || stats.failed > 0 || stats.errored > 0 || stats.notRun > 0 || stats.pending > 0
+    ? 1 : 0;
+  return { ...stats, exitCode };
+}
 
 export type UnifiedRunOutcome =
   | { kind: 'success'; doneCount: number }

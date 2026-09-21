@@ -9,6 +9,9 @@ Inspired by [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)
 
 ## [Unreleased]
 
+### Fixed
+- Unified benchmark CLI summaries now count only passed verdicts as Passed, show Failed and Errored separately, and exit non-zero for failed gates, missing verdicts, or unexecuted cases. Successful completion no longer masks evaluation failure; summary output and server cleanup finish before exit.
+
 ## [0.7.0] - 2026-09-17
 
 Run report v2 and a verdict-first reading of results, a comparison-page overhaul (all metrics on run rows, comparison-wide trace grounding, deep-dive model selector), a benchmark case-review workspace with Cases/Runs tabs and pass-rate-over-time, complete run lifecycle actions (cancel / delete / re-run / retry judgement), code-SDK `.eval.ts` support with always-recorded metrics, and judge-input integrity fixes: concurrent subprocess runs no longer cross-wire session ids, the trace poller keeps connector tool evidence, and the trace judge degrades to trajectory-only for non-instrumented agents instead of failing the run. Dependency audit findings resolved (15 → 0) and a responsive mobile layout.
