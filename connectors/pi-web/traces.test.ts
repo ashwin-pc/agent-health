@@ -2,7 +2,7 @@
  * Copyright OpenSearch Contributors
  * SPDX-License-Identifier: Apache-2.0
  */
-import { deliverPiWebTraces, piWebEventsToOtlp } from './traces';
+import { collectPiWebTraces, deliverPiWebTraces, piWebEventsToOtlp } from './traces';
 
 const start = 1_700_000_000_000;
 const fixture = [
@@ -61,6 +61,20 @@ it('falls back to session correlation and marks missing results and timed-out ru
   expect(spans[2].status.code).toBe(0);
   expect(attrs(spans[2])['agent_health.tool.result']).toBe('missing');
   expect(spans[2].startTimeUnixNano).toBe(spans[2].endTimeUnixNano);
+});
+
+it('ignores foreign and previously synthesized spans, and falls back on lookup failure', async () => {
+  const fetcher = jest.spyOn(global, 'fetch').mockResolvedValue(new Response('{}'));
+  fetcher.mockResolvedValueOnce(new Response(JSON.stringify({ spans: [
+    { attributes: { 'session.id': 'foreign-session' } },
+    { attributes: { 'session.id': options.sessionId, 'agent_health.trace.source': 'connector-derived' } },
+  ] })));
+  await expect(collectPiWebTraces(fixture, options)).resolves.toBe('connector-derived');
+  expect(fetcher.mock.calls[1][0]).toMatch(/\/v1\/traces$/);
+  jest.spyOn(console, 'warn').mockImplementation(() => {});
+  fetcher.mockRejectedValueOnce(new Error('lookup unavailable'));
+  await expect(collectPiWebTraces(fixture, options)).resolves.toBe('connector-derived');
+  expect(fetcher).toHaveBeenCalledTimes(4);
 });
 
 it('posts OTLP to the receiver without pi-web credentials and tolerates delivery failure', async () => {

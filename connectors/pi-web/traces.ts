@@ -138,6 +138,32 @@ export function piWebEventsToOtlp(rawEvents: unknown[], options: TraceOptions) {
   };
 }
 
+/** Prefer native instrumentation, but only for this exact session. Existing
+ * connector-derived spans do not count as native when a harvest is re-emitted. */
+export async function collectPiWebTraces(rawEvents: unknown[], options: TraceOptions, baseUrl = getBackendUrl()): Promise<'native' | 'connector-derived'> {
+  try {
+    // Query agent-health's active store, even if OTLP delivery is overridden
+    // to an external collector that does not expose the agent-health API.
+    const response = await fetch(`${getBackendUrl()}/api/traces`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sessionId: options.sessionId, size: 1000 }),
+      signal: AbortSignal.timeout(5_000),
+    });
+    if (!response.ok) throw new Error(`Trace lookup returned HTTP ${response.status}`);
+    const data = await response.json();
+    if (Array.isArray(data.spans) && data.spans.some((span: unknown) => {
+      const attrs = object(object(span).attributes);
+      return attrs['session.id'] === options.sessionId
+        && attrs['agent_health.trace.source'] !== 'connector-derived';
+    })) return 'native';
+    if (data.warning) console.warn(`[pi-web connector] Native trace lookup warning: ${data.warning}`);
+  } catch (error) {
+    console.warn(`[pi-web connector] Native trace lookup failed for ${options.sessionId}; using connector fallback:`, error);
+  }
+  await deliverPiWebTraces(rawEvents, options, baseUrl);
+  return 'connector-derived';
+}
+
 /** Await a bounded best-effort delivery before returning the harvest, so the
  * trace poller can find it immediately. Never send the pi-web auth token here. */
 export async function deliverPiWebTraces(rawEvents: unknown[], options: TraceOptions, baseUrl = getBackendUrl()): Promise<void> {

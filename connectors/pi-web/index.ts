@@ -18,7 +18,7 @@ import { join, relative, resolve, sep } from "node:path";
 
 import type { TrajectoryStep } from "@/types";
 import { ToolCallStatus } from "@/types";
-import { deliverPiWebTraces } from './traces';
+import { collectPiWebTraces } from './traces';
 import type {
   AgentConnector,
   ConnectorAuth,
@@ -446,8 +446,9 @@ export class PiWebConnector implements AgentConnector {
       );
     }
 
+    let traceSource: 'native' | 'connector-derived' | undefined;
     if (config.emitTraces !== false) {
-      await deliverPiWebTraces(rawEvents, {
+      traceSource = await collectPiWebTraces(rawEvents, {
         sessionId,
         runId: request.runId,
         model: typeof config.model === 'string' ? config.model : config.model?.id,
@@ -462,6 +463,7 @@ export class PiWebConnector implements AgentConnector {
       metadata: {
         sessionId,
         sessionName,
+        ...(traceSource ? { traceSource } : {}),
         environment,
         timedOut,
         keepSession,

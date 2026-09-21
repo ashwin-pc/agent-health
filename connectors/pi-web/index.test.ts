@@ -144,8 +144,28 @@ describe('PiWebConnector', () => {
     expect(result.metadata).toEqual(expect.objectContaining({
       sessionId: 'session-1',
       childSessions: ['worker-1'],
+      traceSource: 'connector-derived',
       timedOut: false,
     }));
+  });
+
+  it('skips synthesis when native spans already exist for the exact session', async () => {
+    const fetcher = jest.spyOn(global, 'fetch').mockImplementation(async (input, init) => {
+      const path = new URL(String(input)).pathname;
+      if (path === '/api/new-chat') return jsonResponse({ sessionId: 'native-session' });
+      if (path.endsWith('/status')) return jsonResponse({ settled: true });
+      if (path === '/api/messages') return jsonResponse({ messages: [{ role: 'assistant', text: 'done' }] });
+      if (path === '/api/traces') {
+        expect(JSON.parse(String(init?.body))).toEqual({ sessionId: 'native-session', size: 1000 });
+        return jsonResponse({ spans: [{ attributes: { 'session.id': 'native-session' } }] });
+      }
+      return jsonResponse({ ok: true });
+    });
+    const result = await new PiWebConnector().execute('http://pi-web.example', {
+      testCase, modelId: 'model', connectorConfig: { settleMs: 0 },
+    }, { type: 'none' });
+    expect(result.metadata?.traceSource).toBe('native');
+    expect(fetcher.mock.calls.some(([input]) => String(input).endsWith('/v1/traces'))).toBe(false);
   });
 
   it('keeps the harvested result when its receiver fails and honors request run correlation', async () => {

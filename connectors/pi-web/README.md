@@ -29,8 +29,17 @@ support per-session environment variables; it is never silently ignored.
 
 ## Connector-derived traces
 
-After a non-empty harvest, the connector posts OTLP/JSON to the agent-health
-receiver at `POST /v1/traces`. The default base URL is `getBackendUrl()`:
+After a non-empty harvest, the connector first queries agent-health's active
+trace store via `POST /api/traces` with the exact `sessionId` filter. If spans
+for that session already exist and are not marked `connector-derived`, it skips
+synthesis and returns `metadata.traceSource="native"`. Otherwise it posts fallback
+OTLP/JSON and records `metadata.traceSource="connector-derived"`. Foreign sessions
+and an earlier synthesized harvest cannot suppress fallback. Lookup failures warn
+and fall back rather than failing the run. Both lookup and delivery are bounded
+to five seconds each. The store lookup always uses agent-health's `getBackendUrl()`;
+an external collector override affects delivery only.
+
+Fallback delivery uses the agent-health receiver at `POST /v1/traces`. The default base URL is `getBackendUrl()`:
 `http://localhost:${AH_PORT}` (legacy `AGENT_HEALTH_PORT`, default `4001`). The
 server keeps `AH_PORT` synchronized with its actual listening port. For a remote
 receiver, set `connectorConfig.traceBaseUrl`; disable export with

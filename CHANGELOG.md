@@ -10,6 +10,7 @@ Inspired by [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)
 ## [Unreleased]
 
 ### Added — pi-web connector-derived traces
+- Prefer existing native spans for the exact pi-web session before synthesizing a fallback; record the chosen source in connector metadata.
 - Emit deterministic OTLP/JSON invocation, model-turn and tool spans after pi-web transcript harvest, correlated by run/session id. Delivery is bounded and best effort. All spans explicitly identify connector-derived provenance and approximate transcript timing. See [pi-web tracing](connectors/pi-web/README.md#connector-derived-traces).
 
 ### Fixed — treatment connector compatibility
