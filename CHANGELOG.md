@@ -9,6 +9,9 @@ Inspired by [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)
 
 ## [Unreleased]
 
+### Added — pi-web connector-derived traces
+- Emit deterministic OTLP/JSON invocation, model-turn and tool spans after pi-web transcript harvest, correlated by run/session id. Delivery is bounded and best effort. All spans explicitly identify connector-derived provenance and approximate transcript timing. See [pi-web tracing](connectors/pi-web/README.md#connector-derived-traces).
+
 ### Fixed — treatment connector compatibility
 - Port treatment overlays and environment reporting to the canonical connector registry paths. The pi-web connector now materializes named skills in isolated `.pi/skills` workspaces, reports skill-content hashes, preserves the pinned fixture, and explicitly rejects unsupported per-session environment overlays. See [pi-web configuration](connectors/pi-web/README.md).
 

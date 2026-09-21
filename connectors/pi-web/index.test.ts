@@ -136,6 +136,8 @@ describe('PiWebConnector', () => {
 
     expect(calls.indexOf('GET /api/sessions/session-1/status'))
       .toBeLessThan(calls.indexOf('GET /api/messages'));
+    expect(calls.indexOf('POST /v1/traces'))
+      .toBeGreaterThan(calls.indexOf('GET /api/messages'));
     expect(result.trajectory).toEqual([
       expect.objectContaining({ type: 'response', content: 'complete', timestamp: 1712345678901 }),
     ]);
@@ -144,6 +146,30 @@ describe('PiWebConnector', () => {
       childSessions: ['worker-1'],
       timedOut: false,
     }));
+  });
+
+  it('keeps the harvested result when its receiver fails and honors request run correlation', async () => {
+    jest.spyOn(console, 'warn').mockImplementation(() => {});
+    let exported: any;
+    jest.spyOn(global, 'fetch').mockImplementation(async (input, init) => {
+      const path = new URL(String(input)).pathname;
+      if (path === '/api/new-chat') return jsonResponse({ sessionId: 'session-delivery' });
+      if (path.endsWith('/status')) return jsonResponse({ settled: true });
+      if (path === '/api/messages') return jsonResponse({ messages: [{ role: 'assistant', text: 'complete' }] });
+      if (path === '/v1/traces') {
+        exported = JSON.parse(String(init?.body));
+        return new Response('', { status: 503 });
+      }
+      return jsonResponse({ ok: true });
+    });
+    const result = await new PiWebConnector().execute('http://pi-web.example', {
+      testCase, modelId: 'model', runId: 'evaluation-run-id', connectorConfig: { settleMs: 0 },
+    }, { type: 'none' });
+    expect(result.runId).toBe('evaluation-run-id');
+    expect(result.trajectory[0].content).toBe('complete');
+    expect(exported.resourceSpans[0].scopeSpans[0].spans[0].attributes).toContainEqual({
+      key: 'gen_ai.conversation.id', value: { stringValue: 'evaluation-run-id' },
+    });
   });
 
   it('rejects an empty harvest so the runner records an errored report', async () => {

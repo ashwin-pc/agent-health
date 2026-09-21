@@ -19,6 +19,7 @@ import * as os from 'os';
 import * as path from 'path';
 import otlpReceiverRoutes from '@/server/routes/otlpReceiver';
 import tracesRoutes from '@/server/routes/traces';
+import { piWebEventsToOtlp } from '@/connectors/pi-web/traces';
 
 const TRACE_ID = 'aaaa0000bbbb1111cccc2222dddd3333';
 
@@ -97,6 +98,26 @@ describe('OTLP file-trace round-trip (integration)', () => {
     const res = await request(app).post('/api/traces').send({ runIds: ['run-xyz'] }).expect(200);
     expect(res.body.backend).toBe('file');
     expect(res.body.spans.some((s: any) => s.spanId === 'cafe000000000001')).toBe(true);
+  });
+
+  it('ingests connector-derived pi-web spans idempotently and finds them by run correlation', async () => {
+    const payload = piWebEventsToOtlp([{ kind: 'GET /api/messages', timestamp: 1700000002000, data: { messages: [
+      { role: 'assistant', timestamp: 1700000000000, raw: { model: 'sonnet', content: [
+        { type: 'toolCall', id: 'write-1', name: 'write', arguments: { path: 'plan.md' } },
+      ] } },
+      { role: 'toolResult', toolCallId: 'write-1', timestamp: 1700000001000, text: 'written' },
+    ] } }], { sessionId: 'pi-web-roundtrip', runId: 'pi-web-run' });
+    await request(app).post('/v1/traces').send(payload).expect(200);
+    await request(app).post('/v1/traces').send(payload).expect(200);
+    const res = await request(app).post('/api/traces').send({ runIds: ['pi-web-run'] }).expect(200);
+    expect(res.body.spans).toHaveLength(3);
+    const root = res.body.spans.find((span: any) => span.attributes['gen_ai.operation.name'] === 'invoke_agent');
+    for (const span of res.body.spans) {
+      expect(span.attributes['service.name']).toBe('pi-web');
+      expect(span.attributes['session.id']).toBe('pi-web-roundtrip');
+      expect(span.attributes['agent_health.trace.source']).toBe('connector-derived');
+      if (span.spanId !== root.spanId) expect(span.parentSpanId).toBe(root.spanId);
+    }
   });
 
   it('reports the file backend on /api/traces/health', async () => {

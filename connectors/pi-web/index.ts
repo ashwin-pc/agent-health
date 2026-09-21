@@ -18,6 +18,7 @@ import { join, relative, resolve, sep } from "node:path";
 
 import type { TrajectoryStep } from "@/types";
 import { ToolCallStatus } from "@/types";
+import { deliverPiWebTraces } from './traces';
 import type {
   AgentConnector,
   ConnectorAuth,
@@ -35,6 +36,10 @@ export type PiWebConnectorConfig = {
   pollIntervalMs?: number;
   settleMs?: number;
   keepSession?: boolean;
+  /** Emit connector-derived OTLP traces after harvest (default true). */
+  emitTraces?: boolean;
+  /** Receiver base URL; defaults to getBackendUrl() (AH_PORT, default 4001). */
+  traceBaseUrl?: string;
   /** Directory containing fixture envelope refs (defaults to <cwd>/fixtures). */
   fixturesDir?: string;
   /** Named treatment skills are resolved beneath this directory. */
@@ -163,6 +168,7 @@ export class PiWebConnector implements AgentConnector {
   readonly type = "pi-web" as const;
   readonly name = "pi-web Session";
   readonly supportsStreaming = false;
+  readonly traceContext = { serviceName: 'pi-web' };
 
   describeEnvironment(request: ConnectorRequest): Record<string, unknown> {
     const config = (request.connectorConfig ?? {}) as PiWebConnectorConfig;
@@ -440,9 +446,18 @@ export class PiWebConnector implements AgentConnector {
       );
     }
 
+    if (config.emitTraces !== false) {
+      await deliverPiWebTraces(rawEvents, {
+        sessionId,
+        runId: request.runId,
+        model: typeof config.model === 'string' ? config.model : config.model?.id,
+        timedOut,
+      }, config.traceBaseUrl);
+    }
+
     return {
       trajectory,
-      runId: sessionId,
+      runId: request.runId || sessionId,
       rawEvents,
       metadata: {
         sessionId,
