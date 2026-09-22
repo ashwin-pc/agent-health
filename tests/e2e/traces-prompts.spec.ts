@@ -42,6 +42,10 @@ for (const width of [1440, 375]) {
       const bounds = await preview.evaluate(el => ({ height: el.getBoundingClientRect().height, lineHeight: parseFloat(getComputedStyle(el).lineHeight) }));
       expect(bounds.height).toBeLessThanOrEqual(bounds.lineHeight * 2 + 1);
       expect(await row.evaluate(el => el.scrollWidth <= el.clientWidth)).toBe(true);
+      // A global mobile rule can make the entire table 720px wide while the
+      // page clips it. Checking only document/row scrollWidth misses that.
+      expect(await row.evaluate(el => el.getBoundingClientRect().right <= window.innerWidth)).toBe(true);
+      expect(await preview.evaluate(el => el.getBoundingClientRect().right <= window.innerWidth)).toBe(true);
     }
   });
 }

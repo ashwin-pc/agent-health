@@ -1512,9 +1512,9 @@ export const AgentTracesPage: React.FC = () => {
                 </div>
               </div>
 
-              {/* Table with sticky header */}
+              {/* Rows stack on phones, overriding host-wide mobile table minimums. */}
               <div className="relative">
-                <table className="block sm:table table-fixed w-full caption-bottom text-sm">
+                <table className="block sm:table table-fixed w-full caption-bottom text-sm" style={{ minWidth: 0 }}>
                   <thead className={`hidden sm:table-header-group sticky top-0 z-10 bg-background transition-shadow duration-200 ${
                     isScrolled ? 'shadow-sm' : ''
                   }`}>
