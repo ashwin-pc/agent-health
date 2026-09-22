@@ -17,6 +17,7 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { ChevronDown, ChevronRight, Info } from 'lucide-react';
 import { Span, ConversationMessage } from '@/types';
 import { extractMessagesFromSpans } from '@/services/traces/messageExtraction';
+import { ThinkingBlock } from './ThinkingBlock';
 
 interface MessageHistoryViewProps {
   spans: Span[];
@@ -42,6 +43,19 @@ const MessageHistoryView: React.FC<MessageHistoryViewProps> = ({ spans, serviceN
     });
   };
 
+  // Compute before the empty-state return so live updates keep hook order stable.
+  const summary = useMemo(() => {
+    let totalInput = 0;
+    let totalOutput = 0;
+    const models = new Set<string>();
+    for (const msg of messages) {
+      if (msg.metadata?.inputTokens) totalInput += msg.metadata.inputTokens;
+      if (msg.metadata?.outputTokens) totalOutput += msg.metadata.outputTokens;
+      if (msg.metadata?.model) models.add(msg.metadata.model);
+    }
+    return { totalInput, totalOutput, models: Array.from(models) };
+  }, [messages]);
+
   if (messages.length === 0) {
     return (
       <div className="h-full flex flex-col items-center justify-center text-muted-foreground p-8">
@@ -58,19 +72,6 @@ const MessageHistoryView: React.FC<MessageHistoryViewProps> = ({ spans, serviceN
       </div>
     );
   }
-
-  // Aggregate token/cost summary
-  const summary = useMemo(() => {
-    let totalInput = 0;
-    let totalOutput = 0;
-    const models = new Set<string>();
-    for (const msg of messages) {
-      if (msg.metadata?.inputTokens) totalInput += msg.metadata.inputTokens;
-      if (msg.metadata?.outputTokens) totalOutput += msg.metadata.outputTokens;
-      if (msg.metadata?.model) models.add(msg.metadata.model);
-    }
-    return { totalInput, totalOutput, models: Array.from(models) };
-  }, [messages]);
 
   return (
     <ScrollArea className="h-full">
@@ -164,12 +165,13 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({ message, isExpanded, onTo
       </div>
 
       {/* Content */}
-      <pre className="whitespace-pre-wrap text-xs font-mono break-all">
-        {displayContent}
-      </pre>
+      {message.parts ? message.parts.map((part, index) => part.type === 'reasoning'
+        ? <ThinkingBlock key={index} stateKey={`${message.id}-${index}`} content={part.content} />
+        : <pre key={index} className="whitespace-pre-wrap text-xs font-mono break-all">{part.content}</pre>
+      ) : <pre className="whitespace-pre-wrap text-xs font-mono break-all">{displayContent}</pre>}
 
-      {/* Expand/collapse toggle for long content */}
-      {isLong && (
+      {/* Expand/collapse toggle for long legacy content */}
+      {!message.parts && isLong && (
         <button
           onClick={onToggleExpand}
           className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground mt-1"

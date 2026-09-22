@@ -14,19 +14,24 @@ import React, { useState, useMemo } from 'react';
 import { Button } from '@/components/ui/button';
 import { Code, AlignLeft } from 'lucide-react';
 import { safeParseJSON } from '@/services/traces/utils';
+import { parseStructuredMessages } from '@/services/traces/messageParts';
+import { ThinkingBlock } from './ThinkingBlock';
 
 interface FormattedMessagesProps {
   messages: string | object;
+  stateKey?: string;
 }
 
 interface Message {
   role?: string;
   content?: string | ContentBlock[];
+  parts?: ContentBlock[];
 }
 
 interface ContentBlock {
   type?: string;
   text?: string;
+  content?: string;
   toolUse?: {
     toolUseId?: string;
     name?: string;
@@ -39,12 +44,14 @@ interface ContentBlock {
   };
 }
 
-const FormattedMessages: React.FC<FormattedMessagesProps> = ({ messages }) => {
+const FormattedMessages: React.FC<FormattedMessagesProps> = ({ messages, stateKey = 'messages' }) => {
   const [showRaw, setShowRaw] = useState(false);
 
   // Parse messages if string
   const parsedMessages = useMemo(() => {
     if (!messages) return [];
+    const structured = parseStructuredMessages(messages);
+    if (structured.length) return structured;
     if (typeof messages === 'string') {
       const parsed = safeParseJSON(messages);
       if (Array.isArray(parsed)) return parsed;
@@ -79,7 +86,7 @@ const FormattedMessages: React.FC<FormattedMessagesProps> = ({ messages }) => {
     }
   };
 
-  const renderContent = (content: string | ContentBlock[] | undefined) => {
+  const renderContent = (content: string | ContentBlock[] | undefined, messageIndex: number) => {
     if (!content) return null;
 
     if (typeof content === 'string') {
@@ -87,10 +94,13 @@ const FormattedMessages: React.FC<FormattedMessagesProps> = ({ messages }) => {
     }
 
     return content.map((block, idx) => {
-      if (block.type === 'text' || block.text) {
+      if (block.type === 'reasoning') {
+        return <ThinkingBlock key={idx} stateKey={`${stateKey}-${messageIndex}-${idx}`} content={block.content ?? block.text ?? ''} />;
+      }
+      if (block.type === 'text' || block.text || typeof block.content === 'string') {
         return (
           <span key={idx} className="whitespace-pre-wrap">
-            {block.text}
+            {block.text ?? block.content}
           </span>
         );
       }
@@ -173,7 +183,7 @@ const FormattedMessages: React.FC<FormattedMessagesProps> = ({ messages }) => {
                 </div>
               )}
               <div className="font-mono text-[11px] leading-relaxed">
-                {renderContent(msg.content)}
+                {renderContent(msg.parts ?? msg.content, idx)}
               </div>
             </div>
           ))}

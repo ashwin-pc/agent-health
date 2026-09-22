@@ -777,6 +777,8 @@ export interface ConversationMessage {
   timestamp: string;
   role: 'user' | 'assistant' | 'tool_call' | 'tool_result' | 'system';
   content: string;
+  /** Ordered modern OTel parts; reasoning is disclosed separately from text. */
+  parts?: Array<{ type: string; content: string }>;
   metadata?: {
     spanId?: string;
     spanName?: string;

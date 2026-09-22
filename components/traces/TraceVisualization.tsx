@@ -22,6 +22,7 @@ import SpanDetailsPanel from './SpanDetailsPanel';
 import TraceInfoView from './TraceInfoView';
 import TraceStatsView from './TraceStatsView';
 import MessageHistoryView from './MessageHistoryView';
+import { ThinkingStateProvider } from './ThinkingBlock';
 
 interface TraceVisualizationProps {
   spanTree: Span[];
@@ -47,7 +48,11 @@ interface TraceVisualizationProps {
   serviceName?: string;
 }
 
-const TraceVisualization: React.FC<TraceVisualizationProps> = ({
+const TraceVisualization: React.FC<TraceVisualizationProps> = props => (
+  <ThinkingStateProvider><TraceVisualizationContent {...props} /></ThinkingStateProvider>
+);
+
+const TraceVisualizationContent: React.FC<TraceVisualizationProps> = ({
   spanTree,
   timeRange,
   initialViewMode = 'info',

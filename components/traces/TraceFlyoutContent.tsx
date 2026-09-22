@@ -52,6 +52,7 @@ import TraceFullScreenView from './TraceFullScreenView';
 import { SpanInputOutput } from './SpanInputOutput';
 import SpanDetailsPanel from './SpanDetailsPanel';
 import MessageHistoryView from './MessageHistoryView';
+import { ThinkingStateProvider } from './ThinkingBlock';
 import {
   flattenSpans,
   calculateCategoryStats,
@@ -76,7 +77,11 @@ interface TraceFlyoutContentProps {
   onClose: () => void;
 }
 
-export const TraceFlyoutContent: React.FC<TraceFlyoutContentProps> = ({
+export const TraceFlyoutContent: React.FC<TraceFlyoutContentProps> = props => (
+  <ThinkingStateProvider><TraceFlyoutContentInner {...props} /></ThinkingStateProvider>
+);
+
+const TraceFlyoutContentInner: React.FC<TraceFlyoutContentProps> = ({
   trace,
   onClose,
 }) => {

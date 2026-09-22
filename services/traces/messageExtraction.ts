@@ -11,6 +11,7 @@
  */
 
 import { Span, ConversationMessage } from '@/types';
+import { parseStructuredMessages } from './messageParts';
 
 /**
  * Extract conversation messages from a flat array of spans.
@@ -40,15 +41,32 @@ export function extractMessagesFromSpans(
   // (sorted after the call) doesn't push a duplicate result message.
   const resultEmittedForToolUseId = new Set<string>();
 
+  const nativeRootAnswers = new Map(sorted.filter(span =>
+    span.attributes?.['agent_health.trace.source'] === 'native-extension' &&
+    span.attributes?.['gen_ai.operation.name'] === 'invoke_agent'
+  ).map(span => [span.traceId, span.attributes?.['gen_ai.completion']]));
+  const nativeChatTraces = new Set(sorted.filter(span => {
+    if (span.attributes?.['agent_health.trace.source'] !== 'native-extension' ||
+        span.attributes?.['gen_ai.operation.name'] !== 'chat') return false;
+    const answer = nativeRootAnswers.get(span.traceId);
+    const text = parseStructuredMessages(span.attributes?.['gen_ai.output.messages'])
+      .flatMap(message => message.parts).filter(part => part.type === 'text').map(part => part.content);
+    // A chat can be truncated more tightly than the root. Only suppress an
+    // alias when its complete answer is present, never a longer root answer.
+    return typeof answer === 'string' && (text.includes(answer) || text.join('\n') === answer);
+  }).map(span => span.traceId));
+
   for (const span of sorted) {
     if (isClaudeCode) {
       extractClaudeCodeMessages(span, messages, resultEmittedForToolUseId);
     } else {
-      extractGenericMessages(span, messages);
+      const skipCompletion = nativeChatTraces.has(span.traceId) && span.attributes?.['gen_ai.operation.name'] === 'invoke_agent';
+      extractGenericMessages(span, messages, skipCompletion);
     }
   }
 
-  return messages;
+  // Root completions end after child calls; sort extracted messages, not just spans.
+  return messages.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
 }
 
 /**
@@ -230,9 +248,29 @@ function extractClaudeCodeMessages(
  * Extract messages from generic OTel GenAI spans.
  * Uses standard llm.request/llm.response events and gen_ai.* attributes.
  */
-function extractGenericMessages(span: Span, messages: ConversationMessage[]): void {
+function extractGenericMessages(span: Span, messages: ConversationMessage[], skipCompletion = false): void {
   const events = span.events || [];
   const attrs = span.attributes || {};
+  const structuredOutput = !skipCompletion && !attrs['gen_ai.tool.name'] && !attrs['tool.name']
+    ? parseStructuredMessages(attrs['gen_ai.output.messages']) : [];
+  structuredOutput.forEach((message, index) => {
+    messages.push({
+      id: `${span.spanId}-output-${index}`,
+      timestamp: span.endTime,
+      role: message.role === 'user' || message.role === 'system' ? message.role : 'assistant',
+      content: message.parts.filter(part => part.type !== 'reasoning').map(part => part.content).join('\n'),
+      parts: message.parts,
+      metadata: {
+        spanId: span.spanId,
+        spanName: span.name,
+        model: String(attrs['gen_ai.request.model'] || ''),
+        // Count usage once even if a provider returns several messages.
+        inputTokens: index === 0 && attrs['gen_ai.usage.input_tokens'] != null ? Number(attrs['gen_ai.usage.input_tokens']) : undefined,
+        outputTokens: index === 0 && attrs['gen_ai.usage.output_tokens'] != null ? Number(attrs['gen_ai.usage.output_tokens']) : undefined,
+        durationMs: span.duration,
+      },
+    });
+  });
 
   // LLM request event → extract user prompt
   const llmRequest = events.find(e => e.name === 'llm.request');
@@ -253,7 +291,7 @@ function extractGenericMessages(span: Span, messages: ConversationMessage[]): vo
 
   // LLM response event → extract completion
   const llmResponse = events.find(e => e.name === 'llm.response');
-  if (llmResponse) {
+  if (llmResponse && !skipCompletion && !structuredOutput.length) {
     const completion = llmResponse.attributes?.['llm.completion'] ||
       attrs['gen_ai.completion'];
     if (completion) {
@@ -326,7 +364,7 @@ function extractGenericMessages(span: Span, messages: ConversationMessage[]): vo
   // Fallback: attributes-only extraction when no events present
   if (events.length === 0 && !toolName) {
     const prompt = attrs['gen_ai.prompt'] || attrs['test.case.input'];
-    const completion = attrs['gen_ai.completion'] || attrs['test.case.output'];
+    const completion = !skipCompletion && !structuredOutput.length && (attrs['gen_ai.completion'] || attrs['test.case.output']);
 
     if (prompt) {
       messages.push({

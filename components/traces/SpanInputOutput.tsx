@@ -38,6 +38,9 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Span } from '@/types';
 import { formatDuration } from '@/services/traces/utils';
+import { parseStructuredMessages } from '@/services/traces/messageParts';
+import FormattedMessages from './FormattedMessages';
+import { ThinkingStateProvider } from './ThinkingBlock';
 
 interface SpanInputOutputProps {
   spans: Span[];
@@ -123,7 +126,7 @@ export function extractSpanIO(span: Span): SpanIOData {
     category = 'eval';
   } else if (name.includes('agent') || attrs['gen_ai.agent.name']) {
     category = 'agent';
-  } else if (name.includes('llm') || name.includes('bedrock') || name.includes('converse') || attrs['gen_ai.system']) {
+  } else if (name.includes('llm') || name.includes('bedrock') || name.includes('converse') || attrs['gen_ai.system'] || attrs['gen_ai.operation.name'] === 'chat' || name === 'chat') {
     category = 'llm';
   } else if (name.includes('tool') || attrs['gen_ai.tool.name']) {
     category = 'tool';
@@ -364,9 +367,7 @@ const SpanIOCard: React.FC<SpanIOCardProps> = ({ data }) => {
                   {copiedInput ? <Check size={12} className="text-green-400" /> : <Copy size={12} />}
                 </Button>
               </div>
-              <pre className="text-xs bg-muted/50 p-3 rounded-md overflow-x-auto max-h-64 overflow-y-auto whitespace-pre-wrap break-words">
-                {input}
-              </pre>
+              <SpanBody content={input} stateKey={`${span.traceId}-${span.spanId}-input`} />
             </div>
           )}
 
@@ -387,9 +388,7 @@ const SpanIOCard: React.FC<SpanIOCardProps> = ({ data }) => {
                   {copiedOutput ? <Check size={12} className="text-green-400" /> : <Copy size={12} />}
                 </Button>
               </div>
-              <pre className="text-xs bg-muted/50 p-3 rounded-md overflow-x-auto max-h-64 overflow-y-auto whitespace-pre-wrap break-words">
-                {output}
-              </pre>
+              <SpanBody content={output} stateKey={`${span.traceId}-${span.spanId}-output`} />
             </div>
           )}
 
@@ -410,7 +409,17 @@ const SpanIOCard: React.FC<SpanIOCardProps> = ({ data }) => {
 
 // ==================== Main Component ====================
 
-export const SpanInputOutput: React.FC<SpanInputOutputProps> = ({ spans }) => {
+const SpanBody: React.FC<{ content: string; stateKey: string }> = ({ content, stateKey }) => (
+  parseStructuredMessages(content).some(message => message.parts.some(part => part.type === 'reasoning'))
+    ? <FormattedMessages messages={content} stateKey={stateKey} />
+    : <pre className="text-xs bg-muted/50 p-3 rounded-md overflow-x-auto max-h-64 overflow-y-auto whitespace-pre-wrap break-words">{content}</pre>
+);
+
+export const SpanInputOutput: React.FC<SpanInputOutputProps> = props => (
+  <ThinkingStateProvider><SpanInputOutputContent {...props} /></ThinkingStateProvider>
+);
+
+const SpanInputOutputContent: React.FC<SpanInputOutputProps> = ({ spans }) => {
   // Extract IO data for all spans and filter to those with input/output
   const spanIOData = spans
     .map(extractSpanIO)
