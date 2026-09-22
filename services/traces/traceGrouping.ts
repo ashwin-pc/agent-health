@@ -12,6 +12,7 @@
 
 import { Span, TraceSummary } from '@/types';
 import { debug } from '@/lib/debug';
+import { getRootSpanPrompt, promptPreview } from '@/lib/tracePrompt';
 
 /**
  * Extract service name from span attributes
@@ -105,6 +106,7 @@ export function groupSpansByTrace(spans: Span[]): TraceSummary[] {
       serviceName,
       spanCount: traceSpans.length,
       rootSpanName: rootSpan?.name || traceSpans[0]?.name || 'Unknown',
+      prompt: promptPreview(getRootSpanPrompt(rootSpan)),
       startTime: getEarliestStartTime(traceSpans),
       duration: calculateDuration(traceSpans),
       hasErrors: hasErrors(traceSpans),

@@ -22,6 +22,7 @@ import {
 import { resolveObservabilityConfig } from '../middleware/dataSourceConfig.js';
 import { getObservabilityModule } from '../services/observabilityClient.js';
 import type { Span } from '../../types/index.js';
+import { summarizeTracePrompts } from '../../lib/tracePrompt.js';
 
 const router = Router();
 
@@ -118,6 +119,7 @@ router.post('/api/traces', async (req: Request, res: Response) => {
 
     res.json({
       spans: allSpans,
+      traces: summarizeTracePrompts(allSpans),
       total: allSpans.length,
       nextCursor,
       hasMore,

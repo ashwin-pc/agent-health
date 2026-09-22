@@ -47,7 +47,8 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from '@/components/ui/tooltip';
-import { Span } from '@/types';
+import { Span, TraceListSummary } from '@/types';
+import { getRootSpanPrompt } from '@/lib/tracePrompt';
 import { DEFAULT_CONFIG } from '@/lib/constants';
 import {
   fetchRecentTraces,
@@ -69,9 +70,11 @@ import { Sheet, SheetContent } from '@/components/ui/sheet';
 
 // ==================== Types ====================
 
-interface TraceTableRow {
+export interface TraceTableRow {
   traceId: string;
   rootSpanName: string;
+  prompt?: string;
+  promptTitle?: string;
   serviceName: string;
   startTime: Date;
   duration: number;
@@ -138,7 +141,7 @@ interface TraceRowProps {
   isExpanded: boolean;
 }
 
-const TraceRow: React.FC<TraceRowProps> = ({ trace, onSelect, isSelected, isExpanded }) => {
+export const TraceRow: React.FC<TraceRowProps> = ({ trace, onSelect, isSelected, isExpanded }) => {
   const [copiedField, setCopiedField] = React.useState<string | null>(null);
 
   const handleCopy = (e: React.MouseEvent, text: string, field: string) => {
@@ -169,15 +172,15 @@ const TraceRow: React.FC<TraceRowProps> = ({ trace, onSelect, isSelected, isExpa
 
   return (
     <tr
-      className={`border-b transition-colors cursor-pointer hover:bg-muted/50 group ${isSelected ? 'bg-muted/70' : ''}`}
+      className={`grid grid-cols-[minmax(0,1fr)_auto] sm:table-row border-b transition-colors cursor-pointer hover:bg-muted/50 group ${isSelected ? 'bg-muted/70' : ''}`}
       onClick={onSelect}
     >
-      <td className="py-1.5 px-3 align-middle text-xs text-muted-foreground whitespace-nowrap">
+      <td className="row-start-1 col-start-1 py-1.5 px-3 align-middle text-xs text-muted-foreground whitespace-nowrap">
         <span title={trace.startTime.toLocaleString()}>
           {formatRelativeTime(trace.startTime.toISOString())}
         </span>
       </td>
-      <td className="py-1.5 px-3 align-middle font-mono text-xs">
+      <td className="row-start-2 col-span-2 min-w-0 py-1.5 px-3 align-middle font-mono text-xs">
         <div className="flex items-center gap-1.5">
           {trace.hasErrors ? (
             <XCircle size={12} className="text-red-700 dark:text-red-400 flex-shrink-0" />
@@ -189,7 +192,7 @@ const TraceRow: React.FC<TraceRowProps> = ({ trace, onSelect, isSelected, isExpa
           </span>
           <button
             onClick={(e) => handleCopy(e, trace.traceId, 'traceId')}
-            className="relative opacity-0 group-hover:opacity-100 transition-opacity p-0.5 rounded hover:bg-muted-foreground/20 flex-shrink-0"
+            className="relative sm:opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity p-0.5 rounded hover:bg-muted-foreground/20 flex-shrink-0"
             aria-label="Copy trace ID"
           >
             {copiedField === 'traceId' ? (
@@ -205,8 +208,13 @@ const TraceRow: React.FC<TraceRowProps> = ({ trace, onSelect, isSelected, isExpa
           </button>
         </div>
       </td>
-      <td className="py-1.5 px-3 align-middle text-xs">
-        <div className="flex items-center gap-1.5 max-w-[200px]">
+      <td className="row-start-3 col-span-2 min-w-0 py-1.5 px-3 align-middle text-xs" data-testid="trace-prompt-cell">
+        <span className="line-clamp-2 break-words [overflow-wrap:anywhere] sm:block sm:truncate sm:whitespace-nowrap" title={trace.promptTitle || trace.prompt || undefined}>
+          {trace.prompt || ''}
+        </span>
+      </td>
+      <td className="row-start-4 col-span-2 min-w-0 py-1.5 px-3 align-middle text-xs text-muted-foreground">
+        <div className="flex items-center gap-1.5 min-w-0">
           <span className="truncate" title={trace.rootSpanName}>
             {trace.rootSpanName}
           </span>
@@ -228,22 +236,22 @@ const TraceRow: React.FC<TraceRowProps> = ({ trace, onSelect, isSelected, isExpa
           </button>
         </div>
       </td>
-      <td className="py-1.5 px-3 align-middle">
-        <span className="text-xs text-foreground" title={trace.serviceName || 'unknown'}>
+      <td className="hidden xl:table-cell py-1.5 px-3 align-middle">
+        <span className="block truncate text-xs text-foreground" title={trace.serviceName || 'unknown'}>
           {trace.serviceName || 'unknown'}
         </span>
       </td>
-      <td className="py-1.5 px-3 align-middle">
+      <td className="row-start-1 col-start-2 py-1.5 px-3 align-middle">
         <span className={`font-mono text-xs ${trace.duration > 5000 ? 'text-amber-700 dark:text-amber-400' : 'text-muted-foreground'}`}>
           {formatDuration(trace.duration)}
         </span>
       </td>
-      <td className="py-1.5 px-3 align-middle text-center">
+      <td className="hidden lg:table-cell py-1.5 px-3 align-middle text-center">
         <Badge variant="secondary" className="text-[11px] py-0 px-1.5">
           {formatCompact(trace.spanCount)}
         </Badge>
       </td>
-      <td className="py-1.5 px-3 align-middle">
+      <td className="hidden sm:table-cell py-1.5 px-3 align-middle">
         {isExpanded ? (
           <ChevronDown size={14} className="text-foreground" />
         ) : (
@@ -315,7 +323,7 @@ const ExpandedTraceRow: React.FC<ExpandedTraceRowProps> = ({ trace, onClose }) =
 
   return (
     <tr className="bg-muted/20 border-b">
-      <td colSpan={7} className="p-0">
+      <td colSpan={8} className="p-0">
         {/* Wrap the entire expansion in a smaller-text scope so spans inside
             one trace look visually distinct from the outer table rows. */}
         <div className="border-l-2 border-opensearch-blue bg-background text-[11px]">
@@ -569,8 +577,9 @@ export const AgentTracesPage: React.FC = () => {
   // (legacy `agentTraces.*` keys are migrated once on mount; see initialization block)
 
   // Convert spans to trace table rows
-  const processSpansToTraces = useCallback((allSpans: Span[]): TraceTableRow[] => {
+  const processSpansToTraces = useCallback((allSpans: Span[], summaries: TraceListSummary[] = []): TraceTableRow[] => {
     const traceGroups = groupSpansByTrace(allSpans);
+    const metadata = new Map(summaries.map(summary => [summary.traceId, summary]));
 
     return traceGroups.map(group => {
       const rootSpan = group.spans.find(s => !s.parentSpanId) || group.spans[0];
@@ -587,6 +596,8 @@ export const AgentTracesPage: React.FC = () => {
       return {
         traceId: group.traceId,
         rootSpanName: rootSpan.name,
+        prompt: metadata.get(group.traceId)?.prompt ?? group.prompt ?? '',
+        promptTitle: getRootSpanPrompt(group.spans.find(s => !s.parentSpanId)),
         serviceName: rootSpan.attributes?.['service.name'] || 'unknown',
         startTime: new Date(minStart),
         duration: maxEnd - minStart,
@@ -668,7 +679,7 @@ export const AgentTracesPage: React.FC = () => {
       }
 
       setSpans(result.spans);
-      const processedTraces = processSpansToTraces(result.spans);
+      const processedTraces = processSpansToTraces(result.spans, result.traces);
       setAllTraces(processedTraces);
       setDisplayedTraces(processedTraces.slice(0, 100));
       setDisplayCount(100);
@@ -703,7 +714,7 @@ export const AgentTracesPage: React.FC = () => {
 
       const allSpans = [...spansRef.current, ...result.spans];
       setSpans(allSpans);
-      const processedTraces = processSpansToTraces(allSpans);
+      const processedTraces = processSpansToTraces(allSpans, result.traces);
       setAllTraces(processedTraces);
       setDisplayedTraces(processedTraces);
       setDisplayCount(processedTraces.length);
@@ -1101,9 +1112,9 @@ export const AgentTracesPage: React.FC = () => {
   }, [filteredTraces]);
 
   return (
-    <div className="h-full flex flex-col">
+    <div className="h-full min-w-0 flex flex-col">
       {/* Compact Header with Inline Stats and Filters */}
-      <div className="px-6 pt-4 pb-3 border-b">
+      <div className="px-3 sm:px-6 pt-4 pb-3 border-b">
         {/* Single Row: Title + Stats + Filters */}
         <div className="flex flex-col items-start justify-between gap-4 lg:flex-row">
           {/* Left: Title and Description */}
@@ -1115,8 +1126,8 @@ export const AgentTracesPage: React.FC = () => {
           </div>
 
           {/* Right: Stats and Filters with Last Updated below */}
-          <div className="flex w-full flex-col items-start gap-1 overflow-x-auto lg:w-auto lg:items-end lg:overflow-visible">
-            <div className="flex min-w-max items-center gap-3">
+          <div className="flex w-full min-w-0 flex-col items-start gap-1 lg:w-auto lg:items-end">
+            <div className="flex w-full min-w-0 flex-wrap items-center gap-3">
               {/* Search Bar */}
               <div className="w-[200px]">
                 <div className="relative">
@@ -1464,7 +1475,7 @@ export const AgentTracesPage: React.FC = () => {
       )}
 
       {/* Traces Table */}
-      <Card className="flex-1 flex flex-col overflow-hidden mx-6 mt-2 mb-6">
+      <Card className="flex-1 min-w-0 flex flex-col overflow-hidden mx-3 sm:mx-6 mt-2 mb-6">
         <div ref={scrollContainerRef} className="relative flex-1 overflow-auto">
           {allTraces.length === 0 && !isLoading ? (
             <div className="h-full flex flex-col items-center justify-center text-muted-foreground py-12">
@@ -1503,33 +1514,22 @@ export const AgentTracesPage: React.FC = () => {
 
               {/* Table with sticky header */}
               <div className="relative">
-                <table className="w-full caption-bottom text-sm">
-                  <thead className={`sticky top-0 z-10 bg-background transition-shadow duration-200 ${
+                <table className="block sm:table table-fixed w-full caption-bottom text-sm">
+                  <thead className={`hidden sm:table-header-group sticky top-0 z-10 bg-background transition-shadow duration-200 ${
                     isScrolled ? 'shadow-sm' : ''
                   }`}>
                     <tr className="border-b transition-colors hover:bg-muted/50 data-[state=selected]:bg-muted">
-                      <th className="h-8 px-3 text-left align-middle font-medium text-xs text-muted-foreground whitespace-nowrap bg-background border-b">
-                        Start Time
-                      </th>
-                      <th className="h-8 px-3 text-left align-middle font-medium text-xs text-muted-foreground bg-background border-b">
-                        Trace ID
-                      </th>
-                      <th className="h-8 px-3 text-left align-middle font-medium text-xs text-muted-foreground bg-background border-b">
-                        Root Span
-                      </th>
-                      <th className="h-8 px-3 text-left align-middle font-medium text-xs text-muted-foreground bg-background border-b">
-                        Service
-                      </th>
-                      <th className="h-8 px-3 text-left align-middle font-medium text-xs text-muted-foreground bg-background border-b">
-                        Duration
-                      </th>
-                      <th className="h-8 px-3 text-center align-middle font-medium text-xs text-muted-foreground bg-background border-b">
-                        Spans
-                      </th>
-                      <th className="h-8 px-3 text-left align-middle font-medium text-xs text-muted-foreground bg-background border-b"></th>
+                      <th className="w-[90px] h-8 px-3 text-left align-middle font-medium text-xs text-muted-foreground whitespace-nowrap bg-background border-b">Start Time</th>
+                      <th className="w-[130px] h-8 px-3 text-left align-middle font-medium text-xs text-muted-foreground bg-background border-b">Trace ID</th>
+                      <th className="h-8 px-3 text-left align-middle font-medium text-xs text-muted-foreground bg-background border-b">Prompt</th>
+                      <th className="w-[140px] h-8 px-3 text-left align-middle font-medium text-xs text-muted-foreground bg-background border-b">Root Span</th>
+                      <th className="hidden xl:table-cell w-[110px] h-8 px-3 text-left align-middle font-medium text-xs text-muted-foreground bg-background border-b">Service</th>
+                      <th className="w-[80px] h-8 px-3 text-left align-middle font-medium text-xs text-muted-foreground bg-background border-b">Duration</th>
+                      <th className="hidden lg:table-cell w-[60px] h-8 px-3 text-center align-middle font-medium text-xs text-muted-foreground bg-background border-b">Spans</th>
+                      <th className="w-[32px] h-8 px-2 text-left align-middle font-medium text-xs text-muted-foreground bg-background border-b"></th>
                     </tr>
                   </thead>
-                  <tbody className="[&_tr:last-child]:border-0">
+                  <tbody className="block sm:table-row-group [&_tr:last-child]:border-0">
                     {displayedTraces.map((trace) => (
                       <React.Fragment key={trace.traceId}>
                         <TraceRow
@@ -1549,7 +1549,7 @@ export const AgentTracesPage: React.FC = () => {
                     {/* Intersection observer target for lazy loading (client-side + server-side) */}
                     {(displayedTraces.length < filteredTraces.length || hasMore) && (
                       <tr ref={loadMoreRef} className="hover:bg-transparent border-b transition-colors">
-                        <td colSpan={7} className="py-1.5 px-3 align-middle text-center py-4">
+                        <td colSpan={8} className="py-1.5 px-3 align-middle text-center py-4">
                           <div className="flex items-center justify-center gap-2 text-muted-foreground">
                             <RefreshCw size={16} className={isLoadingMore ? 'animate-spin' : ''} />
                             <span className="text-sm">

@@ -158,7 +158,7 @@ describe('Traces Routes', () => {
         expect.any(Object),
         expect.any(String)
       );
-      expect(res.json).toHaveBeenCalledWith({ spans: [], total: 0, nextCursor: null, hasMore: false, backend: 'opensearch', warning: undefined });
+      expect(res.json).toHaveBeenCalledWith({ spans: [], traces: [], total: 0, nextCursor: null, hasMore: false, backend: 'opensearch', warning: undefined });
     });
 
     it('should accept runIds filter', async () => {
@@ -216,6 +216,7 @@ describe('Traces Routes', () => {
       expect(mockGetSampleSpansByTraceId).toHaveBeenCalledWith('sample-trace-1');
       expect(res.json).toHaveBeenCalledWith({
         spans: sampleSpans,
+        traces: expect.any(Array),
         total: 1,
         nextCursor: null,
         hasMore: false,
@@ -238,6 +239,7 @@ describe('Traces Routes', () => {
 
       expect(res.json).toHaveBeenCalledWith({
         spans: [...sampleSpans, ...realSpans],
+        traces: expect.any(Array),
         total: 2,
         nextCursor: null,
         hasMore: false,
@@ -276,6 +278,7 @@ describe('Traces Routes', () => {
       expect(mockFetchTraces).not.toHaveBeenCalled();
       expect(res.json).toHaveBeenCalledWith({
         spans: sampleSpans,
+        traces: expect.any(Array),
         total: 1,
         nextCursor: null,
         hasMore: false,
@@ -298,6 +301,7 @@ describe('Traces Routes', () => {
 
       expect(res.json).toHaveBeenCalledWith({
         spans: sampleSpans,
+        traces: expect.any(Array),
         total: 1,
         nextCursor: null,
         hasMore: false,
@@ -331,6 +335,7 @@ describe('Traces Routes', () => {
       expect(mockGetSampleSpansByTraceId).not.toHaveBeenCalled();
       expect(res.json).toHaveBeenCalledWith({
         spans: liveSpans,
+        traces: expect.any(Array),
         total: 1,
         nextCursor: null,
         hasMore: false,
@@ -351,6 +356,7 @@ describe('Traces Routes', () => {
 
       expect(res.json).toHaveBeenCalledWith({
         spans: [],
+        traces: [],
         total: 0,
         nextCursor: null,
         hasMore: false,
@@ -382,6 +388,7 @@ describe('Traces Routes', () => {
       expect(mockGetAllSampleTraceSpansWithRecentTimestamps).toHaveBeenCalled();
       expect(res.json).toHaveBeenCalledWith({
         spans: demoSpans,
+        traces: expect.any(Array),
         total: 2,
         nextCursor: null,
         hasMore: false,
@@ -412,6 +419,7 @@ describe('Traces Routes', () => {
 
       expect(res.json).toHaveBeenCalledWith({
         spans: [demoSpans[0]],
+        traces: expect.any(Array),
         total: 1,
         nextCursor: null,
         hasMore: false,
@@ -442,6 +450,7 @@ describe('Traces Routes', () => {
 
       expect(res.json).toHaveBeenCalledWith({
         spans: [demoSpans[0]],
+        traces: expect.any(Array),
         total: 1,
         nextCursor: null,
         hasMore: false,
@@ -468,6 +477,7 @@ describe('Traces Routes', () => {
       expect(mockGetAllSampleTraceSpansWithRecentTimestamps).not.toHaveBeenCalled();
       expect(res.json).toHaveBeenCalledWith({
         spans: [],
+        traces: [],
         total: 0,
         nextCursor: null,
         hasMore: false,

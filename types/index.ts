@@ -788,8 +788,16 @@ export interface ConversationMessage {
   };
 }
 
+export interface TraceListSummary {
+  traceId: string;
+  rootSpanName: string;
+  /** Root prompt preview, at most 200 Unicode characters. */
+  prompt: string;
+}
+
 export interface TraceSearchResult {
   spans: Span[];
+  traces?: TraceListSummary[];
   total: number;
   warning?: string;
   warningCategory?: 'auth' | 'connection' | 'index_not_found' | 'not_configured' | 'unknown';
@@ -807,6 +815,7 @@ export interface TraceSummary {
   serviceName: string;
   spanCount: number;
   rootSpanName: string;
+  prompt?: string;
   startTime: string;
   duration: number;
   hasErrors: boolean;

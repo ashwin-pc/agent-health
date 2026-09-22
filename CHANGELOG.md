@@ -10,6 +10,7 @@ Inspired by [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)
 ## [Unreleased]
 
 ### Fixed
+- Agent Traces lists now have a flexible Prompt column, sourced from root `gen_ai.prompt` or the first structured user text part. Trace IDs remain visible and copyable on desktop and mobile; mobile prompts clamp to two lines. The shared file/OpenSearch API response includes per-trace prompt previews capped at 200 characters while retaining full prompt attributes for hover details.
 - Trace tree, timeline, and flow labels now show the tool name for bare `execute_tool` spans. Bare chat and root operations stay plain, and already descriptive span names stay unchanged. This is display-only and does not rewrite stored traces. Covered by RTL and Playwright regression tests.
 
 ## [0.7.0] - 2026-09-17
