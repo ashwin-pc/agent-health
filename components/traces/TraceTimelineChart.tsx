@@ -19,6 +19,7 @@ import { getSpanColor, flattenVisibleSpans } from '@/services/traces';
 import { formatDuration } from '@/services/traces/utils';
 import { truncate } from '@/lib/utils';
 import { getTheme } from '@/lib/theme';
+import { getSpanDisplayLabel } from './spanDisplayLabel';
 
 const ROW_HEIGHT = 20;
 
@@ -167,7 +168,7 @@ const TraceTimelineChart: React.FC<TraceTimelineChartProps> = ({
           const span = params.data.span as Span;
           const duration = new Date(span.endTime).getTime() - new Date(span.startTime).getTime();
           return `<div style="font-size:12px;font-family:'Rubik',sans-serif">
-            <div style="font-weight:600;margin-bottom:4px">${span.name}</div>
+            <div style="font-weight:600;margin-bottom:4px">${echarts.format.encodeHTML(getSpanDisplayLabel(span).title)}</div>
             <div>Duration: ${formatDuration(duration)}</div>
             <div>Status: ${span.status || 'UNSET'}</div>
           </div>`;
@@ -216,7 +217,7 @@ const TraceTimelineChart: React.FC<TraceTimelineChartProps> = ({
             const icon = span.hasChildren 
               ? (expandedSpans.has(span.spanId) ? '{caret|▾}' : '{caret|▸}') 
               : ' ';
-            const label = span.name?.split('.').pop() || 'span';
+            const label = getSpanDisplayLabel(span).label || 'span';
             const truncatedLabel = truncate(label, 25);
             // Error spans get a red, marked label so they stand out in the
             // long list of neutral span names.

@@ -22,6 +22,7 @@ import { formatDuration } from '@/services/traces/utils';
 import { Badge } from '@/components/ui/badge';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
+import { getSpanDisplayLabel } from './spanDisplayLabel';
 
 // Icon mapping
 const ICON_MAP = {
@@ -151,6 +152,7 @@ const TraceTreeTable: React.FC<TraceTreeTableProps> = ({
         const isExpanded = expandedSpans.has(span.spanId);
         const SpanIcon = getSpanIcon(span);
         const isError = span.status === 'ERROR';
+        const { label, title } = getSpanDisplayLabel(span);
         const depth = span.depth || 0;
         const inSelectedPath = isInSelectedPath(span);
         const inHoveredPath = isInHoveredPath(span);
@@ -306,8 +308,8 @@ const TraceTreeTable: React.FC<TraceTreeTableProps> = ({
                   >
                     <SpanIcon size={14} style={{ color: getSpanColor(span) }} />
                   </div>
-                  <div className={cn('flex-1 min-w-0 font-medium text-sm truncate', isError && 'text-red-500 dark:text-red-400')} title={span.name}>
-                    {span.name}
+                  <div className={cn('flex-1 min-w-0 font-medium text-sm truncate', isError && 'text-red-500 dark:text-red-400')} title={title}>
+                    {label}
                   </div>
                 </div>
 
@@ -396,8 +398,8 @@ const TraceTreeTable: React.FC<TraceTreeTableProps> = ({
                 </div>
 
                 {/* Span name - allows truncation */}
-                <div className={cn('flex-1 min-w-0 font-medium text-sm truncate', isError && 'text-red-500 dark:text-red-400')}>
-                  {span.name}
+                <div className={cn('flex-1 min-w-0 font-medium text-sm truncate', isError && 'text-red-500 dark:text-red-400')} title={title}>
+                  {label}
                 </div>
 
                 {/* Right side elements - fixed width container */}

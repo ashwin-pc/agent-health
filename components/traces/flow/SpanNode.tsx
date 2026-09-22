@@ -19,6 +19,7 @@ import { cn } from '@/lib/utils';
 import { formatDuration } from '@/services/traces/utils';
 import { checkOTelCompliance } from '@/services/traces/spanCategorization';
 import { SpanNodeData, SpanCategory, CategorizedSpan } from '@/types';
+import { getSpanDisplayLabel } from '../spanDisplayLabel';
 
 /** Props for SpanNode component */
 interface SpanNodeProps {
@@ -89,6 +90,10 @@ const CATEGORY_CONFIG: Record<SpanCategory, {
  */
 function SpanNodeComponent({ data, selected }: SpanNodeProps) {
   const { span, totalDuration } = data;
+  // Keep bare chat/root operations plain, and enrich only bare tool names.
+  const display = /^(execute_tool|chat|invoke_agent)(?:$|[ :])/.test(span.name)
+    ? getSpanDisplayLabel(span)
+    : { label: span.displayName, title: span.displayName };
   const config = CATEGORY_CONFIG[span.category];
   const Icon = config.icon;
 
@@ -165,9 +170,9 @@ function SpanNodeComponent({ data, selected }: SpanNodeProps) {
           'text-xs font-mono truncate mb-2',
           span.status === 'ERROR' ? 'text-red-400' : 'text-foreground'
         )}
-        title={span.displayName}
+        title={display.title}
       >
-        {span.displayName}
+        {display.label}
       </div>
 
       {/* Duration Bar */}
